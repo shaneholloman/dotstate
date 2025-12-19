@@ -5,8 +5,8 @@ use crate::github::GitHubClient;
 use crate::git::GitManager;
 use crate::tui::Tui;
 use crate::ui::{UiState, Screen, GitHubAuthStep};
-use crate::components::{WelcomeComponent, MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, ComponentAction, Component};
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crate::components::{WelcomeComponent, MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, PushChangesComponent, ComponentAction, Component};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -30,6 +30,7 @@ pub struct App {
     github_auth_component: GitHubAuthComponent,
     dotfile_selection_component: DotfileSelectionComponent,
     synced_files_component: SyncedFilesComponent,
+    push_changes_component: PushChangesComponent,
     message_component: Option<MessageComponent>,
 }
 
@@ -62,6 +63,7 @@ impl App {
             github_auth_component: GitHubAuthComponent::new(),
             dotfile_selection_component: DotfileSelectionComponent::new(),
             synced_files_component: SyncedFilesComponent::new(config_clone),
+            push_changes_component: PushChangesComponent::new(),
             message_component: None,
         })
     }
@@ -125,13 +127,17 @@ impl App {
             self.synced_files_component.update_config(self.config.clone());
         }
 
-        // Create/update message component if needed
-        if matches!(self.ui_state.current_screen, Screen::PushChanges | Screen::PullChanges) {
-            let title = if self.ui_state.current_screen == Screen::PushChanges {
-                "Push Changes"
-            } else {
-                "Pull Changes"
-            };
+        // Load changed files when entering PushChanges screen
+        if self.ui_state.current_screen == Screen::PushChanges && !self.ui_state.push_changes.is_pushing {
+            // Only load if we don't have files yet
+            if self.ui_state.push_changes.changed_files.is_empty() {
+                self.load_changed_files();
+            }
+        }
+
+        // Create/update message component if needed (for PullChanges only now)
+        if self.ui_state.current_screen == Screen::PullChanges {
+            let title = "Pull Changes";
             let message = self.ui_state.dotfile_selection.status_message
                 .as_deref()
                 .unwrap_or("Processing...")
@@ -166,7 +172,13 @@ impl App {
                 Screen::ViewSyncedFiles => {
                     let _ = self.synced_files_component.render(frame, area);
                 }
-                Screen::PushChanges | Screen::PullChanges => {
+                Screen::PushChanges => {
+                    // Component handles all rendering including Clear
+                    if let Err(e) = self.push_changes_component.render_with_state(frame, area, &mut self.ui_state.push_changes) {
+                        eprintln!("Error rendering push changes: {}", e);
+                    }
+                }
+                Screen::PullChanges => {
                     if let Some(ref mut msg_component) = self.message_component {
                         let _ = msg_component.render(frame, area);
                     }
@@ -247,7 +259,79 @@ impl App {
                 }
                 return Ok(());
             }
-            Screen::PushChanges | Screen::PullChanges => {
+            Screen::PushChanges => {
+                // Handle push changes events
+                if let Event::Key(key) = event {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Enter => {
+                                // Start pushing if not already pushing and we have changes
+                                if !self.ui_state.push_changes.is_pushing
+                                    && !self.ui_state.push_changes.changed_files.is_empty() {
+                                    self.start_push()?;
+                                }
+                            }
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                // Close result popup or go back
+                                if self.ui_state.push_changes.show_result_popup {
+                                    self.ui_state.push_changes.show_result_popup = false;
+                                    self.ui_state.push_changes.push_result = None;
+                                    // Re-check for changes
+                                    self.check_changes_to_push();
+                                } else {
+                                    self.ui_state.current_screen = Screen::MainMenu;
+                                    // Reset push state
+                                    self.ui_state.push_changes = crate::ui::PushChangesState::default();
+                                }
+                            }
+                            KeyCode::Up => {
+                                self.ui_state.push_changes.list_state.select_previous();
+                            }
+                            KeyCode::Down => {
+                                self.ui_state.push_changes.list_state.select_next();
+                            }
+                            KeyCode::PageUp => {
+                                if let Some(current) = self.ui_state.push_changes.list_state.selected() {
+                                    let new_index = current.saturating_sub(10);
+                                    self.ui_state.push_changes.list_state.select(Some(new_index));
+                                }
+                            }
+                            KeyCode::PageDown => {
+                                if let Some(current) = self.ui_state.push_changes.list_state.selected() {
+                                    let new_index = (current + 10).min(self.ui_state.push_changes.changed_files.len().saturating_sub(1));
+                                    self.ui_state.push_changes.list_state.select(Some(new_index));
+                                }
+                            }
+                            KeyCode::Home => {
+                                self.ui_state.push_changes.list_state.select_first();
+                            }
+                            KeyCode::End => {
+                                self.ui_state.push_changes.list_state.select_last();
+                            }
+                            _ => {}
+                        }
+                    }
+                } else if let Event::Mouse(mouse) = event {
+                    // Handle mouse events for list navigation
+                    if let MouseEventKind::ScrollUp = mouse.kind {
+                        self.ui_state.push_changes.list_state.select_previous();
+                    } else if let MouseEventKind::ScrollDown = mouse.kind {
+                        self.ui_state.push_changes.list_state.select_next();
+                    } else if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                        // Click to push or close popup
+                        if self.ui_state.push_changes.show_result_popup {
+                            self.ui_state.push_changes.show_result_popup = false;
+                            self.ui_state.push_changes.push_result = None;
+                            self.check_changes_to_push();
+                        } else if !self.ui_state.push_changes.is_pushing
+                            && !self.ui_state.push_changes.changed_files.is_empty() {
+                            self.start_push()?;
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            Screen::PullChanges => {
                 if let Some(ref mut msg_component) = self.message_component {
                     let action = msg_component.handle_event(event)?;
                     match action {
@@ -307,9 +391,10 @@ impl App {
                 self.ui_state.current_screen = Screen::ViewSyncedFiles;
             }
             3 => {
-                // Push Changes
+                // Push Changes - just navigate, don't push yet
                 self.ui_state.current_screen = Screen::PushChanges;
-                self.push_changes()?;
+                // Reset push state
+                self.ui_state.push_changes = crate::ui::PushChangesState::default();
             }
             4 => {
                 // Pull Changes
@@ -607,7 +692,7 @@ impl App {
                                 .unwrap_or_else(|| "main".to_string());
 
                             // Push to remote using the actual branch name
-                            git_mgr.push("origin", &current_branch)?;
+                            git_mgr.push("origin", &current_branch, Some(&token))?;
 
                             auth_state.status_message = Some(format!("Repository created and initialized successfully"));
                         }
@@ -1228,64 +1313,127 @@ impl App {
         Ok(())
     }
 
-    /// Push changes to GitHub repository
-    fn push_changes(&mut self) -> Result<()> {
-        // Check if GitHub is configured
-        if self.config.github.is_none() {
-            self.ui_state.dotfile_selection.status_message = Some(
-                "Error: GitHub repository not configured.\n\nPlease set up your GitHub repository first from the main menu.".to_string()
-            );
-            return Ok(());
-        }
-
+    /// Load changed files from git repository
+    fn load_changed_files(&mut self) {
         let repo_path = &self.config.repo_path;
 
         // Check if repo exists
         if !repo_path.exists() {
-            self.ui_state.dotfile_selection.status_message = Some(
-                format!("Error: Repository not found at {:?}\n\nPlease sync some files first.", repo_path)
-            );
-            return Ok(());
+            self.ui_state.push_changes.changed_files = vec![];
+            return;
         }
 
         // Open git repository
         let git_mgr = match GitManager::open_or_init(repo_path) {
             Ok(mgr) => mgr,
+            Err(_) => {
+                self.ui_state.push_changes.changed_files = vec![];
+                return;
+            }
+        };
+
+        // Get changed files
+        match git_mgr.get_changed_files() {
+            Ok(files) => {
+                self.ui_state.push_changes.changed_files = files;
+                // Select first item if list is not empty
+                if !self.ui_state.push_changes.changed_files.is_empty() {
+                    self.ui_state.push_changes.list_state.select(Some(0));
+                }
+            }
+            Err(_) => {
+                self.ui_state.push_changes.changed_files = vec![];
+            }
+        }
+    }
+
+    /// Start pushing changes (async operation with progress updates)
+    fn start_push(&mut self) -> Result<()> {
+        // Check if GitHub is configured
+        if self.config.github.is_none() {
+            self.ui_state.push_changes.push_result = Some(
+                "Error: GitHub repository not configured.\n\nPlease set up your GitHub repository first from the main menu.".to_string()
+            );
+            self.ui_state.push_changes.show_result_popup = true;
+            return Ok(());
+        }
+
+        let repo_path = self.config.repo_path.clone();
+
+        // Check if repo exists
+        if !repo_path.exists() {
+            self.ui_state.push_changes.push_result = Some(
+                format!("Error: Repository not found at {:?}\n\nPlease sync some files first.", repo_path)
+            );
+            self.ui_state.push_changes.show_result_popup = true;
+            return Ok(());
+        }
+
+        // Mark as pushing
+        self.ui_state.push_changes.is_pushing = true;
+        self.ui_state.push_changes.push_progress = Some("Committing changes...".to_string());
+
+        // Don't call draw() here - let the main loop handle it
+        // The next draw cycle will show the progress
+
+        // Perform commit
+        let git_mgr = match GitManager::open_or_init(&repo_path) {
+            Ok(mgr) => mgr,
             Err(e) => {
-                self.ui_state.dotfile_selection.status_message = Some(
-                    format!("Error: Failed to open repository: {}", e)
-                );
+                self.ui_state.push_changes.is_pushing = false;
+                self.ui_state.push_changes.push_progress = None;
+                self.ui_state.push_changes.push_result = Some(format!("Error: Failed to open repository: {}", e));
+                self.ui_state.push_changes.show_result_popup = true;
                 return Ok(());
             }
         };
 
-        // Get current branch
         let branch = git_mgr.get_current_branch()
             .unwrap_or_else(|| "main".to_string());
 
         // Commit all changes
-        match git_mgr.commit_all("Update dotfiles") {
+        let result = match git_mgr.commit_all("Update dotfiles") {
             Ok(_) => {
-                // Push to remote
-                match git_mgr.push("origin", &branch) {
+                // Update progress
+                self.ui_state.push_changes.push_progress = Some("Pushing to remote...".to_string());
+                // Don't call draw() here - let the main loop handle it
+
+                // Push to remote - get token from config
+                let token = self.config.github.as_ref()
+                    .and_then(|gh| gh.token.as_deref());
+                match git_mgr.push("origin", &branch, token) {
                     Ok(_) => {
-                        self.ui_state.dotfile_selection.status_message = Some(
-                            format!("✓ Successfully pushed changes to GitHub!\n\nBranch: {}\nRepository: {:?}", branch, repo_path)
-                        );
+                        format!("✓ Successfully pushed changes to GitHub!\n\nBranch: {}\nRepository: {:?}", branch, repo_path)
                     }
                     Err(e) => {
-                        self.ui_state.dotfile_selection.status_message = Some(
-                            format!("Error: Failed to push to remote: {}", e)
-                        );
+                        // Include the full error chain for debugging
+                        let mut error_msg = format!("Error: Failed to push to remote: {}", e);
+                        let mut source = e.source();
+                        while let Some(err) = source {
+                            error_msg.push_str(&format!("\n  Caused by: {}", err));
+                            source = err.source();
+                        }
+                        error_msg
                     }
                 }
             }
             Err(e) => {
-                self.ui_state.dotfile_selection.status_message = Some(
-                    format!("Error: Failed to commit changes: {}", e)
-                );
+                // Include the full error chain for debugging
+                let mut error_msg = format!("Error: Failed to commit changes: {}", e);
+                let mut source = e.source();
+                while let Some(err) = source {
+                    error_msg.push_str(&format!("\n  Caused by: {}", err));
+                    source = err.source();
+                }
+                error_msg
             }
-        }
+        };
+
+        // Update state with result
+        self.ui_state.push_changes.is_pushing = false;
+        self.ui_state.push_changes.push_progress = None;
+        self.ui_state.push_changes.push_result = Some(result);
+        self.ui_state.push_changes.show_result_popup = true;
 
         Ok(())
     }

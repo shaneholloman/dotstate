@@ -12,6 +12,7 @@ pub mod github_auth;
 pub mod dotfile_selection;
 pub mod synced_files;
 pub mod message;
+pub mod push_changes;
 
 pub use component::{Component, ComponentAction};
 // Footer and InputField are used directly via their module paths
@@ -23,4 +24,5 @@ pub use github_auth::GitHubAuthComponent;
 pub use dotfile_selection::DotfileSelectionComponent;
 pub use synced_files::SyncedFilesComponent;
 pub use message::MessageComponent;
+pub use push_changes::PushChangesComponent;
 

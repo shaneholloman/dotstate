@@ -1,0 +1,181 @@
+use anyhow::Result;
+use crossterm::event::Event;
+use ratatui::prelude::*;
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, StatefulWidget, Wrap};
+use crate::components::component::{Component, ComponentAction};
+use crate::components::header::Header;
+use crate::components::footer::Footer;
+use crate::components::message_box::MessageBox;
+use crate::ui::PushChangesState;
+use crate::utils::{create_standard_layout, center_popup, focused_border_style};
+
+/// Push changes component - shows list of changes and allows pushing
+pub struct PushChangesComponent;
+
+impl PushChangesComponent {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Component for PushChangesComponent {
+    fn render(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+        // Clear the entire area first
+        frame.render_widget(Clear, area);
+
+        // Background
+        let background = Block::default()
+            .style(Style::default().bg(Color::Black));
+        frame.render_widget(background, area);
+
+        Ok(())
+    }
+
+    fn handle_event(&mut self, _event: Event) -> Result<ComponentAction> {
+        Ok(ComponentAction::None)
+    }
+}
+
+impl PushChangesComponent {
+    /// Render with state - shows changes list and handles push progress
+    pub fn render_with_state(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        state: &mut PushChangesState,
+    ) -> Result<()> {
+        // Clear the entire area first
+        frame.render_widget(Clear, area);
+
+        // Background
+        let background = Block::default()
+            .style(Style::default().bg(Color::Black));
+        frame.render_widget(background, area);
+
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+
+        // Header
+        let description = if state.is_pushing {
+            "Pushing changes to GitHub repository..."
+        } else {
+            "Review changes before pushing to GitHub"
+        };
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "dotzz - Push Changes",
+            description,
+        )?;
+
+        // Show result popup if push is complete
+        if state.show_result_popup {
+            // Make popup larger to show full error details
+            let popup_area = center_popup(area, 80, 50);
+            frame.render_widget(Clear, popup_area);
+
+            let result_text = state.push_result.as_deref().unwrap_or("Unknown result");
+            let is_error = result_text.to_lowercase().contains("error")
+                || result_text.to_lowercase().contains("failed");
+
+            MessageBox::render(
+                frame,
+                popup_area,
+                result_text,
+                None,
+                if is_error { Some(Color::Red) } else { Some(Color::Green) },
+            )?;
+        } else if state.is_pushing {
+            // Show progress message
+            let progress_text = state.push_progress.as_deref().unwrap_or("Processing...");
+            let progress_para = Paragraph::new(progress_text)
+                .style(Style::default().fg(Color::Yellow))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .title("Progress")
+                    .title_alignment(Alignment::Center)
+                    .border_style(focused_border_style())
+                    .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)));
+            frame.render_widget(progress_para, content_chunk);
+        } else {
+            // Show list of changed files
+            if state.changed_files.is_empty() {
+                let empty_message = Paragraph::new(
+                    "No changes to push.\n\nAll files are up to date with the remote repository."
+                )
+                    .style(Style::default().fg(Color::DarkGray))
+                    .wrap(Wrap { trim: true })
+                    .block(Block::default()
+                        .borders(Borders::ALL)
+                        .title("No Changes")
+                        .title_alignment(Alignment::Center)
+                        .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)));
+                frame.render_widget(empty_message, content_chunk);
+            } else {
+                // Update scrollbar state
+                let total_items = state.changed_files.len();
+                let selected_index = state.list_state.selected().unwrap_or(0);
+                state.scrollbar_state = state.scrollbar_state
+                    .content_length(total_items)
+                    .position(selected_index);
+
+                let items: Vec<ListItem> = state.changed_files
+                    .iter()
+                    .map(|file| {
+                        let style = if file.starts_with("A ") {
+                            Style::default().fg(Color::Green) // Added
+                        } else if file.starts_with("M ") {
+                            Style::default().fg(Color::Yellow) // Modified
+                        } else if file.starts_with("D ") {
+                            Style::default().fg(Color::Red) // Deleted
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+                        ListItem::new(file.as_str()).style(style)
+                    })
+                    .collect();
+
+                let list = List::new(items)
+                    .block(Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(focused_border_style())
+                        .title(format!("Changed Files ({})", state.changed_files.len()))
+                        .title_alignment(Alignment::Center)
+                        .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)))
+                    .highlight_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                    )
+                    .highlight_symbol("> ");
+
+                StatefulWidget::render(list, content_chunk, frame.buffer_mut(), &mut state.list_state);
+
+                // Render scrollbar
+                frame.render_stateful_widget(
+                    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                        .begin_symbol(Some("↑"))
+                        .end_symbol(Some("↓")),
+                    content_chunk,
+                    &mut state.scrollbar_state,
+                );
+            }
+        }
+
+        // Footer
+        let footer_text = if state.show_result_popup {
+            "Press any key or click to close"
+        } else if state.is_pushing {
+            "Pushing changes..."
+        } else if state.changed_files.is_empty() {
+            "q/Esc: Back to Main Menu"
+        } else {
+            "Enter: Push Changes | ↑↓: Navigate | q/Esc: Back"
+        };
+        let _ = Footer::render(frame, footer_chunk, footer_text)?;
+
+        Ok(())
+    }
+}
+

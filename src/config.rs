@@ -128,7 +128,6 @@ impl Config {
             ".oh-my-zsh".to_string(),
             // Editor configs
             ".vimrc".to_string(),
-            ".vim".to_string(),
             ".config/nvim".to_string(),
             ".config/nvim/init.vim".to_string(),
             ".config/nvim/init.lua".to_string(),

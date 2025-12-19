@@ -13,7 +13,27 @@ mod widgets;
 
 use app::App;
 
+/// Set up panic hook to restore terminal state on panic
+fn setup_panic_hook() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Restore terminal state before handling panic
+        // This ensures the terminal is usable after a panic
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
+        // Call the original panic hook to show the panic message
+        original_hook(panic_info);
+    }));
+}
+
 fn main() -> Result<()> {
+    // Set up panic hook to restore terminal on panic
+    setup_panic_hook();
+
     // Set up logging directory
     let log_dir = dirs::cache_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
@@ -42,12 +62,13 @@ fn main() -> Result<()> {
     eprintln!("View logs in real-time: tail -f {:?}", log_file);
 
     let mut app = App::new()?;
-    app.run()?;
+    let result = app.run();
 
-    // Keep guard alive until program ends
+    // Restore terminal state on normal exit
+    // (panic hook handles panics)
     drop(guard);
 
-    Ok(())
+    result
 }
 
 

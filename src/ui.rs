@@ -122,6 +122,32 @@ impl Default for DotfileSelectionState {
     }
 }
 
+/// Push changes state
+#[derive(Debug, Clone)]
+pub struct PushChangesState {
+    pub changed_files: Vec<String>,
+    pub is_pushing: bool,
+    pub push_progress: Option<String>, // Current progress message (e.g., "Committing...", "Pushing...")
+    pub push_result: Option<String>, // Final result message
+    pub show_result_popup: bool, // Whether to show result popup
+    pub list_state: ListState,
+    pub scrollbar_state: ScrollbarState,
+}
+
+impl Default for PushChangesState {
+    fn default() -> Self {
+        Self {
+            changed_files: Vec::new(),
+            is_pushing: false,
+            push_progress: None,
+            push_result: None,
+            show_result_popup: false,
+            list_state: ListState::default(),
+            scrollbar_state: ScrollbarState::new(0),
+        }
+    }
+}
+
 /// Application UI state
 #[derive(Debug)]
 pub struct UiState {
@@ -129,6 +155,7 @@ pub struct UiState {
     pub selected_index: usize,
     pub github_auth: GitHubAuthState,
     pub dotfile_selection: DotfileSelectionState,
+    pub push_changes: PushChangesState,
     pub has_changes_to_push: bool, // Whether there are uncommitted or unpushed changes
 }
 
@@ -139,6 +166,7 @@ impl UiState {
             selected_index: 0,
             github_auth: GitHubAuthState::default(),
             dotfile_selection: DotfileSelectionState::default(),
+            push_changes: PushChangesState::default(),
             has_changes_to_push: false,
         }
     }
