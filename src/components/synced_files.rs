@@ -7,7 +7,7 @@ use crate::components::header::Header;
 use crate::components::footer::Footer;
 use crate::config::Config;
 use crate::ui::Screen;
-use crate::utils::{create_standard_layout, get_home_dir};
+use crate::utils::{create_standard_layout, get_home_dir, focused_border_style};
 
 /// Synced files view component
 pub struct SyncedFilesComponent {
@@ -107,7 +107,7 @@ impl Component for SyncedFilesComponent {
             let list = List::new(items)
                 .block(Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(focused_border_style())
                     .title(format!("Synced Files ({})", self.config.synced_files.len()))
                     .title_alignment(Alignment::Center)
                     .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)));

@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Statefu
 use crate::components::component::{Component, ComponentAction};
 use crate::components::header::Header;
 use crate::components::footer::Footer;
-use crate::utils::create_standard_layout;
+use crate::utils::{create_standard_layout, focused_border_style};
 
 /// Main menu component
 pub struct MainMenuComponent {
@@ -98,23 +98,23 @@ impl Component for MainMenuComponent {
 
         let list_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(focused_border_style())
             .title("Select an option")
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
 
+        // Store clickable area for mouse support (before moving list_block)
+        self.clickable_areas.clear();
+        let list_inner = list_block.inner(content_chunk);
+
         let list = List::new(items)
-            .block(list_block.clone())
+            .block(list_block)
             .highlight_style(
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD | Modifier::REVERSED)
             )
             .highlight_symbol("▶ ");
-
-        // Store clickable area for mouse support
-        self.clickable_areas.clear();
-        let list_inner = list_block.inner(content_chunk);
         let item_height = 1;
         for (i, _) in menu_items.iter().enumerate() {
             let y = list_inner.y + i as u16;

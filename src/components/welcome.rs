@@ -4,7 +4,7 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use crate::components::component::{Component, ComponentAction};
 use crate::components::footer::Footer;
-use crate::utils::create_standard_layout;
+use crate::utils::{create_standard_layout, focused_border_style};
 
 /// Welcome screen component
 pub struct WelcomeComponent {
@@ -35,13 +35,11 @@ impl Component for WelcomeComponent {
         // Title with better styling - centered in a bordered block
         let title_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(focused_border_style())
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
 
         let title = Paragraph::new("Welcome to dotzz")
-            .style(Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD))
+            .style(focused_border_style().add_modifier(Modifier::BOLD))
             .alignment(Alignment::Center)
             .block(title_block);
 
@@ -62,7 +60,7 @@ impl Component for WelcomeComponent {
             • Automatic symlink management\n\
             • Easy push/pull operations"
         )
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(Color::White)) // Keep white for body text
             .alignment(Alignment::Left)
             .wrap(Wrap { trim: true })
             .block(message_block);

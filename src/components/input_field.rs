@@ -1,6 +1,7 @@
 use anyhow::Result;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
+use crate::utils::{focused_border_style, unfocused_border_style, input_placeholder_style, input_text_style};
 
 /// Common input field component
 pub struct InputField;
@@ -39,15 +40,15 @@ impl InputField {
 
         // Style based on focus state
         let border_style = if focused {
-            Style::default().fg(Color::Cyan)
+            focused_border_style()
         } else {
-            Style::default()
+            unfocused_border_style()
         };
 
         let text_style = if text.is_empty() {
-            Style::default().fg(Color::DarkGray)
+            input_placeholder_style()
         } else {
-            Style::default().fg(Color::White)
+            input_text_style()
         };
 
         // Create input block

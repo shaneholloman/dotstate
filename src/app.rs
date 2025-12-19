@@ -4,7 +4,7 @@ use crate::file_manager::FileManager;
 use crate::github::GitHubClient;
 use crate::git::GitManager;
 use crate::tui::Tui;
-use crate::ui::{UiState, Screen, GitHubAuthStep, render_dotfile_selection};
+use crate::ui::{UiState, Screen, GitHubAuthStep};
 use crate::components::{WelcomeComponent, MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, ComponentAction, Component};
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use std::path::{Path, PathBuf};
@@ -158,10 +158,8 @@ impl App {
                     self.ui_state.github_auth = self.github_auth_component.get_auth_state().clone();
                 }
                 Screen::DotfileSelection => {
-                    // Clear is handled by component, then render
-                    let _ = self.dotfile_selection_component.render(frame, area);
-                    // Now render the actual content (component ensures Clear is called first)
-                    if let Err(e) = render_dotfile_selection(frame, &mut self.ui_state) {
+                    // Component handles all rendering including Clear
+                    if let Err(e) = self.dotfile_selection_component.render_with_state(frame, area, &mut self.ui_state) {
                         eprintln!("Error rendering dotfile selection: {}", e);
                     }
                 }
@@ -1065,7 +1063,7 @@ impl App {
                         let should_rescan = !self.config.default_dotfiles.contains(&relative_path);
 
                         if should_rescan {
-                            self.config.default_dotfiles.push(relative_path.clone());
+                            self.config.default_dotfiles.push(relative_path_clone.clone());
                             self.config.save(&self.config_path)?;
                         }
 
@@ -1103,7 +1101,7 @@ impl App {
 
         // Mark files that are already synced
         let synced_set: std::collections::HashSet<String> = self.config.synced_files.iter()
-            .map(|s| s.clone())
+            .cloned()
             .collect();
 
         let mut selected_indices = std::collections::HashSet::new();
@@ -1149,7 +1147,7 @@ impl App {
 
         // Get list of previously synced files (from config)
         let previously_synced: std::collections::HashSet<String> = self.config.synced_files.iter()
-            .map(|s| s.clone())
+            .cloned()
             .collect();
 
         // Sync newly selected files
@@ -1379,13 +1377,12 @@ impl App {
                             if full_path.is_dir() {
                                 state.file_browser_path = full_path.clone();
                                 // Update path input to show the new directory
-                                state.file_browser_path_input = full_path.to_string_lossy().to_string();
+                                state.file_browser_path_input = state.file_browser_path.to_string_lossy().to_string();
                                 state.file_browser_path_cursor = state.file_browser_path_input.chars().count();
                                 state.file_browser_list_state.select(Some(0));
                                 state.focus = DotfileSelectionFocus::FileBrowserList;
                                 // Refresh after updating path
-                                let path = state.file_browser_path.clone();
-                                self.ui_state.dotfile_selection.file_browser_path = path;
+                                self.ui_state.dotfile_selection.file_browser_path = state.file_browser_path.clone();
                                 self.refresh_file_browser()?;
                                 return Ok(());
                             } else {
@@ -1510,11 +1507,11 @@ impl App {
                                 let parent_path = parent.to_path_buf();
                                 state.file_browser_path = parent_path.clone();
                                 // Update path input to show the new directory
-                                state.file_browser_path_input = parent_path.to_string_lossy().to_string();
+                                state.file_browser_path_input = state.file_browser_path.to_string_lossy().to_string();
                                 state.file_browser_path_cursor = state.file_browser_path_input.chars().count();
                                 state.file_browser_list_state.select(Some(0));
                                 // Refresh after updating path
-                                self.ui_state.dotfile_selection.file_browser_path = parent_path;
+                                self.ui_state.dotfile_selection.file_browser_path = state.file_browser_path.clone();
                                 self.refresh_file_browser()?;
                                 return Ok(());
                             }
@@ -1527,11 +1524,10 @@ impl App {
 
                             if full_path.is_dir() {
                                 // Enter directory
-                                let dir_path = full_path.clone();
-                                state.file_browser_path = dir_path.clone();
+                                state.file_browser_path = full_path.clone();
                                 state.file_browser_list_state.select(Some(0));
                                 // Refresh after updating path
-                                self.ui_state.dotfile_selection.file_browser_path = dir_path;
+                                self.ui_state.dotfile_selection.file_browser_path = state.file_browser_path.clone();
                                 self.refresh_file_browser()?;
                                 return Ok(());
                             } else if full_path.is_file() {
