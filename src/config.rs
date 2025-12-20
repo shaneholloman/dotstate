@@ -38,10 +38,47 @@ pub struct GitHubConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
-    /// Profile name (e.g., "main", "work", "personal", "mac", "linux")
+    /// Profile name (e.g., "Personal-Mac", "Work-Linux")
     pub name: String,
     /// Description of the profile
+    #[serde(default)]
     pub description: Option<String>,
+    /// Files synced for this profile
+    #[serde(default)]
+    pub synced_files: Vec<String>,
+}
+
+impl Profile {
+    /// Create a new profile
+    pub fn new(name: String, description: Option<String>) -> Self {
+        Self {
+            name,
+            description,
+            synced_files: Vec::new(),
+        }
+    }
+
+    /// Add a file to this profile's synced files
+    pub fn add_file(&mut self, file: String) {
+        if !self.synced_files.contains(&file) {
+            self.synced_files.push(file);
+        }
+    }
+
+    /// Remove a file from this profile's synced files
+    pub fn remove_file(&mut self, file: &str) {
+        self.synced_files.retain(|f| f != file);
+    }
+
+    /// Check if a file is synced in this profile
+    pub fn has_file(&self, file: &str) -> bool {
+        self.synced_files.contains(&file.to_string())
+    }
+
+    /// Get the profile folder path in the repository
+    pub fn get_profile_path(&self, repo_path: &Path) -> PathBuf {
+        repo_path.join(&self.name)
+    }
 }
 
 fn default_repo_name() -> String {
@@ -114,6 +151,7 @@ impl Config {
             profiles: vec![Profile {
                 name: "Personal".to_string(),
                 description: Some("Default profile".to_string()),
+                synced_files: Vec::new(),
             }],
             default_dotfiles: Self::default_dotfile_list(),
             repo_path: dirs::home_dir()
@@ -165,6 +203,41 @@ impl Config {
         self.profiles
             .iter()
             .find(|p| p.name == self.active_profile)
+    }
+
+    /// Get a mutable reference to the active profile
+    pub fn get_active_profile_mut(&mut self) -> Option<&mut Profile> {
+        let active_name = self.active_profile.clone();
+        self.profiles
+            .iter_mut()
+            .find(|p| p.name == active_name)
+    }
+
+    /// Get a profile by name
+    pub fn get_profile(&self, name: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|p| p.name == name)
+    }
+
+    /// Get a mutable reference to a profile by name
+    pub fn get_profile_mut(&mut self, name: &str) -> Option<&mut Profile> {
+        self.profiles.iter_mut().find(|p| p.name == name)
+    }
+
+    /// Add a new profile
+    pub fn add_profile(&mut self, profile: Profile) {
+        self.profiles.push(profile);
+    }
+
+    /// Remove a profile by name
+    pub fn remove_profile(&mut self, name: &str) -> bool {
+        let len_before = self.profiles.len();
+        self.profiles.retain(|p| p.name != name);
+        self.profiles.len() < len_before
+    }
+
+    /// Check if a profile name exists
+    pub fn has_profile(&self, name: &str) -> bool {
+        self.profiles.iter().any(|p| p.name == name)
     }
 }
 

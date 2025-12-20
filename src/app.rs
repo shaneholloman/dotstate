@@ -10,6 +10,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, Mou
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tracing::{debug, error, info};
 
 /// Main application state
 pub struct App {
@@ -1373,12 +1374,14 @@ impl App {
         Ok(())
     }
 
-    /// Sync selected files to repository
+    /// Sync selected files to repository using SymlinkManager
     fn sync_selected_files(&mut self) -> Result<()> {
+        use crate::utils::SymlinkManager;
+
         let state = &mut self.ui_state.dotfile_selection;
         let file_manager = crate::file_manager::FileManager::new()?;
-        let profile = &self.config.active_profile;
-        let repo_path = &self.config.repo_path;
+        let profile_name = self.config.active_profile.clone();
+        let repo_path = self.config.repo_path.clone();
 
         let mut synced_count = 0;
         let mut unsynced_count = 0;
@@ -1387,12 +1390,17 @@ impl App {
         // Get list of currently selected indices
         let currently_selected: std::collections::HashSet<usize> = state.selected_for_sync.iter().cloned().collect();
 
-        // Get list of previously synced files (from config)
-        let previously_synced: std::collections::HashSet<String> = self.config.synced_files.iter()
-            .cloned()
-            .collect();
+        // Get list of previously synced files from the active profile
+        let previously_synced: std::collections::HashSet<String> = if let Some(profile) = self.config.get_active_profile() {
+            profile.synced_files.iter().cloned().collect()
+        } else {
+            self.config.synced_files.iter().cloned().collect()
+        };
 
-        // Sync newly selected files
+        // Files to sync
+        let mut files_to_sync: Vec<String> = Vec::new();
+
+        // Step 1: Copy files to repo for newly selected files
         for &index in &currently_selected {
             if index >= state.dotfiles.len() {
                 continue;
@@ -1401,52 +1409,171 @@ impl App {
             let dotfile = &state.dotfiles[index];
             let relative_str = dotfile.relative_path.to_string_lossy().to_string();
 
-            // If not already synced, sync it
+            // If not already synced, copy to repo
             if !previously_synced.contains(&relative_str) {
-                match file_manager.sync_file(dotfile, repo_path, profile) {
+                let profile_path = repo_path.join(&profile_name);
+                let repo_file_path = profile_path.join(&dotfile.relative_path);
+
+                // Create parent directories in repo
+                if let Some(parent) = repo_file_path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        errors.push(format!("Failed to create repo directory for {}: {}", relative_str, e));
+                        continue;
+                    }
+                }
+
+                // Handle symlinks: resolve to original file
+                let source_path = if file_manager.is_symlink(&dotfile.original_path) {
+                    match file_manager.resolve_symlink(&dotfile.original_path) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            errors.push(format!("Failed to resolve symlink for {}: {}", relative_str, e));
+                            continue;
+                        }
+                    }
+                } else {
+                    dotfile.original_path.clone()
+                };
+
+                // Copy original file/directory to repo
+                match file_manager.copy_to_repo(&source_path, &repo_file_path) {
                     Ok(_) => {
-                        synced_count += 1;
-                        // Update dotfile synced status
+                        files_to_sync.push(relative_str.clone());
                         state.dotfiles[index].synced = true;
                     }
                     Err(e) => {
-                        errors.push(format!("Failed to sync {}: {}", relative_str, e));
+                        errors.push(format!("Failed to copy {} to repo: {}", relative_str, e));
                     }
+                }
+            } else {
+                files_to_sync.push(relative_str);
+            }
+        }
+
+        // Step 2: Use SymlinkManager to activate with all selected files
+        if !files_to_sync.is_empty() {
+            let mut symlink_mgr = SymlinkManager::new(repo_path.clone())?;
+
+            match symlink_mgr.activate_profile(&profile_name, &files_to_sync) {
+                Ok(operations) => {
+                    for op in operations {
+                        if matches!(op.status, crate::utils::symlink_manager::OperationStatus::Success) {
+                            synced_count += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!("Failed to activate symlinks: {}", e));
                 }
             }
         }
 
-        // Unsync files that were deselected
-        let dotfiles_to_unsync: Vec<(usize, String)> = state.dotfiles.iter()
-            .enumerate()
-            .filter(|(index, dotfile)| {
-                let relative_str = dotfile.relative_path.to_string_lossy().to_string();
-                previously_synced.contains(&relative_str) && !currently_selected.contains(index)
-            })
-            .map(|(index, dotfile)| (index, dotfile.relative_path.to_string_lossy().to_string()))
-            .collect();
+    // Step 3: Handle unsyncing (deselected files)
+    let dotfiles_to_unsync: Vec<(usize, String)> = state.dotfiles.iter()
+        .enumerate()
+        .filter(|(index, dotfile)| {
+            let relative_str = dotfile.relative_path.to_string_lossy().to_string();
+            previously_synced.contains(&relative_str) && !currently_selected.contains(index)
+        })
+        .map(|(index, dotfile)| (index, dotfile.relative_path.to_string_lossy().to_string()))
+        .collect();
+
+    if !dotfiles_to_unsync.is_empty() {
+        let mut symlink_mgr = SymlinkManager::new(repo_path.clone())?;
+        let home_dir = crate::utils::get_home_dir();
 
         for (index, relative_str) in dotfiles_to_unsync {
             let dotfile = &state.dotfiles[index];
-            match file_manager.unsync_file(dotfile, repo_path, profile) {
-                Ok(_) => {
-                    unsynced_count += 1;
-                    // Update dotfile synced status
-                    state.dotfiles[index].synced = false;
-                }
-                Err(e) => {
-                    errors.push(format!("Failed to unsync {}: {}", relative_str, e));
+            let target_path = home_dir.join(&dotfile.relative_path);
+            let repo_file_path = repo_path.join(&profile_name).join(&dotfile.relative_path);
+
+            // Step 1: If target is a symlink, restore the original file from repo BEFORE deleting from repo
+            if target_path.symlink_metadata().is_ok() {
+                let metadata = target_path.symlink_metadata().unwrap();
+                if metadata.is_symlink() {
+                    // It's a symlink, restore the actual file from repo
+                    if repo_file_path.exists() {
+                        // Remove the symlink first
+                        if let Err(e) = std::fs::remove_file(&target_path) {
+                            errors.push(format!("Failed to remove symlink for {}: {}", relative_str, e));
+                            continue;
+                        }
+
+                        // Copy the file from repo back to home directory
+                        let copy_result = if repo_file_path.is_dir() {
+                            crate::file_manager::copy_dir_all(&repo_file_path, &target_path)
+                        } else {
+                            std::fs::copy(&repo_file_path, &target_path)
+                                .map(|_| ())
+                                .context("Failed to copy file")
+                        };
+
+                        if let Err(e) = copy_result {
+                            errors.push(format!("Failed to restore {} from repo: {}", relative_str, e));
+                            continue;
+                        }
+
+                        info!("Restored {} from repo before unsyncing", relative_str);
+                    } else {
+                        // Repo file doesn't exist, just remove the orphaned symlink
+                        if let Err(e) = std::fs::remove_file(&target_path) {
+                            errors.push(format!("Failed to remove orphaned symlink for {}: {}", relative_str, e));
+                        }
+                        info!("Removed orphaned symlink for {}", relative_str);
+                    }
                 }
             }
-        }
 
-        // Update config with new synced files list
-        self.config.synced_files = state.dotfiles.iter()
+            // Step 2: Now remove from SymlinkManager tracking
+            match symlink_mgr.deactivate_profile(&profile_name) {
+                Ok(_) => {
+                    // Re-activate with remaining files
+                    let remaining_files: Vec<String> = self.config.get_active_profile()
+                        .map(|p| p.synced_files.clone())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|f| f != &relative_str)
+                        .collect();
+
+                    if !remaining_files.is_empty() {
+                        let _ = symlink_mgr.activate_profile(&profile_name, &remaining_files);
+                    }
+                }
+                Err(e) => {
+                    info!("Note: Could not update symlink tracking: {}", e);
+                }
+            }
+
+            // Step 3: Finally, remove from repo
+            if repo_file_path.exists() {
+                let remove_result = if repo_file_path.is_dir() {
+                    std::fs::remove_dir_all(&repo_file_path)
+                } else {
+                    std::fs::remove_file(&repo_file_path)
+                };
+
+                if let Err(e) = remove_result {
+                    errors.push(format!("Failed to remove {} from repo: {}", relative_str, e));
+                    continue;
+                }
+            }
+
+            unsynced_count += 1;
+            state.dotfiles[index].synced = false;
+        }
+    }
+
+        // Step 4: Update config
+        let new_synced_files: Vec<String> = state.dotfiles.iter()
             .enumerate()
             .filter(|(i, _)| currently_selected.contains(i))
             .map(|(_, d)| d.relative_path.to_string_lossy().to_string())
             .collect();
 
+        if let Some(profile) = self.config.get_active_profile_mut() {
+            profile.synced_files = new_synced_files.clone();
+        }
+        self.config.synced_files = new_synced_files;
         self.config.save(&self.config_path)?;
 
         // Show summary
@@ -1464,9 +1591,7 @@ impl App {
             )
         };
 
-        // Store summary in status message
         state.status_message = Some(summary);
-
         Ok(())
     }
 

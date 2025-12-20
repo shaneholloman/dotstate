@@ -271,6 +271,8 @@ impl FileManager {
     }
 
     /// Sync file to repository: handle symlinks, copy original, create new symlink
+    /// Sync file using SymlinkManager for better tracking
+    /// This creates a symlink from home directory to the repo file
     pub fn sync_file(&self, dotfile: &Dotfile, repo_path: &Path, profile: &str) -> Result<()> {
         let repo_file_path = repo_path
             .join(profile)
@@ -293,6 +295,8 @@ impl FileManager {
         self.copy_to_repo(&source_path, &repo_file_path)?;
 
         // Create symlink from original location to repo
+        // Note: The old create_symlink method is still used here
+        // SymlinkManager will be used for profile activation/deactivation
         self.create_symlink(&repo_file_path, &dotfile.original_path)?;
 
         Ok(())
@@ -330,7 +334,7 @@ impl FileManager {
 }
 
 /// Recursively copy a directory
-fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)
         .with_context(|| format!("Failed to create destination directory: {:?}", dst))?;
 

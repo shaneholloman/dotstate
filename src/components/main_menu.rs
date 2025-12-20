@@ -13,7 +13,6 @@ use crate::utils::create_standard_layout;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuItem {
     ScanDotfiles,
-    // ViewSyncedFiles,  // Commented out as per user's modification
     PushChanges,
     PullChanges,
     ManageProfiles,
@@ -25,7 +24,6 @@ impl MenuItem {
     pub fn all() -> Vec<MenuItem> {
         vec![
             MenuItem::ScanDotfiles,
-            // MenuItem::ViewSyncedFiles,
             MenuItem::PushChanges,
             MenuItem::PullChanges,
             MenuItem::ManageProfiles,
@@ -50,7 +48,6 @@ impl MenuItem {
     pub fn icon(&self) -> &'static str {
         match self {
             MenuItem::ScanDotfiles => "📁",
-            // MenuItem::ViewSyncedFiles => "👁️",
             MenuItem::PushChanges => "📤",
             MenuItem::PullChanges => "📥",
             MenuItem::ManageProfiles => "👤",
@@ -62,7 +59,6 @@ impl MenuItem {
     pub fn text(&self) -> &'static str {
         match self {
             MenuItem::ScanDotfiles => "Scan & Select Dotfiles",
-            // MenuItem::ViewSyncedFiles => "View Synced Files",
             MenuItem::PushChanges => "Push Changes",
             MenuItem::PullChanges => "Pull Changes",
             MenuItem::ManageProfiles => "Manage Profiles",
@@ -82,7 +78,6 @@ impl MenuItem {
     pub fn explanation(&self) -> &'static str {
         match self {
             MenuItem::ScanDotfiles => "Scan your home directory for common dotfiles and configuration files. Preview their contents and select which ones you want to sync to GitHub.",
-            // MenuItem::ViewSyncedFiles => "View all files that are currently being synced to your GitHub repository. See their status and manage your synced files.",
             MenuItem::PushChanges => "Commit and push any local changes to your GitHub repository. This will update your remote repository with the latest dotfile changes.",
             MenuItem::PullChanges => "Pull the latest changes from your GitHub repository. This will update your local repository with any changes made on other computers.",
             MenuItem::ManageProfiles => "Manage different profiles or sets of dotfiles. Create profiles for work, personal, different operating systems, etc.",
@@ -94,7 +89,6 @@ impl MenuItem {
     pub fn explanation_icon(&self) -> &'static str {
         match self {
             MenuItem::ScanDotfiles => "💡",
-            // MenuItem::ViewSyncedFiles => "📖",
             MenuItem::PushChanges => "📤",
             MenuItem::PullChanges => "📥",
             MenuItem::ManageProfiles => "👤",
@@ -106,7 +100,6 @@ impl MenuItem {
     pub fn explanation_color(&self) -> Color {
         match self {
             MenuItem::ScanDotfiles => Color::Cyan,
-            // MenuItem::ViewSyncedFiles => Color::Blue,
             MenuItem::PushChanges => Color::Green,
             MenuItem::PullChanges => Color::Cyan,
             MenuItem::ManageProfiles => Color::Magenta,
