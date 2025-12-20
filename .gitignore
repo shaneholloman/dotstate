@@ -15,11 +15,13 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# dotzz specific
-.dotzz/
-.config/dotzz/
+# dotstate specific
+.dotstate/
+.config/dotstate/
 
 # Test artifacts
 *.bak
 
 
+# LLM docs
+.llm_docs/

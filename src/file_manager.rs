@@ -111,16 +111,31 @@ impl FileManager {
 
     /// Copy file or directory recursively
     pub fn copy_to_repo(&self, source: &Path, dest: &Path) -> Result<()> {
+        // Remove destination if it exists (to avoid conflicts)
+        if dest.exists() {
+            if dest.is_dir() {
+                fs::remove_dir_all(dest)
+                    .with_context(|| format!("Failed to remove existing directory: {:?}", dest))?;
+            } else {
+                fs::remove_file(dest)
+                    .with_context(|| format!("Failed to remove existing file: {:?}", dest))?;
+            }
+        }
+
         // Create parent directory
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create parent directory: {:?}", parent))?;
         }
 
-        if source.is_file() {
+        // Use metadata to check file type (follows symlinks)
+        let source_metadata = fs::metadata(source)
+            .with_context(|| format!("Failed to read metadata for source: {:?}", source))?;
+
+        if source_metadata.is_file() {
             fs::copy(source, dest)
                 .with_context(|| format!("Failed to copy file from {:?} to {:?}", source, dest))?;
-        } else if source.is_dir() {
+        } else if source_metadata.is_dir() {
             copy_dir_all(source, dest)
                 .with_context(|| format!("Failed to copy directory from {:?} to {:?}", source, dest))?;
         } else {
@@ -132,30 +147,43 @@ impl FileManager {
 
     /// Restore original file from backup or repo
     pub fn restore_original(&self, target: &Path, repo_path: &Path, relative_path: &Path) -> Result<()> {
-        // Remove symlink if it exists
-        if self.is_symlink(target) || target.exists() {
-            if target.is_dir() {
-                fs::remove_dir_all(target)
-                    .with_context(|| format!("Failed to remove directory: {:?}", target))?;
-            } else {
-                fs::remove_file(target)
-                    .with_context(|| format!("Failed to remove file: {:?}", target))?;
-            }
-        }
+        // Determine if target was originally a file or directory BEFORE removing it
+        // This is important because we need to know what type of backup to look for
+        let was_file = if target.exists() && !self.is_symlink(target) {
+            target.is_file()
+        } else {
+            // If it's a symlink or doesn't exist, try to infer from the path
+            // Files typically have extensions, but this is a heuristic
+            target.extension().is_some()
+        };
 
-        // Try to restore from backup first
-        let backup_path = if target.is_file() {
-            let file_name = target.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("backup");
+        // Try to restore from backup first (check BEFORE removing symlink)
+        // Construct backup path using the target's filename
+        let backup_path = if let (Some(file_name), Some(parent)) = (
+            target.file_name().and_then(|n| n.to_str()),
+            target.parent()
+        ) {
             let backup_name = format!("{}.bak", file_name);
-            target.parent().map(|p| p.join(&backup_name))
+            Some(parent.join(&backup_name))
         } else {
             None
         };
 
+        // Check if backup exists and restore from it
         if let Some(backup) = backup_path {
             if backup.exists() {
+                // Remove symlink/target first
+                if self.is_symlink(target) || target.exists() {
+                    if target.is_dir() {
+                        fs::remove_dir_all(target)
+                            .with_context(|| format!("Failed to remove directory: {:?}", target))?;
+                    } else {
+                        fs::remove_file(target)
+                            .with_context(|| format!("Failed to remove file: {:?}", target))?;
+                    }
+                }
+
+                // Restore from backup
                 if backup.is_file() {
                     fs::copy(&backup, target)?;
                     fs::remove_file(&backup)?; // Clean up backup
@@ -167,16 +195,34 @@ impl FileManager {
             }
         }
 
+        // No backup found, remove symlink/target if it exists
+        if self.is_symlink(target) || target.exists() {
+            if target.is_dir() {
+                fs::remove_dir_all(target)
+                    .with_context(|| format!("Failed to remove directory: {:?}", target))?;
+            } else {
+                fs::remove_file(target)
+                    .with_context(|| format!("Failed to remove file: {:?}", target))?;
+            }
+        }
+
         // If no backup, try to restore from repo
         let repo_file = repo_path.join(relative_path);
         if repo_file.exists() {
-            self.copy_to_repo(&repo_file, target)?;
+            // Determine what type to restore based on what's in the repo
+            if repo_file.is_file() {
+                // Restore as file
+                self.copy_to_repo(&repo_file, target)?;
+            } else if repo_file.is_dir() {
+                // Restore as directory
+                self.copy_to_repo(&repo_file, target)?;
+            }
         } else {
-            // If neither backup nor repo file exists, create empty file/dir
+            // If neither backup nor repo file exists, create empty file/dir based on original type
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            if target.extension().is_some() {
+            if was_file || target.extension().is_some() {
                 // Likely a file
                 fs::File::create(target)?;
             } else {

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::text::{Line, Text};
 use std::path::PathBuf;
 
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 pub struct FilePreview;
 
 impl FilePreview {
-    /// Render a file preview with proper whitespace handling
+    /// Render a file preview with proper whitespace handling and scrollbar
     ///
     /// # Arguments
     /// * `frame` - The frame to render to
@@ -20,6 +20,13 @@ impl FilePreview {
     ///
     /// # Returns
     /// Result indicating success or failure
+    ///
+    /// # Scrollbar Tutorial
+    /// A scrollbar shows the user's position in a scrollable content area.
+    /// In Ratatui, scrollbars require three pieces of information:
+    /// 1. **Total Content Size**: How many lines/items exist in total
+    /// 2. **Visible Area Size**: How many lines/items can be seen at once
+    /// 3. **Current Position**: Where in the content we're currently viewing
     pub fn render(
         frame: &mut Frame,
         area: Rect,
@@ -79,6 +86,41 @@ impl FilePreview {
                         .wrap(Wrap { trim: false }); // Don't trim whitespace
 
                     frame.render_widget(preview, area);
+
+                    // === SCROLLBAR IMPLEMENTATION ===
+                    // Now let's add a scrollbar to show the user's position in the file
+
+                    // Step 1: Create a ScrollbarState
+                    // This struct tracks the scrollbar's position and content size
+                    let mut scrollbar_state = ScrollbarState::new(total_lines)
+                        // `new(total_lines)` sets the total content size
+                        // In our case, it's the total number of lines in the file
+                        .position(scroll_offset);
+                        // `.position(scroll_offset)` sets where we're currently viewing
+                        // This is the line number at the top of the visible area
+
+                    // Step 2: Create the Scrollbar widget
+                    // The scrollbar is a visual indicator on the right edge
+                    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                        // VerticalRight means the scrollbar appears on the right edge
+                        // (There's also VerticalLeft, HorizontalTop, HorizontalBottom)
+                        .begin_symbol(Some("↑"))  // Arrow at the top
+                        .end_symbol(Some("↓"))    // Arrow at the bottom
+                        .track_symbol(Some("│"))  // The track/rail the thumb moves on
+                        .thumb_symbol("█");       // The draggable part (shows current position)
+                        // Note: The thumb size is automatically calculated based on
+                        // visible_area / total_content ratio
+
+                    // Step 3: Render the scrollbar
+                    // We render it in the same `area` as the paragraph
+                    // The scrollbar automatically positions itself on the right edge
+                    frame.render_stateful_widget(
+                        scrollbar,      // The widget to render
+                        area,           // Where to render it (same as the preview)
+                        &mut scrollbar_state  // The state that controls its position
+                    );
+                    // Note: `render_stateful_widget` is used instead of `render_widget`
+                    // because the scrollbar needs to know about the state (position, size)
                 }
                 Err(_) => {
                     let error_text = format!("Unable to read file: {:?}", file_path);

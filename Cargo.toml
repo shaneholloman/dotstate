@@ -1,11 +1,11 @@
 [package]
-name = "dotzz"
+name = "dotstate"
 version = "0.1.0"
 edition = "2021"
 authors = ["Your Name <you@example.com>"]
 description = "A friendly TUI tool for managing dotfiles with GitHub sync"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/dotzz"
+repository = "https://github.com/yourusername/dotstate"
 
 [dependencies]
 # TUI
@@ -53,7 +53,7 @@ tempfile = "3.10"
 mockito = "1.3"
 
 [[bin]]
-name = "dotzz"
+name = "dotstate"
 path = "src/main.rs"
 
 

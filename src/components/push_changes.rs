@@ -52,7 +52,7 @@ impl PushChangesComponent {
             .style(Style::default().bg(Color::Black));
         frame.render_widget(background, area);
 
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header
         let description = if state.is_pushing {
@@ -63,7 +63,7 @@ impl PushChangesComponent {
         let _ = Header::render(
             frame,
             header_chunk,
-            "dotzz - Push Changes",
+            "dotstate - Push Changes",
             description,
         )?;
 

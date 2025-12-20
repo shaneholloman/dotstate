@@ -34,13 +34,13 @@ impl DotfileSelectionComponent {
         let selection_state = &mut state.dotfile_selection;
 
         // Layout: Title/Description, Content (list + preview), Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header: Use common header component
         let _ = Header::render(
             frame,
             header_chunk,
-            "dotzz - Select Dotfiles to Sync",
+            "dotstate - Select Dotfiles to Sync",
             "Select the dotfiles you want to sync to your repository. Selected files will be copied to the repo and symlinked back to their original locations."
         )?;
 

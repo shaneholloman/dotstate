@@ -49,7 +49,7 @@ when you install this app, you first need to login with github. the app will cre
 
 ## Project Details
 
-- **Project Name**: `dotzz`
+- **Project Name**: `dotstate`
 - **TUI Library**: `ratatui` (formerly tui-rs)
 - **Git Library**: `git2-rs`
 - **Configuration Format**: TOML

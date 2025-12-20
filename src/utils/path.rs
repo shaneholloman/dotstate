@@ -5,6 +5,16 @@ pub fn get_home_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Get the config directory path (always ~/.config/dotstate, regardless of OS)
+pub fn get_config_dir() -> PathBuf {
+    get_home_dir().join(".config").join("dotstate")
+}
+
+/// Get the config file path (always ~/.config/dotstate/config.toml, regardless of OS)
+pub fn get_config_path() -> PathBuf {
+    get_config_dir().join("config.toml")
+}
+
 /// Expand a path string, handling ~ and relative paths
 ///
 /// # Arguments

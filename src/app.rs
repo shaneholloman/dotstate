@@ -5,7 +5,7 @@ use crate::github::GitHubClient;
 use crate::git::GitManager;
 use crate::tui::Tui;
 use crate::ui::{UiState, Screen, GitHubAuthStep};
-use crate::components::{WelcomeComponent, MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, PushChangesComponent, ComponentAction, Component};
+use crate::components::{MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, PushChangesComponent, ComponentAction, Component, MenuItem};
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -25,7 +25,6 @@ pub struct App {
     /// Track the last screen to detect screen transitions
     last_screen: Option<Screen>,
     /// Component instances for screens with mouse support
-    welcome_component: WelcomeComponent,
     main_menu_component: MainMenuComponent,
     github_auth_component: GitHubAuthComponent,
     dotfile_selection_component: DotfileSelectionComponent,
@@ -36,10 +35,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self> {
-        let config_path = dirs::config_dir()
-            .unwrap_or_else(|| crate::utils::get_home_dir())
-            .join("dotzz")
-            .join("config.toml");
+        let config_path = crate::utils::get_config_path();
 
         let config = Config::load_or_create(&config_path)?;
         let file_manager = FileManager::new()?;
@@ -58,7 +54,6 @@ impl App {
             should_quit: false,
             runtime,
             last_screen: None,
-            welcome_component: WelcomeComponent::new(),
             main_menu_component: MainMenuComponent::new(has_changes),
             github_auth_component: GitHubAuthComponent::new(),
             dotfile_selection_component: DotfileSelectionComponent::new(),
@@ -71,12 +66,8 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         self.tui.enter()?;
 
-        // Determine initial screen based on whether GitHub is configured
-        if self.config.github.is_none() {
-            self.ui_state.current_screen = Screen::Welcome;
-        } else {
-            self.ui_state.current_screen = Screen::MainMenu;
-        }
+        // Always start with main menu (which is now the welcome screen)
+        self.ui_state.current_screen = Screen::MainMenu;
         // Set last_screen to None so first draw will detect the transition
         self.last_screen = None;
 
@@ -113,6 +104,8 @@ impl App {
         if self.ui_state.current_screen == Screen::MainMenu {
             self.main_menu_component.set_has_changes_to_push(self.ui_state.has_changes_to_push);
             self.main_menu_component.set_selected(self.ui_state.selected_index);
+            // Update changed files for status display
+            self.main_menu_component.update_changed_files(self.ui_state.push_changes.changed_files.clone());
         }
 
         // Update GitHub auth component state
@@ -153,9 +146,14 @@ impl App {
             let area = frame.size();
             match self.ui_state.current_screen {
                 Screen::Welcome => {
-                    let _ = self.welcome_component.render(frame, area);
+                    // Welcome screen removed - redirect to MainMenu
+                    self.ui_state.current_screen = Screen::MainMenu;
+                    self.main_menu_component.update_config(self.config.clone());
+                    let _ = self.main_menu_component.render(frame, area);
                 }
                 Screen::MainMenu => {
+                    // Pass config to main menu for stats
+                    self.main_menu_component.update_config(self.config.clone());
                     let _ = self.main_menu_component.render(frame, area);
                 }
                 Screen::GitHubAuth => {
@@ -191,23 +189,6 @@ impl App {
     fn handle_event(&mut self, event: Event) -> Result<()> {
         // Let components handle events first (for mouse support)
         match self.ui_state.current_screen {
-            Screen::Welcome => {
-                match self.welcome_component.handle_event(event)? {
-                    ComponentAction::Update => {
-                        // Check if GitHub is configured
-                        if self.config.github.is_none() {
-                            self.ui_state.current_screen = Screen::GitHubAuth;
-                        } else {
-                            self.ui_state.current_screen = Screen::MainMenu;
-                        }
-                    }
-                    ComponentAction::Quit => {
-                        self.should_quit = true;
-                    }
-                    _ => {}
-                }
-                return Ok(());
-            }
             Screen::MainMenu => {
                 // Check if Enter was pressed before moving event
                 let is_enter = matches!(event, Event::Key(key) if key.kind == KeyEventKind::Press && key.code == KeyCode::Enter);
@@ -376,36 +357,38 @@ impl App {
             self.check_changes_to_push();
         }
 
-        match self.ui_state.selected_index {
-            0 => {
+        // Get the selected menu item from the component
+        let selected_item = self.main_menu_component.selected_item();
+
+        match selected_item {
+            MenuItem::SetupGitHub => {
                 // Setup GitHub Repository
                 self.ui_state.current_screen = Screen::GitHubAuth;
             }
-            1 => {
+            MenuItem::ScanDotfiles => {
                 // Scan & Select Dotfiles
                 self.scan_dotfiles()?;
                 self.ui_state.current_screen = Screen::DotfileSelection;
             }
-            2 => {
-                // View Synced Files
-                self.ui_state.current_screen = Screen::ViewSyncedFiles;
-            }
-            3 => {
+            // MenuItem::ViewSyncedFiles => {
+            //     // View Synced Files
+            //     self.ui_state.current_screen = Screen::ViewSyncedFiles;
+            // }
+            MenuItem::PushChanges => {
                 // Push Changes - just navigate, don't push yet
                 self.ui_state.current_screen = Screen::PushChanges;
                 // Reset push state
                 self.ui_state.push_changes = crate::ui::PushChangesState::default();
             }
-            4 => {
+            MenuItem::PullChanges => {
                 // Pull Changes
                 self.ui_state.current_screen = Screen::PullChanges;
                 self.pull_changes()?;
             }
-            5 => {
+            MenuItem::ManageProfiles => {
                 // Manage Profiles
                 // TODO: Implement
             }
-            _ => {}
         }
         Ok(())
     }
@@ -413,6 +396,7 @@ impl App {
     /// Check for changes to push and update UI state
     fn check_changes_to_push(&mut self) {
         self.ui_state.has_changes_to_push = false;
+        self.ui_state.push_changes.changed_files.clear();
 
         // Check if GitHub is configured and repo exists
         if self.config.github.is_none() {
@@ -430,21 +414,31 @@ impl App {
             Err(_) => return,
         };
 
-        // Check for uncommitted changes
-        let has_uncommitted = match git_mgr.has_uncommitted_changes() {
-            Ok(true) => true,
-            _ => false,
-        };
+        // Get changed files (this includes both uncommitted and unpushed)
+        match git_mgr.get_changed_files() {
+            Ok(files) => {
+                self.ui_state.push_changes.changed_files = files;
+                self.ui_state.has_changes_to_push = !self.ui_state.push_changes.changed_files.is_empty();
+            }
+            Err(_) => {
+                // Fallback to old method if get_changed_files fails
+                // Check for uncommitted changes
+                let has_uncommitted = match git_mgr.has_uncommitted_changes() {
+                    Ok(true) => true,
+                    _ => false,
+                };
 
-        // Check for unpushed commits
-        let branch = git_mgr.get_current_branch()
-            .unwrap_or_else(|| "main".to_string());
-        let has_unpushed = match git_mgr.has_unpushed_commits("origin", &branch) {
-            Ok(true) => true,
-            _ => false,
-        };
+                // Check for unpushed commits
+                let branch = git_mgr.get_current_branch()
+                    .unwrap_or_else(|| "main".to_string());
+                let has_unpushed = match git_mgr.has_unpushed_commits("origin", &branch) {
+                    Ok(true) => true,
+                    _ => false,
+                };
 
-        self.ui_state.has_changes_to_push = has_uncommitted || has_unpushed;
+                self.ui_state.has_changes_to_push = has_uncommitted || has_unpushed;
+            }
+        }
     }
 
     fn handle_github_auth_input(&mut self, key_code: KeyCode) -> Result<()> {
@@ -665,7 +659,7 @@ impl App {
                     // Create repository
                     let create_result = self.runtime.block_on(async {
                         let client = GitHubClient::new(token.clone());
-                        client.create_repo(&repo_name, "My dotfiles managed by dotzz", false).await
+                        client.create_repo(&repo_name, "My dotfiles managed by dotstate", false).await
                     });
 
                     match create_result {
@@ -680,19 +674,23 @@ impl App {
 
                             // Add remote
                             let remote_url = format!("https://{}@github.com/{}/{}.git", token, username, repo_name);
+                            // Add remote (this also sets up tracking)
                             git_mgr.add_remote("origin", &remote_url)?;
 
                             // Create initial commit
                             std::fs::write(repo_path.join("README.md"),
-                                format!("# {}\n\nDotfiles managed by dotzz", repo_name))?;
+                                format!("# {}\n\nDotfiles managed by dotstate", repo_name))?;
                             git_mgr.commit_all("Initial commit")?;
 
-                            // Get current branch name (might be 'master' or 'main')
+                            // Get current branch name (should be 'main' after ensure_main_branch)
                             let current_branch = git_mgr.get_current_branch()
-                                .unwrap_or_else(|| "main".to_string());
+                                .unwrap_or_else(|| self.config.default_branch.clone());
 
-                            // Push to remote using the actual branch name
+                            // Push to remote using the actual branch name and set upstream
                             git_mgr.push("origin", &current_branch, Some(&token))?;
+
+                            // Ensure tracking is set up after push
+                            git_mgr.set_upstream_tracking("origin", &current_branch)?;
 
                             auth_state.status_message = Some(format!("Repository created and initialized successfully"));
                         }
@@ -1389,7 +1387,7 @@ impl App {
         };
 
         let branch = git_mgr.get_current_branch()
-            .unwrap_or_else(|| "main".to_string());
+            .unwrap_or_else(|| self.config.default_branch.clone());
 
         // Commit all changes
         let result = match git_mgr.commit_all("Update dotfiles") {
@@ -1471,7 +1469,7 @@ impl App {
 
         // Get current branch
         let branch = git_mgr.get_current_branch()
-            .unwrap_or_else(|| "main".to_string());
+            .unwrap_or_else(|| self.config.default_branch.clone());
 
         // Pull from remote
         match git_mgr.pull("origin", &branch) {

@@ -1,4 +1,4 @@
-# dotzz
+# dotstate
 
 A friendly TUI (Terminal User Interface) tool for managing dotfiles with GitHub sync, built with Rust.
 
@@ -43,10 +43,9 @@ cargo test
 ## Project Structure
 
 ```
-dotzz/
+dotstate/
 ├── src/
 │   ├── main.rs          # Entry point
-│   ├── lib.rs           # Library exports
 │   ├── app.rs           # Main application state
 │   ├── config.rs        # Configuration management
 │   ├── file_manager.rs  # File operations

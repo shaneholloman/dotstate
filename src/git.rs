@@ -15,11 +15,17 @@ impl GitManager {
                 .with_context(|| format!("Failed to open repository: {:?}", repo_path))?
         } else {
             // Initialize as a normal (non-bare) repository so it has a working directory
-            let repo = Repository::init(repo_path)
+            let mut repo = Repository::init(repo_path)
                 .with_context(|| format!("Failed to initialize repository: {:?}", repo_path))?;
 
             // Create .gitignore with common patterns for frequently changing files
             Self::ensure_gitignore(repo_path)?;
+
+            // Ensure default branch is "main" (git2 might use system default which could be "master")
+            Self::ensure_main_branch(&repo)?;
+
+            // Configure the repository for better defaults
+            Self::configure_repo(&mut repo)?;
 
             repo
         };
@@ -64,6 +70,52 @@ impl GitManager {
         writeln!(file, "*.swp")?;
         writeln!(file, "*.swo")?;
         writeln!(file, "*~")?;
+
+        Ok(())
+    }
+
+    /// Ensure the repository uses "main" as the default branch
+    /// If the repo was just initialized and has "master", rename it to "main"
+    fn ensure_main_branch(repo: &Repository) -> Result<()> {
+        // Check if HEAD exists and what branch it points to
+        match repo.head() {
+            Ok(head) => {
+                if let Some(branch_name) = head.name().and_then(|n| n.strip_prefix("refs/heads/")) {
+                    if branch_name == "master" {
+                        // Rename master to main
+                        let master_ref = repo.find_reference("refs/heads/master")?;
+                        if let Some(target) = master_ref.target() {
+                            repo.reference(
+                                "refs/heads/main",
+                                target,
+                                true,
+                                "Rename master to main"
+                            )?;
+                            // Update HEAD to point to main
+                            repo.set_head("refs/heads/main")?;
+                            // Delete old master branch
+                            repo.find_reference("refs/heads/master")?.delete()?;
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // No HEAD yet - this is fine, the first commit will create the branch
+                // We can't set HEAD to a non-existent branch, so we'll handle it in commit_all
+            }
+        }
+        Ok(())
+    }
+
+    /// Configure repository with proper defaults
+    fn configure_repo(repo: &mut Repository) -> Result<()> {
+        // Set up default branch name to "main" in git config
+        let mut config = repo.config()
+            .context("Failed to get repository config")?;
+
+        // Set init.defaultBranch to "main" so future operations use main
+        config.set_str("init.defaultBranch", "main")
+            .context("Failed to set init.defaultBranch")?;
 
         Ok(())
     }
@@ -113,8 +165,18 @@ impl GitManager {
         };
 
         let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+
+        // For the first commit, create it on "main" branch explicitly
+        let branch_ref = if parent_commit.is_none() {
+            // First commit - create it on "main" branch
+            "refs/heads/main"
+        } else {
+            // Subsequent commits - use HEAD (which should already point to main)
+            "HEAD"
+        };
+
         self.repo.commit(
-            Some("HEAD"),
+            Some(branch_ref),
             &signature,
             &signature,
             message,
@@ -122,6 +184,13 @@ impl GitManager {
             &parents,
         )
         .context("Failed to create commit")?;
+
+        // After first commit, ensure HEAD points to main
+        if parent_commit.is_none() {
+            // Update HEAD to point to the newly created main branch
+            self.repo.set_head("refs/heads/main")
+                .context("Failed to set HEAD to main branch")?;
+        }
 
         Ok(())
     }
@@ -240,6 +309,48 @@ impl GitManager {
         }
         self.repo.remote(name, url)
             .with_context(|| format!("Failed to add remote '{}'", name))?;
+
+        // Configure remote tracking for the current branch
+        self.configure_remote_tracking(name)?;
+
+        Ok(())
+    }
+
+    /// Configure remote tracking for the current branch
+    fn configure_remote_tracking(&self, remote_name: &str) -> Result<()> {
+        // Get current branch (should be main)
+        if let Some(branch_name) = self.get_current_branch() {
+            // Set up tracking via git config
+            // Format: branch.<name>.remote = <remote>
+            // Format: branch.<name>.merge = refs/heads/<name>
+            let mut config = self.repo.config()
+                .context("Failed to get repository config")?;
+
+            let remote_key = format!("branch.{}.remote", branch_name);
+            let merge_key = format!("branch.{}.merge", branch_name);
+
+            config.set_str(&remote_key, remote_name)
+                .context("Failed to set branch remote")?;
+            config.set_str(&merge_key, &format!("refs/heads/{}", branch_name))
+                .context("Failed to set branch merge")?;
+        }
+        Ok(())
+    }
+
+    /// Set upstream tracking for a branch (public method for use after push)
+    pub fn set_upstream_tracking(&self, remote_name: &str, branch_name: &str) -> Result<()> {
+        // Set up tracking via git config
+        let mut config = self.repo.config()
+            .context("Failed to get repository config")?;
+
+        let remote_key = format!("branch.{}.remote", branch_name);
+        let merge_key = format!("branch.{}.merge", branch_name);
+
+        config.set_str(&remote_key, remote_name)
+            .context("Failed to set branch remote")?;
+        config.set_str(&merge_key, &format!("refs/heads/{}", branch_name))
+            .context("Failed to set branch merge")?;
+
         Ok(())
     }
 
@@ -251,12 +362,12 @@ impl GitManager {
         let name = config
             .as_ref()
             .and_then(|c| c.get_string("user.name").ok())
-            .unwrap_or_else(|| "dotzz".to_string());
+            .unwrap_or_else(|| "dotstate".to_string());
 
         let email = config
             .as_ref()
             .and_then(|c| c.get_string("user.email").ok())
-            .unwrap_or_else(|| "dotzz@localhost".to_string());
+            .unwrap_or_else(|| "dotstate@localhost".to_string());
 
         Ok(Signature::now(&name, &email)?)
     }

@@ -15,9 +15,12 @@ pub struct Config {
     pub default_dotfiles: Vec<String>,
     /// Repository root path (where dotfiles are stored locally)
     pub repo_path: PathBuf,
-    /// Repository name on GitHub (default: dotzz-storage)
+    /// Repository name on GitHub (default: dotstate-storage)
     #[serde(default = "default_repo_name")]
     pub repo_name: String,
+    /// Default branch name (default: main)
+    #[serde(default = "default_branch_name")]
+    pub default_branch: String,
     /// List of synced files (relative paths from home directory)
     #[serde(default)]
     pub synced_files: Vec<String>,
@@ -42,7 +45,11 @@ pub struct Profile {
 }
 
 fn default_repo_name() -> String {
-    "dotzz-storage".to_string()
+    "dotstate-storage".to_string()
+}
+
+fn default_branch_name() -> String {
+    "main".to_string()
 }
 
 impl Config {
@@ -57,6 +64,9 @@ impl Config {
             // Set defaults for missing fields (for backward compatibility)
             if config.repo_name.is_empty() {
                 config.repo_name = default_repo_name();
+            }
+            if config.default_branch.is_empty() {
+                config.default_branch = default_branch_name();
             }
 
             Ok(config)
@@ -108,8 +118,9 @@ impl Config {
             default_dotfiles: Self::default_dotfile_list(),
             repo_path: dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
-                .join(".dotzz"),
-            repo_name: "dotzz-storage".to_string(),
+                .join(".dotstate"),
+            repo_name: "dotstate-storage".to_string(),
+            default_branch: "main".to_string(),
             synced_files: Vec::new(),
         }
     }

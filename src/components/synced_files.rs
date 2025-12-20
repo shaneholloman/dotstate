@@ -50,13 +50,13 @@ impl Component for SyncedFilesComponent {
             .style(Style::default().bg(Color::Black));
         frame.render_widget(background, area);
 
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header: Use common header component
         let _ = Header::render(
             frame,
             header_chunk,
-            "dotzz - View Synced Files",
+            "dotstate - View Synced Files",
             "These are the files currently synced to your repository. Files are stored in the repo and symlinked back to their original locations."
         )?;
 

@@ -1,5 +1,5 @@
 // Reusable UI widgets
 
-// Will add widgets here as we refactor
-// For now, keeping existing widget usage in components
+pub mod logo;
 
+pub use logo::DotstateLogo;

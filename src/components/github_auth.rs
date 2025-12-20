@@ -54,13 +54,13 @@ impl Component for GitHubAuthComponent {
         frame.render_widget(background, area);
 
         // Layout: Title/Description, Content, Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header: Use common header component
         let _ = Header::render(
             frame,
             header_chunk,
-            "dotzz - GitHub Setup",
+            "dotstate - GitHub Setup",
             "Enter your GitHub Personal Access Token (PAT) to connect your repository. The token will be stored securely on your system."
         )?;
 
@@ -140,7 +140,7 @@ impl Component for GitHubAuthComponent {
                 "6. Paste it here",
                 "",
                 "Security:",
-                "• Token stored in: ~/.config/dotzz/config.toml",
+                "• Token stored in: ~/.config/dotstate/config.toml",
                 "• File permissions: 600 (owner read/write only)",
                 "• Never share your token!",
             ];

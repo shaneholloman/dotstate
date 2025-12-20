@@ -1,4 +1,4 @@
-// Component-based architecture for dotzz TUI
+// Component-based architecture for dotstate TUI
 
 pub mod component;
 pub mod header;
@@ -6,7 +6,6 @@ pub mod footer;
 pub mod input_field;
 pub mod file_preview;
 pub mod message_box;
-pub mod welcome;
 pub mod main_menu;
 pub mod github_auth;
 pub mod dotfile_selection;
@@ -18,8 +17,7 @@ pub use component::{Component, ComponentAction};
 // Footer and InputField are used directly via their module paths
 // pub use footer::Footer;
 // pub use input_field::InputField;
-pub use welcome::WelcomeComponent;
-pub use main_menu::MainMenuComponent;
+pub use main_menu::{MainMenuComponent, MenuItem};
 pub use github_auth::GitHubAuthComponent;
 pub use dotfile_selection::DotfileSelectionComponent;
 pub use synced_files::SyncedFilesComponent;

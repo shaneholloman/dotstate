@@ -37,7 +37,7 @@ impl Component for MessageComponent {
             .style(Style::default().bg(Color::Black));
         frame.render_widget(background, area);
 
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header: Use common header component
         let description = if self.screen_type == Screen::PushChanges {

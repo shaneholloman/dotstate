@@ -61,7 +61,7 @@ impl GitHubClient {
         info!("Token length: {} characters", self.token.len());
         info!("Token starts with: {}", if self.token.starts_with("ghp_") { "ghp_ (correct)" } else { &self.token[..self.token.len().min(4)] });
         info!("Authorization header: token {}", token_preview);
-        info!("User-Agent: dotzz");
+        info!("User-Agent: dotstate");
         info!("Accept: application/vnd.github.v3+json");
         info!("Full auth header value (first 20 chars): {}", &auth_header[..auth_header.len().min(20)]);
 
@@ -69,7 +69,7 @@ impl GitHubClient {
             .http_client
             .get(url)
             .header("Authorization", &auth_header)
-            .header("User-Agent", "dotzz")
+            .header("User-Agent", "dotstate")
             .header("Accept", "application/vnd.github.v3+json");
 
         // Log the actual request being built
@@ -137,7 +137,7 @@ impl GitHubClient {
             .http_client
             .get(&url)
             .header("Authorization", format!("token {}", self.token))
-            .header("User-Agent", "dotzz")
+            .header("User-Agent", "dotstate")
             .header("Accept", "application/vnd.github.v3+json")
             .send()
             .await
@@ -181,7 +181,7 @@ impl GitHubClient {
         info!("URL: {}", url);
         info!("Method: POST");
         info!("Authorization header: token {}", token_preview);
-        info!("User-Agent: dotzz");
+        info!("User-Agent: dotstate");
         info!("Accept: application/vnd.github.v3+json");
         info!("Request body: name={}, description={}, private={}, auto_init=true", name, description, private);
 
@@ -189,7 +189,7 @@ impl GitHubClient {
             .http_client
             .post(url)
             .header("Authorization", &auth_header)
-            .header("User-Agent", "dotzz")
+            .header("User-Agent", "dotstate")
             .header("Accept", "application/vnd.github.v3+json")
             .json(&request_body)
             .send()
@@ -254,7 +254,7 @@ pub async fn authenticate_with_pat() -> Result<String> {
     let response = client
         .get("https://api.github.com/user")
         .header("Authorization", format!("Bearer {}", token))
-        .header("User-Agent", "dotzz")
+        .header("User-Agent", "dotstate")
         .send()
         .await
         .context("Failed to verify token")?;

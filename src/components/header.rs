@@ -1,6 +1,7 @@
 use anyhow::Result;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use crate::widgets::DotstateLogo;
 
 /// Common header component for all screens
 pub struct Header;
@@ -11,64 +12,71 @@ impl Header {
     /// # Arguments
     /// * `frame` - The frame to render to
     /// * `area` - The area to render the header in
-    /// * `title` - The title text (e.g., "dotzz - Main Menu")
+    /// * `title` - The title text (e.g., "dotstate - Main Menu")
     /// * `description` - The description text
     ///
     /// # Returns
     /// The height of the header (for layout calculations)
     pub fn render(frame: &mut Frame, area: Rect, title: &str, description: &str) -> Result<u16, anyhow::Error> {
-        // Header block with cyan border
-        let title_block = Block::default()
+        // Main header block with cyan border, padding, and title
+        let header_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan))
-            .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
+            .title(title)
+            .title_style(Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD))
+            .title_alignment(Alignment::Center)
+            .padding(ratatui::widgets::Padding::new(1, 1, 0, 0));
 
-        // Split header area for title and description
-        // Use a 3-line layout: 1 for title, 2 for description (with vertical centering)
-        let header_inner = Layout::default()
-            .direction(Direction::Vertical)
+        // Get the inner area (inside borders and padding)
+        let inner_area = header_block.inner(area);
+
+        // Render the header block
+        frame.render_widget(header_block, area);
+
+        // Split horizontally: logo on left, description on right
+        let horizontal_chunks = Layout::default()
+            .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(1), // Title
-                Constraint::Min(0),    // Flexible space for description
+                Constraint::Length(30), // Logo width (small logo is ~28 chars + spacing)
+                Constraint::Min(0),      // Rest for description
             ])
-            .split(area);
+            .split(inner_area);
 
-        // For description, create a centered layout within its area
-        let desc_area = header_inner[1];
-        let desc_inner = Layout::default()
+        // Logo area (borderless block for positioning)
+        let logo_block = Block::default()
+            .padding(ratatui::widgets::Padding::new(0, 1, 0, 0));
+        let logo_area = logo_block.inner(horizontal_chunks[0]);
+        frame.render_widget(logo_block, horizontal_chunks[0]);
+        frame.render_widget(DotstateLogo::small(), logo_area);
+
+        // Description area (borderless, just for padding)
+        let desc_area = Block::default()
+            .padding(ratatui::widgets::Padding::new(0, 0, 0, 0))
+            .inner(horizontal_chunks[1]);
+
+        // Center description vertically
+        let desc_lines = description.lines().count() as u16;
+        let desc_height = desc_area.height;
+        let top_padding = (desc_height.saturating_sub(desc_lines)) / 2;
+
+        let desc_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(0),    // Flexible top padding
-                Constraint::Length(2), // Description text (2 lines)
-                Constraint::Min(0),    // Flexible bottom padding
+                Constraint::Length(top_padding),
+                Constraint::Min(0),
             ])
             .split(desc_area);
 
-        // Title paragraph
-        let title_para = Paragraph::new(title)
-            .style(Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD))
+        let description_para = Paragraph::new(description)
+            .style(Style::default().fg(Color::White))
             .alignment(Alignment::Center)
             .wrap(Wrap { trim: true });
 
-        // Description paragraph - white color, centered horizontally and vertically
-        let description_para = Paragraph::new(description)
-            .style(Style::default().fg(Color::White)) // White color
-            .wrap(Wrap { trim: true })
-            .alignment(Alignment::Center);
+        // Render description
+        frame.render_widget(description_para, desc_layout[1]);
 
-        // Render the bordered block first
-        frame.render_widget(title_block, area);
-
-        // Render title and description inside the block
-        frame.render_widget(title_para, header_inner[0]);
-        frame.render_widget(description_para, desc_inner[1]);
-
-        // Return the height of the header
-        // Actual calculation: Block with borders (2) + padding top (1) + title (1) + description area (needs 2 for text) + padding bottom (1) = 7
-        // But we use the area height that was allocated, which should be 6 based on our constraint
-        // The block padding and borders are included in the area, so the content fits within
         Ok(area.height)
     }
 }
