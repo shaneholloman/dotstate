@@ -33,7 +33,11 @@ pub enum Commands {
     /// Activate the current profile (create symlinks)
     Activate,
     /// Deactivate the current profile (restore original files)
-    Deactivate,
+    Deactivate {
+        /// Completely remove symlinks without restoring files
+        #[arg(long)]
+        completely: bool,
+    },
     /// Show help for a specific command
     Help {
         /// Command to show help for
@@ -50,7 +54,7 @@ impl Cli {
             Some(Commands::List { verbose }) => Self::cmd_list(verbose),
             Some(Commands::Add { path }) => Self::cmd_add(path),
             Some(Commands::Activate) => Self::cmd_activate(),
-            Some(Commands::Deactivate) => Self::cmd_deactivate(),
+            Some(Commands::Deactivate { completely }) => Self::cmd_deactivate(completely),
             Some(Commands::Help { command }) => Self::cmd_help(command),
             None => {
                 // No command provided, launch TUI
@@ -300,7 +304,7 @@ impl Cli {
         Ok(())
     }
 
-    fn cmd_deactivate() -> Result<()> {
+    fn cmd_deactivate(completely: bool) -> Result<()> {
         let config_path = crate::utils::get_config_path();
         let mut config = Config::load_or_create(&config_path)
             .context("Failed to load configuration")?;
@@ -313,8 +317,13 @@ impl Cli {
         // Get active profile
         let active_profile_name = &config.active_profile;
 
-        println!("🔓 Deactivating profile '{}'...", active_profile_name);
-        println!("   This will restore original files from the repository");
+        if completely {
+            println!("🔓 Deactivating profile '{}' (completely)...", active_profile_name);
+            println!("   This will remove symlinks without restoring files");
+        } else {
+            println!("🔓 Deactivating profile '{}'...", active_profile_name);
+            println!("   This will restore original files from the repository");
+        }
 
         // Create SymlinkManager
         let mut symlink_mgr = SymlinkManager::new_with_backup(
@@ -391,7 +400,7 @@ impl Cli {
         }
 
         // Deactivate profile
-        let operations = symlink_mgr.deactivate_profile(active_profile_name)?;
+        let operations = symlink_mgr.deactivate_profile_with_restore(active_profile_name, !completely)?;
 
         // Report results
         let success_count = operations.iter()
@@ -419,8 +428,13 @@ impl Cli {
             config.save(&config_path)
                 .context("Failed to save configuration")?;
 
-            println!("✅ Successfully deactivated profile '{}'", active_profile_name);
-            println!("   {} files restored", success_count);
+            if completely {
+                println!("✅ Successfully deactivated profile '{}'", active_profile_name);
+                println!("   {} symlinks removed", success_count);
+            } else {
+                println!("✅ Successfully deactivated profile '{}'", active_profile_name);
+                println!("   {} files restored", success_count);
+            }
             println!("💡 Profile is now deactivated. Use 'dotstate activate' to reactivate.");
         }
 
@@ -441,6 +455,7 @@ impl Cli {
             println!("  add       - Add a file to sync");
             println!("  activate  - Activate current profile (create symlinks)");
             println!("  deactivate - Deactivate current profile (restore files)");
+            println!("    --completely - Remove symlinks without restoring files");
             println!("  help      - Show help for a command");
         }
         Ok(())

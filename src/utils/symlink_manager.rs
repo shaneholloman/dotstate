@@ -187,7 +187,12 @@ impl SymlinkManager {
 
     /// Deactivate a profile by removing its symlinks
     pub fn deactivate_profile(&mut self, profile_name: &str) -> Result<Vec<SymlinkOperation>> {
-        info!("Deactivating profile: {}", profile_name);
+        self.deactivate_profile_with_restore(profile_name, true)
+    }
+
+    /// Deactivate a profile, optionally restoring original files
+    pub fn deactivate_profile_with_restore(&mut self, profile_name: &str, restore_files: bool) -> Result<Vec<SymlinkOperation>> {
+        info!("Deactivating profile: {} (restore_files: {})", profile_name, restore_files);
         let mut operations = Vec::new();
         let profile_path = self.repo_path.join(profile_name);
 
@@ -200,7 +205,11 @@ impl SymlinkManager {
 
         for symlink in profile_symlinks {
             debug!("Removing symlink: {:?}", symlink.target);
-            let operation = self.remove_symlink(&symlink)?;
+            let operation = if restore_files {
+                self.remove_symlink_with_restore(&symlink)?
+            } else {
+                self.remove_symlink_completely(&symlink)?
+            };
             operations.push(operation);
         }
 
@@ -442,8 +451,8 @@ impl SymlinkManager {
         })
     }
 
-    /// Remove a symlink, restoring backup if it exists
-    fn remove_symlink(&self, tracked: &TrackedSymlink) -> Result<SymlinkOperation> {
+    /// Remove a symlink, restoring backup if it exists, or copying from repo if no backup
+    fn remove_symlink_with_restore(&self, tracked: &TrackedSymlink) -> Result<SymlinkOperation> {
         let timestamp = Utc::now();
 
         // Check if the symlink still exists
@@ -472,12 +481,46 @@ impl SymlinkManager {
         fs::remove_file(&tracked.target)
             .context("Failed to remove symlink")?;
 
-        // Restore backup if it exists
-        if let Some(backup) = &tracked.backup {
-            if backup.exists() {
-                fs::rename(backup, &tracked.target)
-                    .context("Failed to restore backup")?;
+        // Restore from repo source first (source of truth)
+        // Only fall back to backup if repo file doesn't exist
+        let restored = if tracked.source.exists() {
+            // Create parent directories if needed
+            if let Some(parent) = tracked.target.parent() {
+                fs::create_dir_all(parent)
+                    .context("Failed to create parent directory for restored file")?;
             }
+
+            // Copy file or directory from repo (source of truth)
+            let metadata = tracked.source.metadata()
+                .context("Failed to read source metadata")?;
+
+            if metadata.is_dir() {
+                crate::file_manager::copy_dir_all(&tracked.source, &tracked.target)
+                    .context("Failed to copy directory from repo")?;
+            } else {
+                fs::copy(&tracked.source, &tracked.target)
+                    .context("Failed to copy file from repo")?;
+            }
+            true
+        } else {
+            // Repo file doesn't exist - try backup as last resort
+            if let Some(backup) = &tracked.backup {
+                if backup.exists() {
+                    warn!("Repo file {:?} not found, restoring from backup {:?}", tracked.source, backup);
+                    // Restore from backup (last resort)
+                    fs::rename(backup, &tracked.target)
+                        .context("Failed to restore backup")?;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        if !restored {
+            warn!("Could not restore {:?}: repo file doesn't exist and no backup available", tracked.target);
         }
 
         Ok(SymlinkOperation {
@@ -487,6 +530,50 @@ impl SymlinkManager {
             status: OperationStatus::Success,
             timestamp,
         })
+    }
+
+    /// Remove a symlink completely without restoring any files
+    fn remove_symlink_completely(&self, tracked: &TrackedSymlink) -> Result<SymlinkOperation> {
+        let timestamp = Utc::now();
+
+        // Check if the symlink still exists
+        if !tracked.target.exists() && !tracked.target.symlink_metadata().is_ok() {
+            return Ok(SymlinkOperation {
+                source: tracked.source.clone(),
+                target: tracked.target.clone(),
+                backup: tracked.backup.clone(),
+                status: OperationStatus::Skipped("Symlink does not exist".to_string()),
+                timestamp,
+            });
+        }
+
+        // Verify it's still our symlink
+        if !self.is_our_symlink(&tracked.target)? {
+            return Ok(SymlinkOperation {
+                source: tracked.source.clone(),
+                target: tracked.target.clone(),
+                backup: tracked.backup.clone(),
+                status: OperationStatus::Skipped("Not our symlink".to_string()),
+                timestamp,
+            });
+        }
+
+        // Remove the symlink (no restore)
+        fs::remove_file(&tracked.target)
+            .context("Failed to remove symlink")?;
+
+        Ok(SymlinkOperation {
+            source: tracked.source.clone(),
+            target: tracked.target.clone(),
+            backup: tracked.backup.clone(),
+            status: OperationStatus::Success,
+            timestamp,
+        })
+    }
+
+    /// Remove a symlink, restoring backup if it exists (legacy method, calls remove_symlink_with_restore)
+    fn remove_symlink(&self, tracked: &TrackedSymlink) -> Result<SymlinkOperation> {
+        self.remove_symlink_with_restore(tracked)
     }
 
 
