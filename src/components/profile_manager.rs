@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarState, ScrollbarOrientation, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation, Wrap};
 use crate::components::component::{Component, ComponentAction};
 use crate::components::header::Header;
 use crate::components::footer::Footer;
@@ -83,7 +83,11 @@ impl ProfileManagerComponent {
 }
 
 impl Component for ProfileManagerComponent {
-    fn render(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+    /// Render the component (required by Component trait)
+    ///
+    /// This method is not used - `render_with_config` is used instead.
+    /// This is kept to satisfy the Component trait interface.
+    fn render(&mut self, _frame: &mut Frame, _area: Rect) -> Result<()> {
         // This method is required by the trait but we'll use render_with_config instead
         // Default implementation - should not be called
         Ok(())
@@ -186,7 +190,7 @@ impl ProfileManagerComponent {
 
         let items: Vec<ListItem> = profiles.iter()
             .enumerate()
-            .map(|(idx, profile)| {
+            .map(|(_idx, profile)| {
                 let is_active = profile.name == *active_profile;
                 let icon = if is_active { "⭐" } else { "  " };
                 let name_style = if is_active {

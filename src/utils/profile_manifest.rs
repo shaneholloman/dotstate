@@ -144,11 +144,13 @@ impl ProfileManifest {
     }
 
     /// Get all profile names
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn profile_names(&self) -> Vec<String> {
         self.profiles.iter().map(|p| p.name.clone()).collect()
     }
 
     /// Check if a profile exists in the manifest
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn has_profile(&self, name: &str) -> bool {
         self.profiles.iter().any(|p| p.name == name)
     }
@@ -177,7 +179,7 @@ mod tests {
         manifest.save(repo_path).unwrap();
 
         // Load
-        let loaded = ProfileManifest::load(repo_path).unwrap();
+        let mut loaded = ProfileManifest::load(repo_path).unwrap();
         assert_eq!(loaded.profiles.len(), 2);
         assert!(loaded.has_profile("Personal"));
         assert!(loaded.has_profile("Work"));

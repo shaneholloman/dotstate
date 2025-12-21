@@ -11,7 +11,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, Mou
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 /// Main application state
 pub struct App {
@@ -535,8 +535,14 @@ impl App {
                                                     Some(state.create_description_input.clone())
                                                 };
                                                 let copy_from = state.create_copy_from;
-                                                drop(state); // Release borrow
-                                                match self.create_profile(&name, description, copy_from) {
+                                                // Clone values before releasing borrow
+                                                let name_clone = name.clone();
+                                                let description_clone = description.clone();
+                                                // Release borrow by ending scope
+                                                {
+                                                    let _ = state;
+                                                }
+                                                match self.create_profile(&name_clone, description_clone, copy_from) {
                                                     Ok(_) => {
                                                         // Refresh config
                                                         self.config = Config::load_or_create(&self.config_path)?;
@@ -646,8 +652,11 @@ impl App {
                                             if let Some(idx) = state.list_state.selected() {
                                                 if let Some(profile) = profiles.get(idx) {
                                                     let profile_name = profile.name.clone();
-                                                    drop(state); // Release borrow
-                                                    drop(profiles); // Release borrow
+                                                    // Release borrows by ending scope
+                                                    {
+                                                        let _ = state;
+                                                        let _ = profiles;
+                                                    }
                                                     match self.switch_profile(&profile_name) {
                                                         Ok(_) => {
                                                             // Refresh config
@@ -663,7 +672,13 @@ impl App {
                                                         }
                                                         Err(e) => {
                                                             error!("Failed to switch profile: {}", e);
-                                                            // TODO: Show error message in UI
+                                                            // Show error message in UI
+                                                            self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
+                                                            self.message_component = Some(MessageComponent::new(
+                                                                "Error".to_string(),
+                                                                format!("Failed to switch profile: {}", e),
+                                                                Screen::ManageProfiles,
+                                                            ));
                                                         }
                                                     }
                                                     return Ok(());
@@ -685,9 +700,15 @@ impl App {
                                                     if let Some(profile) = profiles.get(idx) {
                                                         let old_name = profile.name.clone();
                                                         let new_name = state.rename_input.clone();
-                                                        drop(state); // Release borrow
-                                                        drop(profiles); // Release borrow
-                                                        match self.rename_profile(&old_name, &new_name) {
+                                                        // Clone values before releasing borrows
+                                                        let old_name_clone = old_name.clone();
+                                                        let new_name_clone = new_name.clone();
+                                                        // Release borrows by ending scope
+                                                        {
+                                                            let _ = state;
+                                                            let _ = profiles;
+                                                        }
+                                                        match self.rename_profile(&old_name_clone, &new_name_clone) {
                                                             Ok(_) => {
                                                                 // Refresh config
                                                                 self.config = Config::load_or_create(&self.config_path)?;
@@ -743,17 +764,22 @@ impl App {
                                                 if let Some(profile) = profiles.get(idx) {
                                                     if state.delete_confirm_input == profile.name {
                                                         let profile_name = profile.name.clone();
-                                                        let idx = idx;
-                                                        drop(state); // Release borrow
-                                                        drop(profiles); // Release borrow
-                                                        match self.delete_profile(&profile_name) {
+                                                        let idx_clone = idx;
+                                                        // Clone values before releasing borrows
+                                                        let profile_name_clone = profile_name.clone();
+                                                        // Release borrows by ending scope
+                                                        {
+                                                            let _ = state;
+                                                            let _ = profiles;
+                                                        }
+                                                        match self.delete_profile(&profile_name_clone) {
                                                             Ok(_) => {
                                                                 // Refresh config
                                                                 self.config = Config::load_or_create(&self.config_path)?;
                                                                 self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
                                                                 // Update list selection
                                                                 if !self.config.profiles.is_empty() {
-                                                                    let new_idx = (idx.min(self.config.profiles.len().saturating_sub(1)));
+                                                                    let new_idx = idx_clone.min(self.config.profiles.len().saturating_sub(1));
                                                                     self.ui_state.profile_manager.list_state.select(Some(new_idx));
                                                                 } else {
                                                                     self.ui_state.profile_manager.list_state.select(None);
@@ -761,7 +787,13 @@ impl App {
                                                             }
                                                             Err(e) => {
                                                                 error!("Failed to delete profile: {}", e);
-                                                                // TODO: Show error message in UI
+                                                                // Show error message in UI
+                                                                self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
+                                                                self.message_component = Some(MessageComponent::new(
+                                                                    "Error".to_string(),
+                                                                    format!("Failed to delete profile: {}", e),
+                                                                    Screen::ManageProfiles,
+                                                                ));
                                                             }
                                                         }
                                                         return Ok(());
@@ -1487,7 +1519,7 @@ impl App {
                                 format!("# {}\n\nDotfiles managed by dotstate", repo_name))?;
 
                             // Create profile manifest with default profile
-                            let mut manifest = crate::utils::ProfileManifest {
+                            let manifest = crate::utils::ProfileManifest {
                                 profiles: vec![crate::utils::ProfileInfo {
                                     name: self.config.active_profile.clone(),
                                     description: self.config.profiles.first()
@@ -1750,7 +1782,10 @@ impl App {
                 KeyCode::Char('s') | KeyCode::Char('S') => {
                     // Save changes
                     state.show_unsaved_warning = false;
-                    drop(state); // Release borrow before calling sync
+                    // Release borrow by ending scope
+                    {
+                        let _ = state;
+                    }
                     self.sync_selected_files()?;
                     self.ui_state.current_screen = Screen::MainMenu;
                     return Ok(());
@@ -1758,7 +1793,10 @@ impl App {
                 KeyCode::Char('d') | KeyCode::Char('D') => {
                     // Discard changes
                     state.show_unsaved_warning = false;
-                    drop(state); // Release borrow before calling scan
+                    // Release borrow by ending scope
+                    {
+                        let _ = state;
+                    }
                     // Reload selection from config to discard changes
                     self.scan_dotfiles()?;
                     self.ui_state.current_screen = Screen::MainMenu;
@@ -2050,6 +2088,9 @@ impl App {
     }
 
     /// Check if there are unsaved changes (selected files differ from synced files)
+    /// Check if there are unsaved changes in the dotfile selection
+    /// Compares the currently selected files with the synced files in the active profile
+    #[allow(dead_code)]
     fn has_unsaved_changes(&self) -> bool {
         let state = &self.ui_state.dotfile_selection;
 

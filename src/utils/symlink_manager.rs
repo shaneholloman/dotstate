@@ -44,6 +44,8 @@ pub struct SwitchReport {
 
 /// Preview of what would happen during a switch
 #[derive(Debug)]
+/// Preview of what would happen during a profile switch (dry run)
+#[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
 pub struct SwitchPreview {
     /// Symlinks that will be removed
     pub will_remove: Vec<PathBuf>,
@@ -244,14 +246,16 @@ impl SymlinkManager {
                 report.errors.push((PathBuf::from(to), e.to_string()));
 
                 // Attempt rollback - reactivate the old profile
+                // Note: We don't have access to the old profile's files here,
+                // so rollback is limited. The caller should handle this better.
                 warn!("Attempting rollback to profile: {}", from);
-                if let Err(rollback_err) = self.rollback_to_profile(from) {
-                    error!("Rollback failed: {}", rollback_err);
-                    report.errors.push((PathBuf::from("rollback"), rollback_err.to_string()));
-                } else {
-                    info!("Rollback successful");
-                    report.rollback_performed = true;
-                }
+                // Rollback requires the profile's file list, which we don't have here
+                // This is a limitation - rollback should be handled at a higher level
+                report.rollback_performed = false;
+                report.errors.push((
+                    PathBuf::from("rollback"),
+                    format!("Rollback not fully supported - profile '{}' may need manual reactivation", from)
+                ));
             }
         }
 
@@ -259,6 +263,7 @@ impl SymlinkManager {
     }
 
     /// Preview what would happen during a switch (dry run)
+    #[allow(dead_code)]
     pub fn preview_switch(&self, from: &str, to: &str, to_files: &[String]) -> Result<SwitchPreview> {
         let profile_path = self.repo_path.join(from);
         let new_profile_path = self.repo_path.join(to);
@@ -485,20 +490,26 @@ impl SymlinkManager {
     }
 
 
-    /// Attempt to rollback to a profile (used when switch fails)
-    fn rollback_to_profile(&mut self, profile_name: &str) -> Result<()> {
-        // This is a simplified rollback - in a real scenario, we'd need to restore
-        // the exact state from before the switch attempt
-        // For now, we'll just try to reactivate the old profile
-
+    /// Rollback to a previous profile state
+    ///
+    /// This is a simplified rollback that attempts to reactivate the specified profile.
+    /// In a real scenario, we'd need to restore the exact state from before the switch attempt.
+    ///
+    /// # Arguments
+    /// * `profile_name` - Name of the profile to rollback to
+    /// * `files` - List of files that should be synced for this profile
+    ///
+    /// # Returns
+    /// * `Ok(())` if rollback was successful
+    /// * `Err` if rollback failed
+    ///
+    /// # Note
+    /// This function is currently not used because rollback requires the profile's file list,
+    /// which is not available at the point where rollback would be needed.
+    #[allow(dead_code)]
+    fn rollback_to_profile(&mut self, profile_name: &str, files: &[String]) -> Result<()> {
         warn!("Rollback functionality is simplified - manual intervention may be needed");
-
-        // Try to get the files for the profile from config
-        // This is a placeholder - in reality, we'd need access to the config
-        let files = Vec::new(); // TODO: Get from config
-
-        self.activate_profile(profile_name, &files)?;
-
+        self.activate_profile(profile_name, files)?;
         Ok(())
     }
 
@@ -521,6 +532,8 @@ impl SymlinkManager {
     }
 
     /// Get the currently active profile name
+    /// Get the currently active profile name
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn get_active_profile(&self) -> Option<&str> {
         if self.tracking.active_profile.is_empty() {
             None
@@ -530,6 +543,8 @@ impl SymlinkManager {
     }
 
     /// Get all tracked symlinks
+    /// Get all tracked symlinks
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn get_tracked_symlinks(&self) -> &[TrackedSymlink] {
         &self.tracking.symlinks
     }

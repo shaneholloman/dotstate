@@ -24,5 +24,5 @@ pub use dotfile_selection::DotfileSelectionComponent;
 pub use synced_files::SyncedFilesComponent;
 pub use message::MessageComponent;
 pub use push_changes::PushChangesComponent;
-pub use profile_manager::{ProfileManagerComponent, ProfileManagerState};
+pub use profile_manager::{ProfileManagerComponent};
 

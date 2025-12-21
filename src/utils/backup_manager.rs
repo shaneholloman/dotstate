@@ -59,6 +59,7 @@ impl BackupManager {
     }
 
     /// Get the backup root directory
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn backup_root(&self) -> &Path {
         &self.backup_root
     }
@@ -75,3 +76,30 @@ impl Default for BackupManager {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backup_manager_creation() {
+        // Test that we can create a backup manager
+        let manager = BackupManager::new();
+        assert!(manager.is_ok());
+    }
+
+    #[test]
+    fn test_backup_session_creation() {
+        let manager = BackupManager::new().unwrap();
+        let session = manager.create_backup_session();
+        assert!(session.is_ok());
+
+        let session_path = session.unwrap();
+        assert!(session_path.exists());
+        assert!(session_path.is_dir());
+
+        // Check that the directory name matches the timestamp format
+        let dir_name = session_path.file_name().unwrap().to_str().unwrap();
+        assert!(dir_name.len() == 19); // YYYY-MM-DDTHH:MM:SS
+        assert!(dir_name.contains('T'));
+    }
+}

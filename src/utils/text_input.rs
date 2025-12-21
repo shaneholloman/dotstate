@@ -75,3 +75,113 @@ pub fn handle_delete(text: &mut String, cursor_pos: &mut usize) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_char_insertion() {
+        let mut text = String::from("hello");
+        let mut cursor = 2;
+
+        handle_char_insertion(&mut text, &mut cursor, 'x');
+        assert_eq!(text, "hexllo");
+        assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn test_char_insertion_at_end() {
+        let mut text = String::from("hello");
+        let mut cursor = 5;
+
+        handle_char_insertion(&mut text, &mut cursor, '!');
+        assert_eq!(text, "hello!");
+        assert_eq!(cursor, 6);
+    }
+
+    #[test]
+    fn test_cursor_movement_left() {
+        let text = "hello";
+        let mut cursor = 3;
+
+        handle_cursor_movement(&text, &mut cursor, KeyCode::Left);
+        assert_eq!(cursor, 2);
+    }
+
+    #[test]
+    fn test_cursor_movement_right() {
+        let text = "hello";
+        let mut cursor = 2;
+
+        handle_cursor_movement(&text, &mut cursor, KeyCode::Right);
+        assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn test_cursor_movement_home() {
+        let text = "hello";
+        let mut cursor = 3;
+
+        handle_cursor_movement(&text, &mut cursor, KeyCode::Home);
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn test_cursor_movement_end() {
+        let text = "hello";
+        let mut cursor = 2;
+
+        handle_cursor_movement(&text, &mut cursor, KeyCode::End);
+        assert_eq!(cursor, 5);
+    }
+
+    #[test]
+    fn test_backspace() {
+        let mut text = String::from("hello");
+        let mut cursor = 3;
+
+        handle_backspace(&mut text, &mut cursor);
+        assert_eq!(text, "helo"); // Deletes 'l' at position 2
+        assert_eq!(cursor, 2);
+    }
+
+    #[test]
+    fn test_backspace_at_start() {
+        let mut text = String::from("hello");
+        let mut cursor = 0;
+
+        handle_backspace(&mut text, &mut cursor);
+        assert_eq!(text, "hello"); // No change
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn test_delete() {
+        let mut text = String::from("hello");
+        let mut cursor = 2;
+
+        handle_delete(&mut text, &mut cursor);
+        assert_eq!(text, "helo");
+        assert_eq!(cursor, 2); // Cursor doesn't move
+    }
+
+    #[test]
+    fn test_delete_at_end() {
+        let mut text = String::from("hello");
+        let mut cursor = 5;
+
+        handle_delete(&mut text, &mut cursor);
+        assert_eq!(text, "hello"); // No change
+        assert_eq!(cursor, 5);
+    }
+
+    #[test]
+    fn test_unicode_handling() {
+        let mut text = String::from("héllo");
+        let mut cursor = 2;
+
+        handle_char_insertion(&mut text, &mut cursor, 'x');
+        assert_eq!(text, "héxllo");
+        assert_eq!(cursor, 3);
+    }
+}

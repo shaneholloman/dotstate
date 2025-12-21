@@ -98,6 +98,7 @@ pub fn sanitize_profile_name(name: &str) -> String {
 ///
 /// # Returns
 /// * `true` if the name is safe to use as a folder name
+#[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
 pub fn is_safe_profile_name(name: &str) -> bool {
     let trimmed = name.trim();
 

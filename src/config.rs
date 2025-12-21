@@ -63,6 +63,7 @@ impl Profile {
     }
 
     /// Add a file to this profile's synced files
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn add_file(&mut self, file: String) {
         if !self.synced_files.contains(&file) {
             self.synced_files.push(file);
@@ -70,16 +71,19 @@ impl Profile {
     }
 
     /// Remove a file from this profile's synced files
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn remove_file(&mut self, file: &str) {
         self.synced_files.retain(|f| f != file);
     }
 
     /// Check if a file is synced in this profile
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn has_file(&self, file: &str) -> bool {
         self.synced_files.contains(&file.to_string())
     }
 
     /// Get the profile folder path in the repository
+    #[allow(dead_code)] // Kept for potential future use in CLI or programmatic access
     pub fn get_profile_path(&self, repo_path: &Path) -> PathBuf {
         repo_path.join(&self.name)
     }
@@ -237,6 +241,7 @@ impl Config {
     }
 
     /// Check if a profile name exists
+    #[allow(dead_code)]
     pub fn has_profile(&self, name: &str) -> bool {
         self.profiles.iter().any(|p| p.name == name)
     }

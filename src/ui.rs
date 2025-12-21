@@ -1,4 +1,4 @@
-use ratatui::widgets::{ScrollbarState, ListState};
+use ratatui::widgets::{ListState, ScrollbarState};
 use crate::file_manager::Dotfile;
 use crate::components::profile_manager::ProfileManagerState;
 use std::path::PathBuf;
