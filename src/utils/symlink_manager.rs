@@ -533,6 +533,89 @@ impl SymlinkManager {
     pub fn get_tracked_symlinks(&self) -> &[TrackedSymlink] {
         &self.tracking.symlinks
     }
+
+    /// Rename a profile and update all associated symlinks
+    /// This updates the source paths in the tracking file and recreates symlinks
+    /// to point to the new profile folder location
+    pub fn rename_profile(&mut self, old_name: &str, new_name: &str) -> Result<Vec<SymlinkOperation>> {
+        info!("Renaming profile: {} -> {}", old_name, new_name);
+
+        let old_profile_path = self.repo_path.join(old_name);
+        let new_profile_path = self.repo_path.join(new_name);
+        let mut operations = Vec::new();
+
+        // Find all symlinks for this profile
+        let profile_symlinks: Vec<_> = self.tracking.symlinks
+            .iter()
+            .filter(|s| s.source.starts_with(&old_profile_path))
+            .cloned()
+            .collect();
+
+        if profile_symlinks.is_empty() {
+            // No symlinks to update, but still update active_profile name if needed
+            if self.tracking.active_profile == old_name {
+                self.tracking.active_profile = new_name.to_string();
+                self.save_tracking()?;
+            }
+            return Ok(operations);
+        }
+
+        // Update each symlink
+        for symlink in &profile_symlinks {
+            // Calculate new source path
+            let relative_path = match symlink.source.strip_prefix(&old_profile_path) {
+                Ok(path) => path,
+                Err(e) => {
+                    error!("Failed to get relative path from {:?}: {}", symlink.source, e);
+                    continue;
+                }
+            };
+            let new_source = new_profile_path.join(relative_path);
+
+            // Get relative name for create_symlink (e.g., ".zshrc" from "/path/to/repo/old/.zshrc")
+            let relative_name = relative_path.to_string_lossy().to_string();
+
+            // Remove old symlink
+            let remove_op = self.remove_symlink(symlink)?;
+            operations.push(remove_op);
+
+            // Create new symlink pointing to new source
+            let create_op = self.create_symlink(&new_source, &symlink.target, &relative_name)?;
+            operations.push(create_op);
+        }
+
+        // Update tracking: remove old entries and add new ones
+        self.tracking.symlinks.retain(|s| !s.source.starts_with(&old_profile_path));
+
+        // Add updated entries
+        for symlink in &profile_symlinks {
+            let relative_path = match symlink.source.strip_prefix(&old_profile_path) {
+                Ok(path) => path,
+                Err(e) => {
+                    error!("Failed to get relative path from {:?}: {}", symlink.source, e);
+                    continue;
+                }
+            };
+            let new_source = new_profile_path.join(relative_path);
+
+            self.tracking.symlinks.push(TrackedSymlink {
+                target: symlink.target.clone(),
+                source: new_source,
+                created_at: symlink.created_at,
+                backup: symlink.backup.clone(),
+            });
+        }
+
+        // Update active profile name if this was the active profile
+        if self.tracking.active_profile == old_name {
+            self.tracking.active_profile = new_name.to_string();
+        }
+
+        self.save_tracking()?;
+        info!("Profile renamed: {} -> {} ({} symlinks updated)", old_name, new_name, profile_symlinks.len());
+
+        Ok(operations)
+    }
 }
 
 #[cfg(test)]

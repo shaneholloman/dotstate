@@ -302,7 +302,7 @@ impl Cli {
 
     fn cmd_deactivate() -> Result<()> {
         let config_path = crate::utils::get_config_path();
-        let config = Config::load_or_create(&config_path)
+        let mut config = Config::load_or_create(&config_path)
             .context("Failed to load configuration")?;
 
         if config.github.is_none() {
@@ -414,8 +414,14 @@ impl Cli {
             }
             std::process::exit(1);
         } else {
+            // Mark as deactivated in config
+            config.profile_activated = false;
+            config.save(&config_path)
+                .context("Failed to save configuration")?;
+
             println!("✅ Successfully deactivated profile '{}'", active_profile_name);
             println!("   {} files restored", success_count);
+            println!("💡 Profile is now deactivated. Use 'dotstate activate' to reactivate.");
         }
 
         Ok(())

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarState, ScrollbarOrientation, Wrap};
 use crate::components::component::{Component, ComponentAction};
 use crate::components::header::Header;
 use crate::components::footer::Footer;
@@ -19,6 +19,14 @@ pub enum ProfilePopupType {
     Delete,
 }
 
+/// Which field is focused in the create popup
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateField {
+    Name,
+    Description,
+    CopyFrom,
+}
+
 /// Profile manager component state
 #[derive(Debug, Clone)]
 pub struct ProfileManagerState {
@@ -31,12 +39,16 @@ pub struct ProfileManagerState {
     pub create_description_input: String,
     pub create_description_cursor: usize,
     pub create_copy_from: Option<usize>, // Index of profile to copy from
+    pub create_focused_field: CreateField, // Which field is focused
     // Rename popup state
     pub rename_input: String,
     pub rename_cursor: usize,
     // Delete popup state
     pub delete_confirm_input: String,
     pub delete_confirm_cursor: usize,
+    // Clickable areas for form fields (for mouse support)
+    pub create_name_area: Option<Rect>,
+    pub create_description_area: Option<Rect>,
 }
 
 impl Default for ProfileManagerState {
@@ -50,10 +62,13 @@ impl Default for ProfileManagerState {
             create_description_input: String::new(),
             create_description_cursor: 0,
             create_copy_from: None,
+            create_focused_field: CreateField::Name,
             rename_input: String::new(),
             rename_cursor: 0,
             delete_confirm_input: String::new(),
             delete_confirm_cursor: 0,
+            create_name_area: None,
+            create_description_area: None,
         }
     }
 }
@@ -142,7 +157,7 @@ impl ProfileManagerComponent {
 
         // Check if popup is active
         if state.popup_type != ProfilePopupType::None {
-            self.render_popup(frame, area, config, state)?;
+            self.render_popup(frame, area, config, &mut *state)?;
         } else {
             // Left: Profiles list
             self.render_profiles_list(frame, left_chunk, config, state)?;
@@ -153,7 +168,7 @@ impl ProfileManagerComponent {
 
         // Footer
         let footer_text = match state.popup_type {
-            ProfilePopupType::Create => "Tab: Next Field | Shift+Tab: Previous | Enter: Create | Esc: Cancel",
+            ProfilePopupType::Create => "Tab: Next Field | ↑↓: Navigate Copy From | Space: Toggle Selection | Enter: Create | Esc: Cancel",
             ProfilePopupType::Switch => "Enter: Confirm Switch | Esc: Cancel",
             ProfilePopupType::Rename => "Enter: Confirm Rename | Esc: Cancel",
             ProfilePopupType::Delete => "Type profile name to confirm | Enter: Delete | Esc: Cancel",
@@ -243,12 +258,12 @@ impl ProfileManagerComponent {
             .or_else(|| profiles.iter().find(|p| p.name == *active_profile))
             .or_else(|| profiles.first());
 
-        let content = if let Some(profile) = profile {
+        if let Some(profile) = profile {
             let is_active = profile.name == *active_profile;
             let status = if is_active {
-                "● Active".to_string()
+                ("● Active", Color::Green)
             } else {
-                "○ Inactive".to_string()
+                ("○ Inactive", Color::Yellow)
             };
 
             let description = profile.description.as_ref()
@@ -277,34 +292,75 @@ impl ProfileManagerComponent {
                 String::new()
             };
 
-            format!(
-                "Name: {}\n\nStatus: {}\n\nDescription:\n{}\n\n{}\n{}",
-                profile.name,
-                status,
-                description,
-                files_text,
-                files_list + &more_text
-            )
+            // Create styled text with colors
+            use ratatui::text::{Line, Span};
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled("Name: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(&profile.name, Style::default().fg(Color::White)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Status: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(status.0, Style::default().fg(status.1)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Description:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled(description, Style::default().fg(Color::Gray)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(&files_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                ]),
+            ];
+
+            if !files_list.is_empty() {
+                for line in files_list.lines() {
+                    lines.push(Line::from(vec![
+                        Span::styled(line, Style::default().fg(Color::White)),
+                    ]));
+                }
+            }
+            if !more_text.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled(&more_text, Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+
+            let text = ratatui::text::Text::from(lines);
+
+            let paragraph = Paragraph::new(text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Profile Details")
+                        .border_style(unfocused_border_style())
+                        .padding(ratatui::widgets::Padding::new(1, 1, 1, 1))
+                )
+                .wrap(Wrap { trim: true });
+
+            frame.render_widget(paragraph, area);
         } else {
-            "No profiles found.\n\nPress 'C' to create your first profile.".to_string()
-        };
-
-        let paragraph = Paragraph::new(content)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Profile Details")
-                    .border_style(unfocused_border_style())
-            )
-            .wrap(Wrap { trim: true });
-
-        frame.render_widget(paragraph, area);
+            let paragraph = Paragraph::new("No profiles found.\n\nPress 'C' to create your first profile.")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Profile Details")
+                        .border_style(unfocused_border_style())
+                        .padding(ratatui::widgets::Padding::new(1, 1, 1, 1))
+                )
+                .wrap(Wrap { trim: true });
+            frame.render_widget(paragraph, area);
+        }
 
         Ok(())
     }
 
     /// Render the active popup
-    fn render_popup(&self, frame: &mut Frame, area: Rect, config: &Config, state: &ProfileManagerState) -> Result<()> {
+    fn render_popup(&self, frame: &mut Frame, area: Rect, config: &Config, state: &mut ProfileManagerState) -> Result<()> {
         match state.popup_type {
             ProfilePopupType::Create => self.render_create_popup(frame, area, config, state),
             ProfilePopupType::Switch => self.render_switch_popup(frame, area, config, state),
@@ -315,26 +371,30 @@ impl ProfileManagerComponent {
     }
 
     /// Render create profile popup
-    fn render_create_popup(&self, frame: &mut Frame, area: Rect, config: &Config, state: &ProfileManagerState) -> Result<()> {
+    fn render_create_popup(&self, frame: &mut Frame, area: Rect, config: &Config, state: &mut ProfileManagerState) -> Result<()> {
         let popup_area = center_popup(area, 60, 50);
         frame.render_widget(Clear, popup_area);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Title
+                Constraint::Length(1), // Title (no border)
                 Constraint::Length(3), // Name input
                 Constraint::Length(3), // Description input
-                Constraint::Length(3), // Copy from option
+                Constraint::Min(8),    // Copy from option (at least 8 lines, can grow)
                 Constraint::Min(0),    // Spacer
             ])
             .split(popup_area);
 
-        // Title
+        // Title (no border, just text)
         let title = Paragraph::new("Create New Profile")
-            .block(Block::default().borders(Borders::ALL).title("Create Profile"))
-            .alignment(Alignment::Center);
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
         frame.render_widget(title, chunks[0]);
+
+        // Store clickable areas for mouse support
+        state.create_name_area = Some(chunks[1]);
+        state.create_description_area = Some(chunks[2]);
 
         // Name input
         InputField::render(
@@ -342,7 +402,7 @@ impl ProfileManagerComponent {
             chunks[1],
             &state.create_name_input,
             state.create_name_cursor,
-            true, // Focused
+            state.create_focused_field == CreateField::Name, // Focused based on state
             "Profile Name",
             Some("e.g., Personal-Mac, Work-Linux"),
             Alignment::Left,
@@ -355,27 +415,106 @@ impl ProfileManagerComponent {
             chunks[2],
             &state.create_description_input,
             state.create_description_cursor,
-            false, // Not focused initially
+            state.create_focused_field == CreateField::Description, // Focused based on state
             "Description (optional)",
             None,
             Alignment::Left,
             false,
         )?;
 
-        // Copy from option (simplified for now - just show text)
-        let copy_text = if let Some(idx) = state.create_copy_from {
-            if let Some(profile) = config.profiles.get(idx) {
-                format!("Copy files from: {}", profile.name)
-            } else {
-                "Start blank (no files)".to_string()
-            }
+        // Copy from option - show list of profiles to select from
+        let is_focused = state.create_focused_field == CreateField::CopyFrom;
+        let border_style = if is_focused {
+            focused_border_style()
         } else {
-            "Start blank (no files)".to_string()
+            unfocused_border_style()
         };
-        let copy_para = Paragraph::new(copy_text)
-            .block(Block::default().borders(Borders::ALL).title("Copy From"))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(copy_para, chunks[3]);
+
+        if config.profiles.is_empty() {
+            let copy_para = Paragraph::new("No profiles available to copy from")
+                .block(Block::default().borders(Borders::ALL).title("Copy From").border_style(border_style))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(copy_para, chunks[3]);
+        } else {
+            // Create a list with "Start Blank" first, then profiles
+            let mut items = Vec::new();
+
+            // Add "Start Blank" option at the start
+            let is_start_blank_selected = state.create_copy_from.is_none();
+            let start_blank_prefix = if is_start_blank_selected { "✓ " } else { "  " };
+            let start_blank_style = if is_start_blank_selected {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            items.push(ListItem::new(format!("{}Start Blank", start_blank_prefix)).style(start_blank_style));
+
+            // Add profiles (offset by 1 because "Start Blank" is at index 0)
+            for (idx, profile) in config.profiles.iter().enumerate() {
+                let is_selected = state.create_copy_from == Some(idx);
+                let prefix = if is_selected { "✓ " } else { "  " };
+                let style = if is_selected {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let file_count = profile.synced_files.len();
+                let file_text = if file_count == 0 {
+                    " (no files)".to_string()
+                } else if file_count == 1 {
+                    " (1 file)".to_string()
+                } else {
+                    format!(" ({} files)", file_count)
+                };
+                let text = format!("{}{}{}", prefix, profile.name, file_text);
+                items.push(ListItem::new(text).style(style));
+            }
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Copy From").border_style(border_style))
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                );
+
+            // Create a temporary list state for rendering
+            // Index 0 = "Start Blank" (None), Index 1+ = profile at (idx - 1)
+            let mut list_state = ListState::default();
+            let ui_selected_idx = if let Some(profile_idx) = state.create_copy_from {
+                Some(profile_idx + 1) // Offset by 1 because "Start Blank" is at 0
+            } else {
+                Some(0) // "Start Blank" is selected
+            };
+            list_state.select(ui_selected_idx);
+
+            // Calculate if we need a scrollbar (if items exceed visible area)
+            let visible_height = chunks[3].height.saturating_sub(2); // Subtract borders
+            let total_items = (config.profiles.len() + 1) as u16; // +1 for "Start Blank"
+            let needs_scrollbar = total_items > visible_height;
+
+            // Render the list
+            frame.render_stateful_widget(list, chunks[3], &mut list_state);
+
+            // Render scrollbar if needed
+            if needs_scrollbar {
+                use ratatui::widgets::ScrollbarState;
+
+                let selected_pos = list_state.selected().unwrap_or(0);
+                let mut scrollbar_state = ScrollbarState::new(total_items as usize)
+                    .position(selected_pos);
+
+                let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓"));
+
+                frame.render_stateful_widget(
+                    scrollbar,
+                    chunks[3],
+                    &mut scrollbar_state,
+                );
+            }
+        }
 
         Ok(())
     }
@@ -398,7 +537,7 @@ impl ProfileManagerComponent {
                 This will:\n\
                 • Remove symlinks for current profile\n\
                 • Create symlinks for target profile\n\
-                • Backup existing files if needed\n\n\
+                • Backup existing files (if backups are enabled)\n\n\
                 Continue?",
                 current.name,
                 current.synced_files.len(),
@@ -410,7 +549,7 @@ impl ProfileManagerComponent {
         };
 
         let para = Paragraph::new(content)
-            .block(Block::default().borders(Borders::ALL).title("Switch Profile"))
+            .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true })
             .alignment(Alignment::Center);
         frame.render_widget(para, popup_area);
@@ -426,13 +565,13 @@ impl ProfileManagerComponent {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Title
+                Constraint::Length(1), // Title (no border)
                 Constraint::Length(3), // Input
                 Constraint::Min(0),    // Spacer
             ])
             .split(popup_area);
 
-        // Title
+        // Title (no border, just text)
         let selected_idx = state.list_state.selected();
         let profile_name = selected_idx
             .and_then(|idx| config.profiles.get(idx))
@@ -440,8 +579,8 @@ impl ProfileManagerComponent {
             .unwrap_or("Profile");
 
         let title = Paragraph::new(format!("Rename Profile: {}", profile_name))
-            .block(Block::default().borders(Borders::ALL).title("Rename Profile"))
-            .alignment(Alignment::Center);
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
         frame.render_widget(title, chunks[0]);
 
         // Name input
@@ -503,7 +642,7 @@ impl ProfileManagerComponent {
         };
 
         let warning = Paragraph::new(warning_text)
-            .block(Block::default().borders(Borders::ALL).title("Delete Profile"))
+            .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
         frame.render_widget(warning, chunks[0]);
 

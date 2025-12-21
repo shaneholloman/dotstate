@@ -6,7 +6,7 @@ use crate::git::GitManager;
 use crate::tui::Tui;
 use crate::ui::{UiState, Screen, GitHubAuthStep, GitHubAuthField};
 use crate::components::{MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, PushChangesComponent, ProfileManagerComponent, ComponentAction, Component, MenuItem};
-use crate::components::profile_manager::{ProfilePopupType, ProfileManagerState};
+use crate::components::profile_manager::ProfilePopupType;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -386,12 +386,147 @@ impl App {
                         Event::Key(key) if key.kind == KeyEventKind::Press => {
                             match state.popup_type {
                                 ProfilePopupType::Create => {
+                                    use crate::components::profile_manager::CreateField;
+
                                     match key.code {
                                         KeyCode::Esc => {
                                             state.popup_type = ProfilePopupType::None;
                                         }
+                                        KeyCode::Tab => {
+                                            // Switch to next field
+                                            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                                // Shift+Tab: go to previous field
+                                                state.create_focused_field = match state.create_focused_field {
+                                                    CreateField::Name => CreateField::CopyFrom,
+                                                    CreateField::Description => CreateField::Name,
+                                                    CreateField::CopyFrom => CreateField::Description,
+                                                };
+                                            } else {
+                                                // Tab: go to next field
+                                                state.create_focused_field = match state.create_focused_field {
+                                                    CreateField::Name => CreateField::Description,
+                                                    CreateField::Description => CreateField::CopyFrom,
+                                                    CreateField::CopyFrom => CreateField::Name,
+                                                };
+                                            }
+                                        }
+                                        KeyCode::BackTab => {
+                                            // Shift+Tab: go to previous field
+                                            state.create_focused_field = match state.create_focused_field {
+                                                CreateField::Name => CreateField::CopyFrom,
+                                                CreateField::Description => CreateField::Name,
+                                                CreateField::CopyFrom => CreateField::Description,
+                                            };
+                                        }
+                                        KeyCode::Up => {
+                                            // Navigate Copy From list (index 0 = "Start Blank", 1+ = profiles)
+                                            if state.create_focused_field == CreateField::CopyFrom {
+                                                // Convert to UI index: None = 0, Some(idx) = idx + 1
+                                                let ui_current = if let Some(idx) = state.create_copy_from {
+                                                    idx + 1
+                                                } else {
+                                                    0
+                                                };
+
+                                                if ui_current > 0 {
+                                                    // Move up: if at profile, go to previous profile or "Start Blank"
+                                                    if ui_current == 1 {
+                                                        state.create_copy_from = None; // Go to "Start Blank"
+                                                    } else {
+                                                        state.create_copy_from = Some(ui_current - 2); // Previous profile
+                                                    }
+                                                } else {
+                                                    // At "Start Blank", wrap to last profile
+                                                    if !profiles.is_empty() {
+                                                        state.create_copy_from = Some(profiles.len() - 1);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        KeyCode::Down => {
+                                            // Navigate Copy From list (index 0 = "Start Blank", 1+ = profiles)
+                                            if state.create_focused_field == CreateField::CopyFrom {
+                                                // Convert to UI index: None = 0, Some(idx) = idx + 1
+                                                let ui_current = if let Some(idx) = state.create_copy_from {
+                                                    idx + 1
+                                                } else {
+                                                    0
+                                                };
+
+                                                let max_ui_idx = profiles.len(); // Last UI index (profiles.len() because "Start Blank" is at 0)
+
+                                                if ui_current < max_ui_idx {
+                                                    // Move down: if at "Start Blank", go to first profile, otherwise next profile
+                                                    if ui_current == 0 {
+                                                        state.create_copy_from = Some(0); // First profile
+                                                    } else {
+                                                        state.create_copy_from = Some(ui_current); // Next profile
+                                                    }
+                                                } else {
+                                                    // At last profile, wrap to "Start Blank"
+                                                    state.create_copy_from = None;
+                                                }
+                                            }
+                                        }
+                                        KeyCode::Char(' ') => {
+                                            // Toggle Copy From selection when space is pressed (only if Copy From is focused)
+                                            if state.create_focused_field == CreateField::CopyFrom {
+                                                // Get current UI index (0 = "Start Blank", 1+ = profiles)
+                                                let ui_current = if let Some(idx) = state.create_copy_from {
+                                                    idx + 1
+                                                } else {
+                                                    0
+                                                };
+
+                                                if ui_current == 0 {
+                                                    // "Start Blank" is already selected, keep it selected
+                                                    state.create_copy_from = None;
+                                                } else {
+                                                    // Toggle profile selection
+                                                    let profile_idx = ui_current - 1;
+                                                    if state.create_copy_from == Some(profile_idx) {
+                                                        state.create_copy_from = None; // Deselect, go to "Start Blank"
+                                                    } else {
+                                                        state.create_copy_from = Some(profile_idx); // Select this profile
+                                                    }
+                                                }
+                                            } else {
+                                                // Space is a regular character for Name and Description fields
+                                                match state.create_focused_field {
+                                                    CreateField::Name => {
+                                                        crate::utils::text_input::handle_char_insertion(&mut state.create_name_input, &mut state.create_name_cursor, ' ');
+                                                    }
+                                                    CreateField::Description => {
+                                                        crate::utils::text_input::handle_char_insertion(&mut state.create_description_input, &mut state.create_description_cursor, ' ');
+                                                    }
+                                                    CreateField::CopyFrom => {
+                                                        // Already handled above
+                                                    }
+                                                }
+                                            }
+                                        }
                                         KeyCode::Enter => {
-                                            // Create profile
+                                            // Enter always creates the profile (if name is filled)
+                                            // If Copy From is focused, select the current item first, then create
+                                            if state.create_focused_field == CreateField::CopyFrom {
+                                                // Get current UI index (0 = "Start Blank", 1+ = profiles)
+                                                let ui_current = if let Some(idx) = state.create_copy_from {
+                                                    idx + 1
+                                                } else {
+                                                    0
+                                                };
+
+                                                if ui_current == 0 {
+                                                    // "Start Blank" is selected, keep it
+                                                    state.create_copy_from = None;
+                                                } else {
+                                                    // Select the current profile
+                                                    let profile_idx = ui_current - 1;
+                                                    state.create_copy_from = Some(profile_idx);
+                                                }
+                                            }
+
+                                            // Create profile (Enter always creates, regardless of focus)
                                             if !state.create_name_input.is_empty() {
                                                 let name = state.create_name_input.clone();
                                                 let description = if state.create_description_input.is_empty() {
@@ -408,6 +543,7 @@ impl App {
                                                         self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
                                                         self.ui_state.profile_manager.create_name_input.clear();
                                                         self.ui_state.profile_manager.create_description_input.clear();
+                                                        self.ui_state.profile_manager.create_focused_field = CreateField::Name;
                                                         // Refresh list
                                                         if !self.config.profiles.is_empty() {
                                                             let new_idx = self.config.profiles.iter()
@@ -425,23 +561,77 @@ impl App {
                                             }
                                         }
                                         KeyCode::Backspace => {
-                                            if !state.create_name_input.is_empty() {
-                                                crate::utils::text_input::handle_backspace(&mut state.create_name_input, &mut state.create_name_cursor);
+                                            match state.create_focused_field {
+                                                CreateField::Name => {
+                                                    if !state.create_name_input.is_empty() {
+                                                        crate::utils::text_input::handle_backspace(&mut state.create_name_input, &mut state.create_name_cursor);
+                                                    }
+                                                }
+                                                CreateField::Description => {
+                                                    if !state.create_description_input.is_empty() {
+                                                        crate::utils::text_input::handle_backspace(&mut state.create_description_input, &mut state.create_description_cursor);
+                                                    }
+                                                }
+                                                CreateField::CopyFrom => {
+                                                    // No-op for Copy From field
+                                                }
                                             }
                                         }
                                         KeyCode::Delete => {
-                                            if !state.create_name_input.is_empty() {
-                                                crate::utils::text_input::handle_delete(&mut state.create_name_input, &mut state.create_name_cursor);
+                                            match state.create_focused_field {
+                                                CreateField::Name => {
+                                                    if !state.create_name_input.is_empty() {
+                                                        crate::utils::text_input::handle_delete(&mut state.create_name_input, &mut state.create_name_cursor);
+                                                    }
+                                                }
+                                                CreateField::Description => {
+                                                    if !state.create_description_input.is_empty() {
+                                                        crate::utils::text_input::handle_delete(&mut state.create_description_input, &mut state.create_description_cursor);
+                                                    }
+                                                }
+                                                CreateField::CopyFrom => {
+                                                    // No-op for Copy From field
+                                                }
                                             }
                                         }
                                         KeyCode::Left => {
-                                            crate::utils::text_input::handle_cursor_movement(&state.create_name_input, &mut state.create_name_cursor, KeyCode::Left);
+                                            match state.create_focused_field {
+                                                CreateField::Name => {
+                                                    crate::utils::text_input::handle_cursor_movement(&state.create_name_input, &mut state.create_name_cursor, KeyCode::Left);
+                                                }
+                                                CreateField::Description => {
+                                                    crate::utils::text_input::handle_cursor_movement(&state.create_description_input, &mut state.create_description_cursor, KeyCode::Left);
+                                                }
+                                                CreateField::CopyFrom => {
+                                                    // No-op for Copy From field
+                                                }
+                                            }
                                         }
                                         KeyCode::Right => {
-                                            crate::utils::text_input::handle_cursor_movement(&state.create_name_input, &mut state.create_name_cursor, KeyCode::Right);
+                                            match state.create_focused_field {
+                                                CreateField::Name => {
+                                                    crate::utils::text_input::handle_cursor_movement(&state.create_name_input, &mut state.create_name_cursor, KeyCode::Right);
+                                                }
+                                                CreateField::Description => {
+                                                    crate::utils::text_input::handle_cursor_movement(&state.create_description_input, &mut state.create_description_cursor, KeyCode::Right);
+                                                }
+                                                CreateField::CopyFrom => {
+                                                    // No-op for Copy From field
+                                                }
+                                            }
                                         }
                                         KeyCode::Char(c) => {
-                                            crate::utils::text_input::handle_char_insertion(&mut state.create_name_input, &mut state.create_name_cursor, c);
+                                            match state.create_focused_field {
+                                                CreateField::Name => {
+                                                    crate::utils::text_input::handle_char_insertion(&mut state.create_name_input, &mut state.create_name_cursor, c);
+                                                }
+                                                CreateField::Description => {
+                                                    crate::utils::text_input::handle_char_insertion(&mut state.create_description_input, &mut state.create_description_cursor, c);
+                                                }
+                                                CreateField::CopyFrom => {
+                                                    // No-op for Copy From field (navigation handled by Up/Down)
+                                                }
+                                            }
                                         }
                                         _ => {}
                                     }
@@ -632,19 +822,27 @@ impl App {
                                 }
                             }
                             KeyCode::Enter => {
-                                // Open switch popup
-                                if state.list_state.selected().is_some() {
-                                    state.popup_type = ProfilePopupType::Switch;
+                                // Open switch popup (only if not already active)
+                                if let Some(idx) = state.list_state.selected() {
+                                    if let Some(profile) = profiles.get(idx) {
+                                        if profile.name != self.config.active_profile {
+                                            state.popup_type = ProfilePopupType::Switch;
+                                        }
+                                        // If already active, do nothing (no popup)
+                                    }
                                 }
                             }
                             KeyCode::Char('c') | KeyCode::Char('C') => {
-                                // Open create popup
+                                // Open create popup - refresh config first to get latest profiles
+                                self.config = Config::load_or_create(&self.config_path)?;
+                                use crate::components::profile_manager::CreateField;
                                 state.popup_type = ProfilePopupType::Create;
                                 state.create_name_input.clear();
                                 state.create_name_cursor = 0;
                                 state.create_description_input.clear();
                                 state.create_description_cursor = 0;
                                 state.create_copy_from = None;
+                                state.create_focused_field = CreateField::Name;
                             }
                             KeyCode::Char('r') | KeyCode::Char('R') => {
                                 // Open rename popup
@@ -677,6 +875,56 @@ impl App {
                     Event::Mouse(mouse) => {
                         match mouse.kind {
                             crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                                // Handle popup form field clicks
+                                if state.popup_type == ProfilePopupType::Create {
+                                    use crate::components::profile_manager::CreateField;
+                                    // Check if click is on name field
+                                    if let Some(name_area) = state.create_name_area {
+                                        // Mouse coordinates are absolute screen coordinates
+                                        // The area is also absolute (from the centered popup)
+                                        if mouse.column >= name_area.x
+                                            && mouse.column < name_area.x + name_area.width
+                                            && mouse.row >= name_area.y
+                                            && mouse.row < name_area.y + name_area.height {
+                                            state.create_focused_field = CreateField::Name;
+                                            // Set cursor position based on click
+                                            // Account for left border (1 char) - InputField has borders
+                                            let inner_x = name_area.x + 1;
+                                            let click_x = if mouse.column > inner_x {
+                                                (mouse.column as usize).saturating_sub(inner_x as usize)
+                                            } else {
+                                                0
+                                            };
+                                            state.create_name_cursor = click_x.min(state.create_name_input.chars().count());
+                                            return Ok(());
+                                        }
+                                    }
+                                    // Check if click is on description field
+                                    if let Some(desc_area) = state.create_description_area {
+                                        // Mouse coordinates are absolute screen coordinates
+                                        // The area is also absolute (from the centered popup)
+                                        if mouse.column >= desc_area.x
+                                            && mouse.column < desc_area.x + desc_area.width
+                                            && mouse.row >= desc_area.y
+                                            && mouse.row < desc_area.y + desc_area.height {
+                                            state.create_focused_field = CreateField::Description;
+                                            // Set cursor position based on click
+                                            // Account for left border (1 char) - InputField has borders
+                                            let inner_x = desc_area.x + 1;
+                                            let click_x = if mouse.column > inner_x {
+                                                (mouse.column as usize).saturating_sub(inner_x as usize)
+                                            } else {
+                                                0
+                                            };
+                                            state.create_description_cursor = click_x.min(state.create_description_input.chars().count());
+                                            return Ok(());
+                                        }
+                                    }
+                                    // Check if click is on Copy From list area
+                                    // The Copy From list is in chunks[3], but we don't store that area
+                                    // For now, clicks on the list will be handled by the list widget itself
+                                }
+
                                 // Check if click is in profile list
                                 for (rect, profile_idx) in &state.clickable_areas {
                                     if mouse.column >= rect.x
@@ -690,19 +938,23 @@ impl App {
                                 }
                             }
                             crossterm::event::MouseEventKind::ScrollUp => {
-                                if let Some(selected) = state.list_state.selected() {
-                                    if selected > 0 {
-                                        state.list_state.select(Some(selected - 1));
+                                if state.popup_type == ProfilePopupType::None {
+                                    if let Some(selected) = state.list_state.selected() {
+                                        if selected > 0 {
+                                            state.list_state.select(Some(selected - 1));
+                                        }
                                     }
                                 }
                             }
                             crossterm::event::MouseEventKind::ScrollDown => {
-                                if let Some(selected) = state.list_state.selected() {
-                                    if selected < profiles.len().saturating_sub(1) {
-                                        state.list_state.select(Some(selected + 1));
+                                if state.popup_type == ProfilePopupType::None {
+                                    if let Some(selected) = state.list_state.selected() {
+                                        if selected < profiles.len().saturating_sub(1) {
+                                            state.list_state.select(Some(selected + 1));
+                                        }
+                                    } else if !profiles.is_empty() {
+                                        state.list_state.select(Some(0));
                                     }
-                                } else if !profiles.is_empty() {
-                                    state.list_state.select(Some(0));
                                 }
                             }
                             _ => {}
@@ -2709,6 +2961,28 @@ impl App {
             .unwrap_or_else(|_| crate::utils::ProfileManifest { profiles: Vec::new() });
         let _ = manifest.rename_profile(old_name, &sanitized_name);
         manifest.save(&self.config.repo_path)?;
+
+        // Update symlinks if profile is active (has symlinks)
+        if self.config.profile_activated && was_active {
+            use crate::utils::SymlinkManager;
+            let mut symlink_mgr = SymlinkManager::new_with_backup(
+                repo_path.clone(),
+                self.config.backup_enabled,
+            )?;
+
+            match symlink_mgr.rename_profile(old_name, &sanitized_name) {
+                Ok(ops) => {
+                    let success_count = ops.iter()
+                        .filter(|op| op.status == crate::utils::symlink_manager::OperationStatus::Success)
+                        .count();
+                    info!("Updated {} symlinks for renamed profile", success_count);
+                }
+                Err(e) => {
+                    error!("Failed to update symlinks after rename: {}", e);
+                    // Don't fail the rename, but log the error
+                }
+            }
+        }
 
         info!("Renamed profile from '{}' to '{}'", old_name, sanitized_name);
         Ok(())

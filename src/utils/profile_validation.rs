@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 
 /// Reserved profile names that cannot be used
-const RESERVED_NAMES: &[&str] = &["backup", "temp", "main", ".git", "node_modules", "target", "build"];
+const RESERVED_NAMES: &[&str] = &["backup", "temp", ".git", "node_modules", "target", "build"];
 
 /// Maximum profile name length
 const MAX_NAME_LENGTH: usize = 50;
