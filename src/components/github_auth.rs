@@ -305,6 +305,85 @@ impl GitHubAuthComponent {
         }
         Ok(())
     }
+
+    /// Render progress screen when processing GitHub setup
+    fn render_progress_screen(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+        use ratatui::layout::Layout;
+        use ratatui::layout::Direction;
+        use ratatui::layout::Constraint;
+
+        // Layout: Header, Content, Footer
+        // Header component needs more height (6) to accommodate logo and description
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+
+        // Header
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "dotstate - GitHub Setup",
+            "Setting up your GitHub repository..."
+        )?;
+
+        // Center the progress message
+        let progress_area = crate::utils::center_popup(content_chunk, 60, 15);
+
+        // Progress block
+        let progress_block = Block::default()
+            .borders(Borders::ALL)
+            .title("Progress")
+            .title_alignment(Alignment::Center)
+            .border_style(Style::default().fg(Color::Cyan))
+            .border_type(ratatui::widgets::BorderType::Rounded);
+
+        // Status message with styling
+        let status_text = if let Some(status) = &self.auth_state.status_message {
+            status.clone()
+        } else {
+            "Processing...".to_string()
+        };
+
+        let status_para = Paragraph::new(status_text)
+            .block(progress_block)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::White));
+
+        frame.render_widget(status_para, progress_area);
+
+        // Show error if any
+        if let Some(error) = &self.auth_state.error_message {
+            let error_area = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(15), // Progress area
+                    Constraint::Length(8),  // Error area
+                ])
+                .split(content_chunk)[1];
+
+            let error_block = Block::default()
+                .borders(Borders::ALL)
+                .title("Error")
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(Color::Red));
+            let error_para = Paragraph::new(error.as_str())
+                .block(error_block)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(Color::Red));
+            frame.render_widget(error_para, error_area);
+        }
+
+        // Footer
+        let footer_text = if self.auth_state.error_message.is_some() {
+            "Press Esc to go back and fix the error"
+        } else if self.auth_state.status_message.as_ref().map(|s| s.contains("✅")).unwrap_or(false) {
+            "Press Enter to continue"
+        } else {
+            "Please wait..."
+        };
+        let _ = Footer::render(frame, footer_chunk, footer_text)?;
+
+        Ok(())
+    }
 }
 
 impl Component for GitHubAuthComponent {
@@ -316,6 +395,11 @@ impl Component for GitHubAuthComponent {
         let background = Block::default()
             .style(Style::default().bg(Color::Black));
         frame.render_widget(background, area);
+
+        // If processing or in setup, show progress screen instead of input form
+        if matches!(self.auth_state.step, crate::ui::GitHubAuthStep::Processing | crate::ui::GitHubAuthStep::SetupStep(_)) {
+            return self.render_progress_screen(frame, area);
+        }
 
         // Layout: Title/Description, Content, Footer
         let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);

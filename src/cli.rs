@@ -148,10 +148,14 @@ impl Cli {
             std::process::exit(1);
         }
 
-        // Get active profile's synced files
-        let synced_files = config.get_active_profile()
+        // Get active profile's synced files from manifest
+        let manifest = crate::utils::ProfileManifest::load_or_backfill(&config.repo_path)
+            .context("Failed to load profile manifest")?;
+        let empty_vec = Vec::new();
+        let synced_files = manifest.profiles.iter()
+            .find(|p| p.name == config.active_profile)
             .map(|p| &p.synced_files)
-            .unwrap_or(&config.synced_files); // Fallback to old config format
+            .unwrap_or(&empty_vec);
 
         if synced_files.is_empty() {
             println!("No files are currently synced.");
@@ -180,7 +184,7 @@ impl Cli {
     fn cmd_add(path: PathBuf) -> Result<()> {
         let config_path = crate::utils::get_config_path();
 
-        let mut config = Config::load_or_create(&config_path)
+        let config = Config::load_or_create(&config_path)
             .context("Failed to load configuration")?;
 
         if !config.profile_activated {
@@ -212,24 +216,23 @@ impl Cli {
 
         let relative_str = relative_path.to_string_lossy().to_string();
 
-        // Add to active profile's synced files
-        if let Some(active_profile) = config.get_active_profile_mut() {
-            if active_profile.synced_files.contains(&relative_str) {
+        // Add to active profile's synced files in manifest
+        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&config.repo_path)
+            .context("Failed to load profile manifest")?;
+
+        if let Some(profile) = manifest.profiles.iter_mut().find(|p| p.name == config.active_profile) {
+            if profile.synced_files.contains(&relative_str) {
                 println!("ℹ️  File is already synced: {}", relative_str);
                 return Ok(());
             }
-            active_profile.synced_files.push(relative_str.clone());
+            profile.synced_files.push(relative_str.clone());
         } else {
-            // Fallback to old config format
-            if config.synced_files.contains(&relative_str) {
-                println!("ℹ️  File is already synced: {}", relative_str);
-                return Ok(());
-            }
-            config.synced_files.push(relative_str.clone());
+            eprintln!("❌ Active profile '{}' not found in manifest", config.active_profile);
+            std::process::exit(1);
         }
 
-        config.save(&config_path)
-            .context("Failed to save configuration")?;
+        manifest.save(&config.repo_path)
+            .context("Failed to save manifest")?;
 
         println!("✅ Added {} to synced files", relative_str);
         println!("💡 Run 'dotstate' to sync this file to GitHub");
@@ -253,9 +256,12 @@ impl Cli {
             return Ok(());
         }
 
-        // Get active profile info before borrowing
+        // Get active profile info from manifest
         let active_profile_name = config.active_profile.clone();
-        let active_profile_files = config.get_active_profile()
+        let manifest = crate::utils::ProfileManifest::load_or_backfill(&config.repo_path)
+            .context("Failed to load profile manifest")?;
+        let active_profile_files = manifest.profiles.iter()
+            .find(|p| p.name == active_profile_name)
             .ok_or_else(|| anyhow::anyhow!("No active profile found"))?
             .synced_files.clone();
 

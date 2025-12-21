@@ -4,15 +4,50 @@ use crate::file_manager::FileManager;
 use crate::github::GitHubClient;
 use crate::git::GitManager;
 use crate::tui::Tui;
-use crate::ui::{UiState, Screen, GitHubAuthStep, GitHubAuthField};
+use crate::ui::{UiState, Screen, GitHubAuthStep, GitHubAuthField, GitHubSetupStep};
 use crate::components::{MainMenuComponent, GitHubAuthComponent, SyncedFilesComponent, MessageComponent, DotfileSelectionComponent, PushChangesComponent, ProfileManagerComponent, ComponentAction, Component, MenuItem};
 use crate::components::profile_manager::ProfilePopupType;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::fs;
 use tokio::runtime::Runtime;
 use tracing::{error, info};
 // Frame and Rect are used in function signatures but imported where needed
+
+/// Count files in a directory (recursively)
+/// List files and directories in a profile directory, returning relative paths from home
+/// Files are stored in the repo as: repo_path/profile_name/.zshrc or repo_path/profile_name/.config/iTerm
+/// We need to return them as: .zshrc or .config/iTerm (relative to home)
+/// This function only lists top-level entries (files and directories), not recursively scanning directories.
+/// This ensures that when a directory like .config/iTerm is synced, we symlink the directory itself,
+/// not individual files inside it.
+fn list_files_in_profile_dir(profile_dir: &Path, _repo_path: &Path) -> Result<Vec<String>> {
+    let mut entries = Vec::new();
+    if profile_dir.is_dir() {
+        for entry in fs::read_dir(profile_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            // List both files and directories at the top level only
+            if path.is_file() || path.is_symlink() || path.is_dir() {
+                // Get relative path from profile directory
+                if let Ok(relative) = path.strip_prefix(profile_dir) {
+                    // Convert to string, handling the path properly
+                    if let Some(relative_str) = relative.to_str() {
+                        // Remove leading ./ if present
+                        let clean_path = if relative_str.starts_with("./") {
+                            &relative_str[2..]
+                        } else {
+                            relative_str
+                        };
+                        entries.push(clean_path.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Ok(entries)
+}
 
 /// Main application state
 pub struct App {
@@ -101,6 +136,11 @@ impl App {
                 break;
             }
 
+            // Process GitHub setup state machine if active (before polling events)
+            if let GitHubAuthStep::SetupStep(_) = self.ui_state.github_auth.step {
+                self.process_github_setup_step()?;
+            }
+
             // Poll for events with 250ms timeout
             if let Some(event) = self.tui.poll_event(Duration::from_millis(250))? {
                 self.handle_event(event)?;
@@ -164,13 +204,23 @@ impl App {
             ));
         }
 
+        // Get profiles from manifest before the draw closure to avoid borrow issues
+        let profile_selection_profiles: Vec<crate::utils::ProfileInfo> = if self.ui_state.current_screen == Screen::ProfileSelection {
+            self.get_profiles().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Clone config for main menu to avoid borrow issues in closure
+        let config_clone = self.config.clone();
+
         self.tui.terminal_mut().draw(|frame| {
             let area = frame.size();
             match self.ui_state.current_screen {
                 Screen::Welcome => {
                     // Welcome screen removed - redirect to MainMenu
                     self.ui_state.current_screen = Screen::MainMenu;
-                    self.main_menu_component.update_config(self.config.clone());
+                    self.main_menu_component.update_config(config_clone.clone());
                     let _ = self.main_menu_component.render(frame, area);
                 }
                 Screen::MainMenu => {
@@ -179,7 +229,7 @@ impl App {
                         let _ = msg_component.render(frame, area);
                     } else {
                         // Pass config to main menu for stats
-                        self.main_menu_component.update_config(self.config.clone());
+                        self.main_menu_component.update_config(config_clone.clone());
                         let _ = self.main_menu_component.render(frame, area);
                     }
                 }
@@ -210,20 +260,73 @@ impl App {
                 }
                 Screen::ManageProfiles => {
                     // Component handles all rendering including Clear
-                    if let Err(e) = self.profile_manager_component.render_with_config(frame, area, &self.config, &mut self.ui_state.profile_manager) {
+                    // Profiles already obtained before closure (we need to get them here too)
+                    // Actually, we can't call self.get_profiles() inside the closure
+                    // We need to get them before the closure
+                    // For now, let's get them from the manifest directly
+                    let repo_path = config_clone.repo_path.clone();
+                    let profiles: Vec<crate::utils::ProfileInfo> = crate::utils::ProfileManifest::load_or_backfill(&repo_path)
+                        .unwrap_or_default()
+                        .profiles;
+                    if let Err(e) = self.profile_manager_component.render_with_config(frame, area, &config_clone, &profiles, &mut self.ui_state.profile_manager) {
                         eprintln!("Error rendering profile manager: {}", e);
                     }
                 }
                 Screen::ProfileSelection => {
                     // Render profile selection screen
-                    // Clone config profiles before closure to avoid borrow issues
-                    let config_profiles = self.config.profiles.clone();
                     let state = &mut self.ui_state.profile_selection;
 
-                    // Build items list
+                    // Check if warning popup should be shown
+                    if state.show_exit_warning {
+                        use crate::utils::center_popup;
+                        use crate::components::footer::Footer;
+                        use ratatui::widgets::{Block, Borders, Paragraph, Wrap, Clear};
+                        use ratatui::prelude::*;
+
+                        let popup_area = center_popup(area, 60, 35);
+                        frame.render_widget(Clear, popup_area);
+
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(8), // Warning text
+                                Constraint::Min(0),    // Spacer
+                                Constraint::Length(2), // Footer
+                            ])
+                            .split(popup_area);
+
+                        let default_profile = state.profiles.first()
+                            .map(|p| p.clone())
+                            .unwrap_or_else(|| "default".to_string());
+
+                        let warning_text = format!(
+                            "⚠️  Profile Selection Required\n\n\
+                            You need to select a profile to activate.\n\
+                            If you exit now, the default profile '{}' will be activated automatically.\n\n\
+                            Do you want to continue?",
+                            default_profile
+                        );
+
+                        let warning = Paragraph::new(warning_text)
+                            .block(Block::default()
+                                .borders(Borders::ALL)
+                                .title("Exit Profile Selection")
+                                .title_alignment(Alignment::Center)
+                                .border_style(Style::default().fg(Color::Yellow)))
+                            .wrap(Wrap { trim: true })
+                            .alignment(Alignment::Center);
+                        frame.render_widget(warning, chunks[0]);
+
+                        // Footer with instructions
+                        let footer_text = "Y: Activate Default Profile & Exit  |  Esc: Cancel";
+                        let _ = Footer::render(frame, chunks[2], footer_text);
+                        return;
+                    }
+
+                    // Build items list (profile_selection_profiles already obtained before closure)
                     let items: Vec<ListItem> = state.profiles.iter()
                         .map(|name| {
-                            let profile = config_profiles.iter().find(|p| p.name == *name);
+                            let profile = profile_selection_profiles.iter().find(|p| p.name == *name);
                             let description = profile.and_then(|p| p.description.as_ref())
                                 .map(|d| format!(" - {}", d))
                                 .unwrap_or_default();
@@ -438,9 +541,45 @@ impl App {
             }
             Screen::ProfileSelection => {
                 // Handle profile selection events
+                let state = &mut self.ui_state.profile_selection;
+
+                // Check if warning popup is showing
+                if state.show_exit_warning {
+                    match event {
+                        Event::Key(key) if key.kind == KeyEventKind::Press => {
+                            match key.code {
+                                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                    // User confirmed - activate default profile (first one) and exit
+                                    state.show_exit_warning = false;
+                                    if !state.profiles.is_empty() {
+                                        let default_profile = state.profiles[0].clone();
+                                        if let Err(e) = self.activate_profile_after_setup(&default_profile) {
+                                            error!("Failed to activate default profile: {}", e);
+                                            self.message_component = Some(MessageComponent::new(
+                                                "Activation Failed".to_string(),
+                                                format!("Failed to activate default profile '{}': {}", default_profile, e),
+                                                Screen::MainMenu,
+                                            ));
+                                        }
+                                    }
+                                    self.ui_state.current_screen = Screen::MainMenu;
+                                    self.ui_state.profile_selection = Default::default();
+                                }
+                                KeyCode::Esc => {
+                                    // Cancel - hide warning
+                                    state.show_exit_warning = false;
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                // Normal profile selection handling
                 match event {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        let state = &mut self.ui_state.profile_selection;
                         match key.code {
                             KeyCode::Up => {
                                 if let Some(current) = state.list_state.selected() {
@@ -490,9 +629,8 @@ impl App {
                                 }
                             }
                             KeyCode::Esc => {
-                                // Skip activation, go to main menu
-                                self.ui_state.current_screen = Screen::MainMenu;
-                                self.ui_state.profile_selection = Default::default();
+                                // Show warning before exiting
+                                state.show_exit_warning = true;
                             }
                             _ => {}
                         }
@@ -502,7 +640,8 @@ impl App {
                 return Ok(());
             }
             Screen::ManageProfiles => {
-                let profiles = &self.config.profiles;
+                // Get profiles from manifest
+                let profiles = self.get_profiles().unwrap_or_default();
                 let state = &mut self.ui_state.profile_manager;
 
                 // Handle popup events first
@@ -677,11 +816,13 @@ impl App {
                                                         self.ui_state.profile_manager.create_description_input.clear();
                                                         self.ui_state.profile_manager.create_focused_field = CreateField::Name;
                                                         // Refresh list
-                                                        if !self.config.profiles.is_empty() {
-                                                            let new_idx = self.config.profiles.iter()
-                                                                .position(|p| p.name == name)
-                                                                .unwrap_or(self.config.profiles.len() - 1);
-                                                            self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                        if let Ok(profiles) = self.get_profiles() {
+                                                            if !profiles.is_empty() {
+                                                                let new_idx = profiles.iter()
+                                                                    .position(|p| p.name == name)
+                                                                    .unwrap_or(profiles.len().saturating_sub(1));
+                                                                self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                            }
                                                         }
                                                     }
                                                     Err(e) => {
@@ -789,11 +930,13 @@ impl App {
                                                             self.config = Config::load_or_create(&self.config_path)?;
                                                             self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
                                                             // Update list selection
-                                                            if !self.config.profiles.is_empty() {
-                                                                let new_idx = self.config.profiles.iter()
-                                                                    .position(|p| p.name == profile_name)
-                                                                    .unwrap_or(0);
-                                                                self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                            if let Ok(profiles) = self.get_profiles() {
+                                                                if !profiles.is_empty() {
+                                                                    let new_idx = profiles.iter()
+                                                                        .position(|p| p.name == profile_name)
+                                                                        .unwrap_or(0);
+                                                                    self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                                }
                                                             }
                                                         }
                                                         Err(e) => {
@@ -840,11 +983,13 @@ impl App {
                                                                 self.config = Config::load_or_create(&self.config_path)?;
                                                                 self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
                                                                 // Update list selection
-                                                                if !self.config.profiles.is_empty() {
-                                                                    let new_idx = self.config.profiles.iter()
-                                                                        .position(|p| p.name == new_name)
-                                                                        .unwrap_or(0);
-                                                                    self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                                if let Ok(profiles) = self.get_profiles() {
+                                                                    if !profiles.is_empty() {
+                                                                        let new_idx = profiles.iter()
+                                                                            .position(|p| p.name == new_name)
+                                                                            .unwrap_or(0);
+                                                                        self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                                    }
                                                                 }
                                                             }
                                                             Err(e) => {
@@ -904,11 +1049,13 @@ impl App {
                                                                 self.config = Config::load_or_create(&self.config_path)?;
                                                                 self.ui_state.profile_manager.popup_type = ProfilePopupType::None;
                                                                 // Update list selection
-                                                                if !self.config.profiles.is_empty() {
-                                                                    let new_idx = idx_clone.min(self.config.profiles.len().saturating_sub(1));
-                                                                    self.ui_state.profile_manager.list_state.select(Some(new_idx));
-                                                                } else {
-                                                                    self.ui_state.profile_manager.list_state.select(None);
+                                                                if let Ok(profiles) = self.get_profiles() {
+                                                                    if !profiles.is_empty() {
+                                                                        let new_idx = idx_clone.min(profiles.len().saturating_sub(1));
+                                                                        self.ui_state.profile_manager.list_state.select(Some(new_idx));
+                                                                    } else {
+                                                                        self.ui_state.profile_manager.list_state.select(None);
+                                                                    }
                                                                 }
                                                             }
                                                             Err(e) => {
@@ -1205,8 +1352,10 @@ impl App {
                 // Manage Profiles
                 self.ui_state.current_screen = Screen::ManageProfiles;
                 // Initialize list state with first profile selected
-                if !self.config.profiles.is_empty() {
-                    self.ui_state.profile_manager.list_state.select(Some(0));
+                if let Ok(profiles) = self.get_profiles() {
+                    if !profiles.is_empty() {
+                        self.ui_state.profile_manager.list_state.select(Some(0));
+                    }
                 }
             }
         }
@@ -1296,8 +1445,52 @@ impl App {
                         // Just update the token
                         self.update_github_token()?;
                     } else if !auth_state.repo_already_configured {
-                        // Full setup
-                        self.process_github_setup()?;
+                        // Full setup - initialize state machine
+                        let token = auth_state.token_input.trim().to_string();
+                        let repo_name = self.config.repo_name.clone();
+
+                        // Validate token format first
+                        if !token.starts_with("ghp_") {
+                            let actual_start = if token.len() >= 4 { &token[..4] } else { "too short" };
+                            auth_state.error_message = Some(
+                                format!(
+                                    "❌ Invalid token format: Must start with 'ghp_' but starts with '{}'.\n\
+                                    Token length: {} characters.\n\
+                                    First 10 chars: '{}'\n\
+                                    Please check that you copied the entire token correctly.\n\
+                                    Make sure you're pasting the full token (40+ characters).",
+                                    actual_start,
+                                    token.len(),
+                                    if token.len() >= 10 { &token[..10] } else { &token }
+                                )
+                            );
+                            return Ok(());
+                        }
+
+                        if token.len() < 40 {
+                            auth_state.error_message = Some(
+                                format!(
+                                    "❌ Token appears incomplete: {} characters (expected 40+).\n\
+                                    First 10 chars: '{}'\n\
+                                    Make sure you copied the entire token from GitHub.",
+                                    token.len(),
+                                    &token[..token.len().min(10)]
+                                )
+                            );
+                            return Ok(());
+                        }
+
+                        // Initialize setup state machine
+                        auth_state.step = GitHubAuthStep::SetupStep(crate::ui::GitHubSetupStep::Connecting);
+                        auth_state.status_message = Some("🔌 Connecting to GitHub...".to_string());
+                        auth_state.setup_data = Some(crate::ui::GitHubSetupData {
+                            token,
+                            repo_name,
+                            username: None,
+                            repo_exists: None,
+                            delay_until: Some(std::time::Instant::now() + Duration::from_millis(500)),
+                        });
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
                     }
                     return Ok(());
                 }
@@ -1438,26 +1631,32 @@ impl App {
             }
             GitHubAuthStep::Processing => {
                 // Allow user to continue after processing completes
+                // This state is no longer used - Complete step handles transition automatically
                 match key.code {
                     KeyCode::Enter | KeyCode::Char(' ') => {
-                        // If setup was successful, check if we need to select a profile
-                        if auth_state.error_message.is_none() && auth_state.status_message.is_some() {
-                            // Check if we have profiles to select from (repo was cloned)
-                            if !self.ui_state.profile_selection.profiles.is_empty() &&
-                               auth_state.status_message.as_ref().map(|s| s.contains("Found")).unwrap_or(false) {
-                                // Go to profile selection screen
-                                self.ui_state.current_screen = Screen::ProfileSelection;
-                            } else {
-                                // No profile selection needed, go to main menu
-                                self.ui_state.current_screen = Screen::MainMenu;
-                                *auth_state = Default::default();
-                            }
+                        // If we're still in Processing (shouldn't happen with new flow), transition
+                        if !self.ui_state.profile_selection.profiles.is_empty() {
+                            self.ui_state.current_screen = Screen::ProfileSelection;
+                        } else {
+                            self.ui_state.current_screen = Screen::MainMenu;
+                            *auth_state = Default::default();
                         }
                     }
                     KeyCode::Esc => {
                         // Reset and go back
                         self.ui_state.current_screen = Screen::MainMenu;
                         *auth_state = Default::default();
+                    }
+                    _ => {}
+                }
+            }
+            GitHubAuthStep::SetupStep(_) => {
+                // Setup is in progress, ignore input (or allow Esc to cancel)
+                match key.code {
+                    KeyCode::Esc => {
+                        // Cancel setup
+                        *auth_state = Default::default();
+                        self.ui_state.current_screen = Screen::MainMenu;
                     }
                     _ => {}
                 }
@@ -1540,14 +1739,373 @@ impl App {
         Ok(())
     }
 
+    /// Process one step of the GitHub setup state machine
+    /// Called from the event loop to allow UI updates between steps
+    fn process_github_setup_step(&mut self) -> Result<()> {
+        let auth_state = &mut self.ui_state.github_auth;
+
+        // Get setup_data, cloning if needed to avoid borrow issues
+        let setup_data_opt = auth_state.setup_data.clone();
+        let mut setup_data = match setup_data_opt {
+            Some(data) => data,
+            None => {
+                // No setup data, reset to input
+                auth_state.step = GitHubAuthStep::Input;
+                return Ok(());
+            }
+        };
+
+        // Check if we need to wait for a delay
+        if let Some(delay_until) = setup_data.delay_until {
+            if std::time::Instant::now() < delay_until {
+                // Still waiting, don't process yet - save state and return
+                auth_state.setup_data = Some(setup_data);
+                return Ok(());
+            }
+            // Delay complete, clear it
+            setup_data.delay_until = None;
+        }
+
+        // Process current step - extract the step from the enum
+        let current_step = if let GitHubAuthStep::SetupStep(step) = auth_state.step {
+            step
+        } else {
+            // Not in setup, clear data
+            auth_state.setup_data = Some(setup_data);
+            return Ok(());
+        };
+
+        match current_step {
+            GitHubSetupStep::Connecting => {
+                // Move to validating token
+                auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::ValidatingToken);
+                auth_state.status_message = Some("🔑 Validating your token...".to_string());
+                setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(800));
+                auth_state.setup_data = Some(setup_data);
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+            }
+            GitHubSetupStep::ValidatingToken => {
+                // Perform async validation
+                let token = setup_data.token.clone();
+                let repo_name = setup_data.repo_name.clone();
+
+                let result = self.runtime.block_on(async {
+                    let client = GitHubClient::new(token.clone());
+                    let user = client.get_user().await?;
+                    let repo_exists = client.repo_exists(&user.login, &repo_name).await?;
+                    Ok::<(String, bool), anyhow::Error>((user.login, repo_exists))
+                });
+
+                match result {
+                    Ok((username, exists)) => {
+                        setup_data.username = Some(username.clone());
+                        setup_data.repo_exists = Some(exists);
+                        setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(600));
+
+                        // Move to checking repo step
+                        auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::CheckingRepo);
+                        auth_state.status_message = Some("🔍 Checking if repository exists...".to_string());
+                        auth_state.setup_data = Some(setup_data); // Save setup_data with username and repo_exists
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    }
+                    Err(e) => {
+                        auth_state.error_message = Some(format!("❌ Authentication failed: {}", e));
+                        auth_state.status_message = None;
+                        auth_state.step = GitHubAuthStep::Input;
+                        auth_state.setup_data = None;
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        return Ok(());
+                    }
+                }
+            }
+            GitHubSetupStep::CheckingRepo => {
+                // Move to next step based on whether repo exists
+                // Ensure we have username and repo_exists set
+                if setup_data.username.is_none() || setup_data.repo_exists.is_none() {
+                    error!("Invalid state: username or repo_exists not set in CheckingRepo step");
+                    auth_state.error_message = Some("❌ Internal error: Setup state is invalid. Please try again.".to_string());
+                    auth_state.status_message = None;
+                    auth_state.step = GitHubAuthStep::Input;
+                    auth_state.setup_data = None;
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    return Ok(());
+                }
+
+                if setup_data.repo_exists == Some(true) {
+                    auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::CloningRepo);
+                    let username = setup_data.username.as_ref().unwrap(); // Safe now after check
+                    auth_state.status_message = Some(format!("📥 Cloning repository {}/{}...", username, setup_data.repo_name));
+                    setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(500));
+                    auth_state.setup_data = Some(setup_data);
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                } else {
+                    auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::CreatingRepo);
+                    let username = setup_data.username.as_ref().unwrap(); // Safe now after check
+                    auth_state.status_message = Some(format!("📦 Creating repository {}/{}...", username, setup_data.repo_name));
+                    setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(600));
+                    auth_state.setup_data = Some(setup_data);
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                }
+            }
+            GitHubSetupStep::CloningRepo => {
+                // Clone the repository
+                let username = setup_data.username.as_ref().unwrap();
+                let repo_path = self.config.repo_path.clone();
+                let token = setup_data.token.clone();
+
+                // Remove existing directory if it exists
+                if repo_path.exists() {
+                    std::fs::remove_dir_all(&repo_path)
+                        .context("Failed to remove existing directory")?;
+                }
+
+                let remote_url = format!("https://github.com/{}/{}.git", username, setup_data.repo_name);
+                match GitManager::clone(&remote_url, &repo_path, Some(&token)) {
+                    Ok(_) => {
+                        auth_state.status_message = Some("✅ Repository cloned successfully!".to_string());
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                        // Update config
+                        self.config.github = Some(GitHubConfig {
+                            owner: username.clone(),
+                            repo: setup_data.repo_name.clone(),
+                            token: Some(token.clone()),
+                        });
+                        self.config.repo_name = setup_data.repo_name.clone();
+                        self.config.save(&self.config_path)
+                            .context("Failed to save configuration")?;
+
+                        // Move to discovering profiles
+                        auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::DiscoveringProfiles);
+                        auth_state.status_message = Some("🔎 Discovering profiles...".to_string());
+                        setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(600));
+                        auth_state.setup_data = Some(setup_data);
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    }
+                    Err(e) => {
+                        auth_state.error_message = Some(format!("❌ Failed to clone repository: {}", e));
+                        auth_state.status_message = None;
+                        auth_state.step = GitHubAuthStep::Input;
+                        auth_state.setup_data = None;
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        return Ok(());
+                    }
+                }
+            }
+            GitHubSetupStep::CreatingRepo => {
+                // Create the repository
+                // Validate username is set (needed for next step)
+                if setup_data.username.is_none() {
+                    error!("Invalid state: username not set in CreatingRepo step");
+                    auth_state.error_message = Some("❌ Internal error: Username not available. Please try again.".to_string());
+                    auth_state.status_message = None;
+                    auth_state.step = GitHubAuthStep::Input;
+                    auth_state.setup_data = None;
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    return Ok(());
+                }
+                let token = setup_data.token.clone();
+                let repo_name = setup_data.repo_name.clone();
+
+                let create_result = self.runtime.block_on(async {
+                    let client = GitHubClient::new(token.clone());
+                    client.create_repo(&repo_name, "My dotfiles managed by dotstate", false).await
+                });
+
+                match create_result {
+                    Ok(_) => {
+                        setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(500));
+                        auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::InitializingRepo);
+                        auth_state.status_message = Some("⚙️  Initializing local repository...".to_string());
+                        auth_state.setup_data = Some(setup_data); // Save setup_data
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    }
+                    Err(e) => {
+                        auth_state.error_message = Some(format!("❌ Failed to create repository: {}", e));
+                        auth_state.status_message = None;
+                        auth_state.step = GitHubAuthStep::Input;
+                        auth_state.setup_data = None;
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        return Ok(());
+                    }
+                }
+            }
+            GitHubSetupStep::InitializingRepo => {
+                // Initialize local repository
+                let username = match setup_data.username.as_ref() {
+                    Some(u) => u,
+                    None => {
+                        error!("Invalid state: username not set in InitializingRepo step");
+                        auth_state.error_message = Some("❌ Internal error: Username not available. Please try again.".to_string());
+                        auth_state.status_message = None;
+                        auth_state.step = GitHubAuthStep::Input;
+                        auth_state.setup_data = None;
+                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        return Ok(());
+                    }
+                };
+                let token = setup_data.token.clone();
+                let repo_name = setup_data.repo_name.clone();
+                let repo_path = self.config.repo_path.clone();
+
+                std::fs::create_dir_all(&repo_path)
+                    .context("Failed to create repository directory")?;
+
+                let mut git_mgr = GitManager::open_or_init(&repo_path)?;
+
+                // Add remote
+                let remote_url = format!("https://{}@github.com/{}/{}.git", token, username, repo_name);
+                git_mgr.add_remote("origin", &remote_url)?;
+
+                // Create initial commit
+                std::fs::write(repo_path.join("README.md"),
+                    format!("# {}\n\nDotfiles managed by dotstate", repo_name))?;
+
+                // Create profile manifest with default profile
+                let manifest = crate::utils::ProfileManifest {
+                    profiles: vec![crate::utils::ProfileInfo {
+                        name: self.config.active_profile.clone(),
+                        description: None, // Default profile, no description yet
+                        synced_files: Vec::new(),
+                    }],
+                };
+                manifest.save(&repo_path)?;
+
+                git_mgr.commit_all("Initial commit")?;
+
+                let current_branch = git_mgr.get_current_branch()
+                    .unwrap_or_else(|| self.config.default_branch.clone());
+
+                git_mgr.push("origin", &current_branch, Some(&token))?;
+                git_mgr.set_upstream_tracking("origin", &current_branch)?;
+
+                // Update config
+                self.config.github = Some(GitHubConfig {
+                    owner: username.clone(),
+                    repo: repo_name.clone(),
+                    token: Some(token.clone()),
+                });
+                self.config.repo_name = repo_name.clone();
+                self.config.save(&self.config_path)
+                    .context("Failed to save configuration")?;
+
+                auth_state.status_message = Some("✅ Repository created and initialized successfully".to_string());
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                // Move to complete (no profiles to discover for new repos)
+                auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::Complete);
+                self.config = Config::load_or_create(&self.config_path)?;
+                auth_state.status_message = Some(format!(
+                    "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nPress Enter to continue.",
+                    username, repo_name, repo_path
+                ));
+                auth_state.setup_data = None;
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+            }
+            GitHubSetupStep::DiscoveringProfiles => {
+                // Discover profiles from the cloned repo
+                let repo_path = self.config.repo_path.clone();
+
+                // Load manifest - synced_files should already be in manifest
+                let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
+
+                // If manifest has profiles but synced_files are empty, backfill from directory
+                for profile_info in &mut manifest.profiles {
+                    if profile_info.synced_files.is_empty() {
+                        let profile_dir = repo_path.join(&profile_info.name);
+                        if profile_dir.exists() && profile_dir.is_dir() {
+                            profile_info.synced_files = list_files_in_profile_dir(&profile_dir, &repo_path).unwrap_or_default();
+                        }
+                    }
+                }
+                manifest.save(&repo_path)?;
+
+                if !manifest.profiles.is_empty() && self.config.active_profile.is_empty() {
+                    self.config.active_profile = manifest.profiles[0].name.clone();
+                    self.config.save(&self.config_path)?;
+                }
+
+                // Set up profile selection state
+                self.ui_state.profile_selection.profiles = manifest.profiles.iter()
+                    .map(|p| p.name.clone())
+                    .collect();
+                if !self.ui_state.profile_selection.profiles.is_empty() {
+                    self.ui_state.profile_selection.list_state.select(Some(0));
+                }
+
+                // Move to complete step - show success message in progress screen
+                if !self.ui_state.profile_selection.profiles.is_empty() {
+                    auth_state.status_message = Some(format!(
+                        "✅ Setup complete!\n\nFound {} profile(s) in the repository.\n\nPreparing profile selection...",
+                        self.ui_state.profile_selection.profiles.len()
+                    ));
+                } else {
+                    // For new repos, we might not have username in setup_data
+                    // Use config if available, otherwise use repo_name
+                    let username = setup_data.username.as_ref()
+                        .or_else(|| self.config.github.as_ref().map(|g| &g.owner))
+                        .unwrap_or(&setup_data.repo_name);
+                    let repo_name = setup_data.repo_name.clone();
+                    auth_state.status_message = Some(format!(
+                        "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nNo profiles found. You can create one from the main menu.\n\nPreparing main menu...",
+                        username, repo_name, repo_path
+                    ));
+                }
+                // Add a delay to show the success message before transitioning
+                setup_data.delay_until = Some(std::time::Instant::now() + Duration::from_millis(2000));
+                auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::Complete);
+                auth_state.setup_data = Some(setup_data);
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+            }
+            GitHubSetupStep::Complete => {
+                // Delay complete, transition to next screen
+                if !self.ui_state.profile_selection.profiles.is_empty() {
+                    // Go to profile selection screen
+                    self.ui_state.current_screen = Screen::ProfileSelection;
+                    auth_state.step = GitHubAuthStep::Input; // Reset to input state
+                    auth_state.status_message = None;
+                } else {
+                    // No profiles, go to main menu
+                    self.ui_state.current_screen = Screen::MainMenu;
+                    auth_state.step = GitHubAuthStep::Input;
+                    auth_state.status_message = None;
+                }
+                auth_state.setup_data = None;
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+            }
+        }
+
+        // Save updated setup_data back (only if it wasn't already consumed/saved in the step)
+        // Steps that complete set setup_data to None, so we only save if it's still needed
+        if auth_state.setup_data.is_none() && matches!(auth_state.step, GitHubAuthStep::SetupStep(_)) {
+            // Only save if we're still in setup and data wasn't consumed
+            // But actually, each step that needs to continue already saves it
+            // So we only need to save if the step didn't save it yet
+            // For now, let's not save here - each step handles its own saving
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)] // Kept for reference, but replaced by process_github_setup_step
     fn process_github_setup(&mut self) -> Result<()> {
         let auth_state = &mut self.ui_state.github_auth;
+
+        // Set processing state FIRST before any blocking operations
         auth_state.step = GitHubAuthStep::Processing;
         auth_state.error_message = None;
-        auth_state.status_message = Some("Verifying token...".to_string());
 
-        // We'll process this in the event loop to avoid blocking
-        // For now, let's do it synchronously with the runtime
+        // Step 1: Connecting to GitHub - set this immediately
+        auth_state.status_message = Some("🔌 Connecting to GitHub...".to_string());
+
+        // Sync state to component so UI can render it
+        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+        // Small delay to allow UI to render the progress screen
+        // This gives the event loop a chance to process and render
+        // Note: This won't work perfectly because we're blocking, but it helps
+        std::thread::sleep(Duration::from_millis(300));
+
         // Trim whitespace from token
         let token = auth_state.token_input.trim().to_string();
         let repo_name = self.config.repo_name.clone();
@@ -1559,7 +2117,7 @@ impl App {
             let actual_start = if token.len() >= 4 { &token[..4] } else { "too short" };
             auth_state.error_message = Some(
                 format!(
-                    "Invalid token format: Must start with 'ghp_' but starts with '{}'.\n\
+                    "❌ Invalid token format: Must start with 'ghp_' but starts with '{}'.\n\
                     Token length: {} characters.\n\
                     First 10 chars: '{}'\n\
                     Please check that you copied the entire token correctly.\n\
@@ -1570,13 +2128,14 @@ impl App {
                 )
             );
             auth_state.step = GitHubAuthStep::Input;
+            auth_state.status_message = None;
             return Ok(());
         }
 
         if token.len() < 40 {
             auth_state.error_message = Some(
                 format!(
-                    "Token appears incomplete: {} characters (expected 40+).\n\
+                    "❌ Token appears incomplete: {} characters (expected 40+).\n\
                     First 10 chars: '{}'\n\
                     Make sure you copied the entire token from GitHub.",
                     token.len(),
@@ -1584,8 +2143,16 @@ impl App {
                 )
             );
             auth_state.step = GitHubAuthStep::Input;
+            auth_state.status_message = None;
             return Ok(());
         }
+
+        // Step 2: Validating token
+        auth_state.status_message = Some("🔑 Validating your token...".to_string());
+        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+        // Small delay for UX
+        std::thread::sleep(Duration::from_millis(800));
 
         // Use the runtime to run async code
         let result = self.runtime.block_on(async {
@@ -1593,7 +2160,7 @@ impl App {
             let client = GitHubClient::new(token.clone());
             let user = client.get_user().await?;
 
-            // Check if repo exists
+            // Step 3: Check if repo exists
             let repo_exists = client.repo_exists(&user.login, &repo_name).await?;
 
             Ok::<(String, bool), anyhow::Error>((user.login, repo_exists))
@@ -1603,8 +2170,20 @@ impl App {
             Ok((username, exists)) => {
                 let repo_path = self.config.repo_path.clone();
 
+                // Step 3: Checking if repo exists (already done, but show status)
+                auth_state.status_message = Some(format!("🔍 Checking if repository exists..."));
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                // Small delay for UX
+                std::thread::sleep(Duration::from_millis(600));
+
                 if exists {
-                    auth_state.status_message = Some(format!("Repository exists. Cloning {}/{}...", username, repo_name));
+                    // Step 4: Cloning the repo
+                    auth_state.status_message = Some(format!("📥 Cloning repository {}/{}...", username, repo_name));
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                    // Small delay before cloning
+                    std::thread::sleep(Duration::from_millis(500));
 
                     // Remove existing directory if it exists
                     if repo_path.exists() {
@@ -1616,16 +2195,26 @@ impl App {
                     let remote_url = format!("https://github.com/{}/{}.git", username, repo_name);
                     match GitManager::clone(&remote_url, &repo_path, Some(&token)) {
                         Ok(_) => {
-                            auth_state.status_message = Some(format!("Repository cloned successfully to: {:?}", repo_path));
+                            auth_state.status_message = Some(format!("✅ Repository cloned successfully!"));
+                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                            // Small delay after cloning
+                            std::thread::sleep(Duration::from_millis(500));
                         }
                         Err(e) => {
-                            auth_state.error_message = Some(format!("Failed to clone repository: {}", e));
+                            auth_state.error_message = Some(format!("❌ Failed to clone repository: {}", e));
+                            auth_state.status_message = None;
                             auth_state.step = GitHubAuthStep::Input;
                             return Ok(());
                         }
                     }
                 } else {
-                    auth_state.status_message = Some(format!("Creating repository: {}/{}", username, repo_name));
+                    // Step 4: Creating new repository
+                    auth_state.status_message = Some(format!("📦 Creating repository {}/{}...", username, repo_name));
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                    // Small delay for UX
+                    std::thread::sleep(Duration::from_millis(600));
 
                     // Create repository
                     let create_result = self.runtime.block_on(async {
@@ -1635,7 +2224,11 @@ impl App {
 
                     match create_result {
                         Ok(_) => {
-                            auth_state.status_message = Some(format!("Repository created. Initializing local repo..."));
+                            auth_state.status_message = Some(format!("⚙️  Initializing local repository..."));
+                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                            // Small delay for UX
+                            std::thread::sleep(Duration::from_millis(500));
 
                             // Initialize local repository
                             std::fs::create_dir_all(&repo_path)
@@ -1656,8 +2249,8 @@ impl App {
                             let manifest = crate::utils::ProfileManifest {
                                 profiles: vec![crate::utils::ProfileInfo {
                                     name: self.config.active_profile.clone(),
-                                    description: self.config.profiles.first()
-                                        .and_then(|p| p.description.clone()),
+                                    description: None, // Default profile, no description yet
+                                    synced_files: Vec::new(),
                                 }],
                             };
                             manifest.save(&repo_path)?;
@@ -1674,10 +2267,12 @@ impl App {
                             // Ensure tracking is set up after push
                             git_mgr.set_upstream_tracking("origin", &current_branch)?;
 
-                            auth_state.status_message = Some(format!("Repository created and initialized successfully"));
+                            auth_state.status_message = Some(format!("✅ Repository created and initialized successfully"));
+                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
                         }
                         Err(e) => {
-                            auth_state.error_message = Some(format!("Failed to create repository: {}", e));
+                            auth_state.error_message = Some(format!("❌ Failed to create repository: {}", e));
+                            auth_state.status_message = None;
                             auth_state.step = GitHubAuthStep::Input;
                             return Ok(());
                         }
@@ -1701,17 +2296,89 @@ impl App {
                     return Ok(());
                 }
 
-                auth_state.status_message = Some(format!(
-                    "GitHub setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\nConfig: {:?}\n\nPress Enter to continue.",
-                    username, repo_name, repo_path, self.config_path
-                ));
+                // Discover profiles from the cloned repo
+                if exists && repo_path.exists() {
+                    auth_state.status_message = Some(format!("🔎 Discovering profiles..."));
+                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                    // Small delay for UX
+                    std::thread::sleep(Duration::from_millis(600));
+
+                    // Discover profiles from manifest
+                    let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
+
+                    // If manifest has profiles but synced_files are empty, backfill from directory
+                    for profile_info in &mut manifest.profiles {
+                        if profile_info.synced_files.is_empty() {
+                            let profile_dir = repo_path.join(&profile_info.name);
+                            if profile_dir.exists() && profile_dir.is_dir() {
+                                profile_info.synced_files = list_files_in_profile_dir(&profile_dir, &repo_path).unwrap_or_default();
+                            }
+                        }
+                    }
+                    manifest.save(&repo_path)?;
+
+                    // Set active profile to first one if available and not already set
+                    if !manifest.profiles.is_empty() && self.config.active_profile.is_empty() {
+                        self.config.active_profile = manifest.profiles[0].name.clone();
+                    }
+
+                    // Save updated config
+                    self.config.save(&self.config_path)?;
+                } else {
+                    // For new repos, just reload config normally
+                    self.config = Config::load_or_create(&self.config_path)?;
+                }
+
+                // Check if we have profiles to activate (only if repo was cloned, not created)
+                if exists {
+                    // Set up profile selection state from manifest
+                    // Get manifest before borrowing ui_state (repo_path already cloned above)
+                    let repo_path_clone = self.config.repo_path.clone();
+                    let manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path_clone).unwrap_or_default();
+                    let profile_names: Vec<String> = manifest.profiles.iter()
+                        .map(|p| p.name.clone())
+                        .collect();
+                    self.ui_state.profile_selection.profiles = profile_names;
+                    if !self.ui_state.profile_selection.profiles.is_empty() {
+                        self.ui_state.profile_selection.list_state.select(Some(0));
+                    }
+
+                    if !self.ui_state.profile_selection.profiles.is_empty() {
+                        auth_state.status_message = Some(format!(
+                            "✅ Setup complete!\n\nFound {} profile(s) in the repository.\n\nPress Enter to select which profile to activate.",
+                            self.ui_state.profile_selection.profiles.len()
+                        ));
+                    } else {
+                        // No profiles found
+                        auth_state.status_message = Some(format!(
+                            "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nNo profiles found. You can create one from the main menu.\n\nPress Enter to continue.",
+                            username, repo_name, repo_path
+                        ));
+                    }
+                } else {
+                    // New repo - just created, no profiles to activate yet
+                    // Reload config to ensure it's up to date
+                    self.config = Config::load_or_create(&self.config_path)?;
+                    auth_state.status_message = Some(format!(
+                        "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nPress Enter to continue.",
+                        username, repo_name, repo_path
+                    ));
+                }
+
+                // Update component state
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+
+                // Ensure step is set to Processing so user can press Enter to continue
+                auth_state.step = GitHubAuthStep::Processing;
             }
             Err(e) => {
                 // Show detailed error message
-                let error_msg = format!("Authentication failed: {}", e);
+                let error_msg = format!("❌ Authentication failed: {}", e);
                 auth_state.error_message = Some(error_msg);
                 auth_state.status_message = None;
                 auth_state.step = GitHubAuthStep::Input;
+                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
                 // Don't clear the token input so user can see what they entered
             }
         }
@@ -1903,6 +2570,13 @@ impl App {
 
     /// Handle input for dotfile selection screen
     fn handle_dotfile_selection_input(&mut self, key_code: KeyCode) -> Result<()> {
+        // Get profile info before borrowing state
+        let previously_synced: std::collections::HashSet<String> = self.get_active_profile_info()
+            .ok()
+            .flatten()
+            .map(|p| p.synced_files.iter().cloned().collect())
+            .unwrap_or_default();
+
         let state = &mut self.ui_state.dotfile_selection;
 
         // PRIORITY 1: Handle unsaved warning popup FIRST (blocks all other input)
@@ -1963,7 +2637,7 @@ impl App {
         match key_code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 // Check for unsaved changes before leaving
-                // Need to check before using state to avoid borrow conflicts
+                // Use previously_synced that was obtained before borrowing state
                 let has_unsaved = {
                     let currently_selected: std::collections::HashSet<String> = state.selected_for_sync
                         .iter()
@@ -1972,12 +2646,6 @@ impl App {
                                 .map(|d| d.relative_path.to_string_lossy().to_string())
                         })
                         .collect();
-
-                    let previously_synced: std::collections::HashSet<String> = if let Some(profile) = self.config.get_active_profile() {
-                        profile.synced_files.iter().cloned().collect()
-                    } else {
-                        std::collections::HashSet::new()
-                    };
 
                     currently_selected != previously_synced
                 };
@@ -2238,11 +2906,11 @@ impl App {
             .collect();
 
         // Get previously synced files from active profile
-        let previously_synced: std::collections::HashSet<String> = if let Some(profile) = self.config.get_active_profile() {
-            profile.synced_files.iter().cloned().collect()
-        } else {
-            std::collections::HashSet::new()
-        };
+        let previously_synced: std::collections::HashSet<String> = self.get_active_profile_info()
+            .ok()
+            .flatten()
+            .map(|p| p.synced_files.iter().cloned().collect())
+            .unwrap_or_default();
 
         // Check if they differ
         currently_selected != previously_synced
@@ -2256,10 +2924,12 @@ impl App {
         let dotfile_names = get_default_dotfile_paths();
         let mut found = file_manager.scan_dotfiles(&dotfile_names);
 
-        // Mark files that are already synced
-        let synced_set: std::collections::HashSet<String> = self.config.synced_files.iter()
-            .cloned()
-            .collect();
+        // Mark files that are already synced - use active profile's synced_files from manifest
+        let synced_set: std::collections::HashSet<String> = self.get_active_profile_info()
+            .ok()
+            .flatten()
+            .map(|p| p.synced_files.iter().cloned().collect())
+            .unwrap_or_default();
 
         let mut selected_indices = std::collections::HashSet::new();
         for (i, dotfile) in found.iter_mut().enumerate() {
@@ -2292,10 +2962,17 @@ impl App {
     fn sync_selected_files(&mut self) -> Result<()> {
         use crate::utils::SymlinkManager;
 
-        let state = &mut self.ui_state.dotfile_selection;
-        let file_manager = crate::file_manager::FileManager::new()?;
+        // Get profile info before borrowing state
         let profile_name = self.config.active_profile.clone();
         let repo_path = self.config.repo_path.clone();
+        let previously_synced: std::collections::HashSet<String> = self.get_active_profile_info()
+            .ok()
+            .flatten()
+            .map(|p| p.synced_files.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let state = &mut self.ui_state.dotfile_selection;
+        let file_manager = crate::file_manager::FileManager::new()?;
 
         let mut synced_count = 0;
         let mut unsynced_count = 0;
@@ -2303,13 +2980,6 @@ impl App {
 
         // Get list of currently selected indices
         let currently_selected: std::collections::HashSet<usize> = state.selected_for_sync.iter().cloned().collect();
-
-        // Get list of previously synced files from the active profile
-        let previously_synced: std::collections::HashSet<String> = if let Some(profile) = self.config.get_active_profile() {
-            profile.synced_files.iter().cloned().collect()
-        } else {
-            self.config.synced_files.iter().cloned().collect()
-        };
 
         // Files to sync
         let mut files_to_sync: Vec<String> = Vec::new();
@@ -2444,15 +3114,29 @@ impl App {
             }
 
             // Step 2: Now remove from SymlinkManager tracking
+            // Get remaining files before deactivating (need to get from manifest)
+            let remaining_files: Vec<String> = {
+                // Clone what we need from state before the borrow
+                let relative_str_clone = relative_str.clone();
+                // Get from manifest (state is still borrowed, but we can work around it)
+                // Actually, we need to get this before the loop or restructure
+                // For now, just get it from the manifest directly
+                crate::utils::ProfileManifest::load_or_backfill(&repo_path)
+                    .ok()
+                    .and_then(|manifest| {
+                        manifest.profiles.iter()
+                            .find(|p| p.name == profile_name)
+                            .map(|p| p.synced_files.iter()
+                                .filter(|f| f != &&relative_str_clone)
+                                .cloned()
+                                .collect())
+                    })
+                    .unwrap_or_default()
+            };
+
             match symlink_mgr.deactivate_profile(&profile_name) {
                 Ok(_) => {
                     // Re-activate with remaining files
-                    let remaining_files: Vec<String> = self.config.get_active_profile()
-                        .map(|p| p.synced_files.clone())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|f| f != &relative_str)
-                        .collect();
 
                     if !remaining_files.is_empty() {
                         let _ = symlink_mgr.activate_profile(&profile_name, &remaining_files);
@@ -2482,35 +3166,49 @@ impl App {
         }
     }
 
-        // Step 4: Update config
+        // Step 4: Update manifest with new synced files
         let new_synced_files: Vec<String> = state.dotfiles.iter()
             .enumerate()
             .filter(|(i, _)| currently_selected.contains(i))
             .map(|(_, d)| d.relative_path.to_string_lossy().to_string())
             .collect();
 
-        if let Some(profile) = self.config.get_active_profile_mut() {
-            profile.synced_files = new_synced_files.clone();
+        // Update manifest (profile_name already cloned above)
+        // Clone what we need from state before loading manifest
+        let new_synced_files_clone = new_synced_files.clone();
+        let profile_name_clone = profile_name.clone();
+        let repo_path_clone = repo_path.clone();
+        let synced_count_clone = synced_count;
+        let unsynced_count_clone = unsynced_count;
+        let errors_clone = errors.clone();
+
+        // Release state borrow by ending its scope (using a block)
+        {
+            let _ = state;
         }
-        self.config.synced_files = new_synced_files;
-        self.config.save(&self.config_path)?;
+
+        // Now we can load manifest
+        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path_clone)?;
+        manifest.update_synced_files(&profile_name_clone, new_synced_files_clone)?;
+        manifest.save(&repo_path_clone)?;
 
         // Show summary
-        let summary = if errors.is_empty() {
+        let summary = if errors_clone.is_empty() {
             format!(
                 "Sync Complete!\n\n✓ Synced: {} files\n✓ Unsynced: {} files\n\nAll operations completed successfully.",
-                synced_count, unsynced_count
+                synced_count_clone, unsynced_count_clone
             )
         } else {
             format!(
                 "Sync Completed with Errors\n\n✓ Synced: {} files\n✓ Unsynced: {} files\n\nErrors:\n{}\n\nSome operations failed. Please review the errors above.",
-                synced_count,
-                unsynced_count,
-                errors.join("\n")
+                synced_count_clone,
+                unsynced_count_clone,
+                errors_clone.join("\n")
             )
         };
 
-        state.status_message = Some(summary);
+        // Re-borrow state to set status message
+        self.ui_state.dotfile_selection.status_message = Some(summary);
         Ok(())
     }
 
@@ -2972,10 +3670,31 @@ impl App {
         Ok(())
     }
 
+    /// Helper: Load manifest from repo
+    fn load_manifest(&self) -> Result<crate::utils::ProfileManifest> {
+        crate::utils::ProfileManifest::load_or_backfill(&self.config.repo_path)
+    }
+
+    /// Helper: Save manifest to repo
+    fn save_manifest(&self, manifest: &crate::utils::ProfileManifest) -> Result<()> {
+        manifest.save(&self.config.repo_path)
+    }
+
+    /// Helper: Get profiles from manifest
+    fn get_profiles(&self) -> Result<Vec<crate::utils::ProfileInfo>> {
+        Ok(self.load_manifest()?.profiles)
+    }
+
+    /// Helper: Get active profile info from manifest
+    fn get_active_profile_info(&self) -> Result<Option<crate::utils::ProfileInfo>> {
+        let manifest = self.load_manifest()?;
+        Ok(manifest.profiles.into_iter()
+            .find(|p| p.name == self.config.active_profile))
+    }
+
     /// Create a new profile
     fn create_profile(&mut self, name: &str, description: Option<String>, copy_from: Option<usize>) -> Result<()> {
         use crate::utils::{validate_profile_name, sanitize_profile_name};
-        use crate::config::Profile;
 
         // Validate and sanitize profile name
         let sanitized_name = sanitize_profile_name(name);
@@ -2983,7 +3702,9 @@ impl App {
             return Err(anyhow::anyhow!("Profile name cannot be empty"));
         }
 
-        let existing_names: Vec<String> = self.config.profiles.iter().map(|p| p.name.clone()).collect();
+        // Get existing profile names from manifest
+        let mut manifest = self.load_manifest()?;
+        let existing_names: Vec<String> = manifest.profiles.iter().map(|p| p.name.clone()).collect();
         if let Err(e) = validate_profile_name(&sanitized_name, &existing_names) {
             return Err(anyhow::anyhow!("Invalid profile name: {}", e));
         }
@@ -2999,7 +3720,7 @@ impl App {
 
         // Copy files from source profile if specified
         let synced_files = if let Some(source_idx) = copy_from {
-            if let Some(source_profile) = self.config.profiles.get(source_idx) {
+            if let Some(source_profile) = manifest.profiles.get(source_idx) {
                 let source_profile_path = self.config.repo_path.join(&source_profile.name);
 
                 // Copy all files from source profile
@@ -3030,19 +3751,11 @@ impl App {
             Vec::new()
         };
 
-        // Create profile and add to config
-        let profile = Profile::new(sanitized_name.clone(), description.clone());
-        let mut profile = profile;
-        profile.synced_files = synced_files;
-
-        self.config.add_profile(profile);
-        self.config.save(&self.config_path)?;
-
-        // Update profile manifest in repo (backfill if needed)
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&self.config.repo_path)
-            .unwrap_or_else(|_| crate::utils::ProfileManifest { profiles: Vec::new() });
+        // Add profile to manifest with synced_files
         manifest.add_profile(sanitized_name.clone(), description);
-        manifest.save(&self.config.repo_path)?;
+        // Update synced_files for the newly added profile
+        manifest.update_synced_files(&sanitized_name, synced_files)?;
+        self.save_manifest(&manifest)?;
 
         info!("Created profile: {}", sanitized_name);
         Ok(())
@@ -3052,8 +3765,10 @@ impl App {
     fn switch_profile(&mut self, target_profile_name: &str) -> Result<()> {
         use crate::utils::SymlinkManager;
 
-        // Validate target profile exists
-        let target_profile = self.config.get_profile(target_profile_name)
+        // Get target profile from manifest
+        let manifest = self.load_manifest()?;
+        let target_profile = manifest.profiles.iter()
+            .find(|p| p.name == target_profile_name)
             .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", target_profile_name))?;
 
         // Don't switch if already active
@@ -3096,7 +3811,9 @@ impl App {
             return Err(anyhow::anyhow!("Profile name cannot be empty"));
         }
 
-        let existing_names: Vec<String> = self.config.profiles.iter()
+        // Get existing profile names from manifest
+        let mut manifest = self.load_manifest()?;
+        let existing_names: Vec<String> = manifest.profiles.iter()
             .filter(|p| p.name != old_name)
             .map(|p| p.name.clone())
             .collect();
@@ -3104,16 +3821,14 @@ impl App {
             return Err(anyhow::anyhow!("Invalid profile name: {}", e));
         }
 
+        // Check if profile exists in manifest
+        if !manifest.has_profile(old_name) {
+            return Err(anyhow::anyhow!("Profile '{}' not found", old_name));
+        }
+
         // Clone values we need before borrowing
         let repo_path = self.config.repo_path.clone();
         let was_active = self.config.active_profile == old_name;
-
-        // Get the profile and update name
-        {
-            let profile = self.config.get_profile_mut(old_name)
-                .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", old_name))?;
-            profile.name = sanitized_name.clone();
-        }
 
         // Rename profile folder in repo
         let old_path = repo_path.join(old_name);
@@ -3127,15 +3842,12 @@ impl App {
         // Update active profile name if this was the active profile
         if was_active {
             self.config.active_profile = sanitized_name.clone();
+            self.config.save(&self.config_path)?;
         }
 
-        self.config.save(&self.config_path)?;
-
-        // Update profile manifest in repo (backfill if needed)
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&self.config.repo_path)
-            .unwrap_or_else(|_| crate::utils::ProfileManifest { profiles: Vec::new() });
-        let _ = manifest.rename_profile(old_name, &sanitized_name);
-        manifest.save(&self.config.repo_path)?;
+        // Update profile manifest
+        manifest.rename_profile(old_name, &sanitized_name)?;
+        self.save_manifest(&manifest)?;
 
         // Update symlinks if profile is active (has symlinks)
         if self.config.profile_activated && was_active {
@@ -3177,18 +3889,12 @@ impl App {
                 .context("Failed to remove profile directory")?;
         }
 
-        // Remove from config
-        if !self.config.remove_profile(profile_name) {
+        // Remove from manifest
+        let mut manifest = self.load_manifest()?;
+        if !manifest.remove_profile(profile_name) {
             return Err(anyhow::anyhow!("Profile '{}' not found", profile_name));
         }
-
-        self.config.save(&self.config_path)?;
-
-        // Update profile manifest in repo (backfill if needed)
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&self.config.repo_path)
-            .unwrap_or_else(|_| crate::utils::ProfileManifest { profiles: Vec::new() });
-        manifest.remove_profile(profile_name);
-        manifest.save(&self.config.repo_path)?;
+        self.save_manifest(&manifest)?;
 
         info!("Deleted profile: {}", profile_name);
         Ok(())
@@ -3204,8 +3910,9 @@ impl App {
         self.config.active_profile = profile_name.to_string();
         self.config.save(&self.config_path)?;
 
-        // Get profile to activate
-        let profile = self.config.profiles.iter()
+        // Get profile to activate from manifest
+        let profile = self.get_profiles()?
+            .into_iter()
             .find(|p| p.name == profile_name)
             .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
 

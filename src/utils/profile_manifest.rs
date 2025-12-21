@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Profile manifest stored in the repository root
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileManifest {
     /// List of profile names
     pub profiles: Vec<ProfileInfo>,
@@ -16,6 +16,9 @@ pub struct ProfileInfo {
     /// Optional description
     #[serde(default)]
     pub description: Option<String>,
+    /// Files synced for this profile (relative paths from home directory)
+    #[serde(default)]
+    pub synced_files: Vec<String>,
 }
 
 impl ProfileManifest {
@@ -122,9 +125,25 @@ impl ProfileManifest {
     pub fn add_profile(&mut self, name: String, description: Option<String>) {
         // Check if profile already exists
         if !self.profiles.iter().any(|p| p.name == name) {
-            self.profiles.push(ProfileInfo { name, description });
+            self.profiles.push(ProfileInfo {
+                name,
+                description,
+                synced_files: Vec::new(),
+            });
         }
     }
+
+    /// Update synced files for a profile
+    pub fn update_synced_files(&mut self, profile_name: &str, synced_files: Vec<String>) -> Result<()> {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.name == profile_name) {
+            profile.synced_files = synced_files;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Profile '{}' not found in manifest", profile_name))
+        }
+    }
+
+    // get_synced_files method removed - access synced_files directly from ProfileInfo
 
     /// Remove a profile from the manifest
     pub fn remove_profile(&mut self, name: &str) -> bool {

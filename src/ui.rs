@@ -33,6 +33,18 @@ pub struct GitHubAuthState {
     pub focused_field: GitHubAuthField, // Which field is currently focused
     pub is_editing_token: bool, // Whether we're in "edit token" mode
     pub repo_already_configured: bool, // Whether repo was already set up
+    /// Intermediate data stored during GitHub setup process
+    pub setup_data: Option<GitHubSetupData>,
+}
+
+/// Intermediate data stored during GitHub setup process
+#[derive(Debug, Clone)]
+pub struct GitHubSetupData {
+    pub token: String,
+    pub repo_name: String,
+    pub username: Option<String>,
+    pub repo_exists: Option<bool>,
+    pub delay_until: Option<std::time::Instant>, // For delays between steps
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +59,21 @@ pub enum GitHubAuthField {
 pub enum GitHubAuthStep {
     Input,
     Processing,
+    /// State machine for processing setup steps
+    SetupStep(GitHubSetupStep),
+}
+
+/// State machine for GitHub setup process
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitHubSetupStep {
+    Connecting,
+    ValidatingToken,
+    CheckingRepo,
+    CloningRepo,
+    CreatingRepo,
+    InitializingRepo,
+    DiscoveringProfiles,
+    Complete,
 }
 
 impl Default for GitHubAuthState {
@@ -69,6 +96,7 @@ impl Default for GitHubAuthState {
             focused_field: GitHubAuthField::Token,
             is_editing_token: false,
             repo_already_configured: false,
+            setup_data: None,
         }
     }
 }
@@ -184,6 +212,7 @@ pub struct ProfileSelectionState {
     pub list_state: ListState,
     #[allow(dead_code)] // Reserved for future use
     pub selected_profile: Option<String>, // Selected profile to activate
+    pub show_exit_warning: bool, // Show warning when user tries to exit without selecting
 }
 
 impl Default for ProfileSelectionState {
@@ -192,6 +221,7 @@ impl Default for ProfileSelectionState {
             profiles: Vec::new(),
             list_state: ListState::default(),
             selected_profile: None,
+            show_exit_warning: false,
         }
     }
 }

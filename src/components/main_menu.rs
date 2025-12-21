@@ -201,8 +201,14 @@ impl MainMenuComponent {
                 return "Please complete setup to see status".to_string();
             }
 
-            let synced_count = config.synced_files.len();
-            let profile_count = config.profiles.len();
+            // Get stats from manifest
+            let manifest = crate::utils::ProfileManifest::load_or_backfill(&config.repo_path)
+                .unwrap_or_default();
+            let synced_count = manifest.profiles.iter()
+                .find(|p| p.name == config.active_profile)
+                .map(|p| p.synced_files.len())
+                .unwrap_or(0);
+            let profile_count = manifest.profiles.len();
             let active_profile = &config.active_profile;
 
             let mut stats = format!(

@@ -18,9 +18,11 @@ pub struct SyncedFilesComponent {
 
 impl SyncedFilesComponent {
     pub fn new(config: Config) -> Self {
-        let file_count = config.synced_files.len();
+        // Get synced files from manifest
+        let synced_files = Self::get_synced_files(&config);
+        let file_count = synced_files.len();
         let mut list_state = ListState::default();
-        if !config.synced_files.is_empty() {
+        if !synced_files.is_empty() {
             list_state.select(Some(0));
         }
         Self {
@@ -31,12 +33,26 @@ impl SyncedFilesComponent {
     }
 
     pub fn update_config(&mut self, config: Config) {
-        let was_empty = self.config.synced_files.is_empty();
+        let synced_files = Self::get_synced_files(&self.config);
+        let was_empty = synced_files.is_empty();
         self.config = config;
-        if was_empty && !self.config.synced_files.is_empty() {
+        let new_synced_files = Self::get_synced_files(&self.config);
+        if was_empty && !new_synced_files.is_empty() {
             self.list_state.select(Some(0));
         }
-        self.scrollbar_state = ScrollbarState::new(self.config.synced_files.len().saturating_sub(1));
+        self.scrollbar_state = ScrollbarState::new(new_synced_files.len().saturating_sub(1));
+    }
+
+    /// Get synced files from manifest for the active profile
+    fn get_synced_files(config: &Config) -> Vec<String> {
+        crate::utils::ProfileManifest::load_or_backfill(&config.repo_path)
+            .ok()
+            .and_then(|manifest| {
+                manifest.profiles.iter()
+                    .find(|p| p.name == config.active_profile)
+                    .map(|p| p.synced_files.clone())
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -60,8 +76,11 @@ impl Component for SyncedFilesComponent {
             "These are the files currently synced to your repository. Files are stored in the repo and symlinked back to their original locations."
         )?;
 
+        // Get synced files from manifest
+        let synced_files = Self::get_synced_files(&self.config);
+
         // Content: List of synced files
-        if self.config.synced_files.is_empty() {
+        if synced_files.is_empty() {
             let empty_message = Paragraph::new(
                 "No files are currently synced.\n\nGo to 'Scan & Select Dotfiles' to start syncing your dotfiles."
             )
@@ -74,7 +93,7 @@ impl Component for SyncedFilesComponent {
                     .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)));
             frame.render_widget(empty_message, content_chunk);
         } else {
-            let items: Vec<ListItem> = self.config.synced_files
+            let items: Vec<ListItem> = synced_files
                 .iter()
                 .enumerate()
                 .map(|(i, path)| {
@@ -108,7 +127,7 @@ impl Component for SyncedFilesComponent {
                 .block(Block::default()
                     .borders(Borders::ALL)
                     .border_style(focused_border_style())
-                    .title(format!("Synced Files ({})", self.config.synced_files.len()))
+                    .title(format!("Synced Files ({})", synced_files.len()))
                     .title_alignment(Alignment::Center)
                     .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)));
 
@@ -141,13 +160,15 @@ impl Component for SyncedFilesComponent {
                         Ok(ComponentAction::Navigate(Screen::MainMenu))
                     }
                     KeyCode::Up => {
-                        if !self.config.synced_files.is_empty() {
+                        let synced_files = Self::get_synced_files(&self.config);
+                        if !synced_files.is_empty() {
                             self.list_state.select_previous();
                         }
                         Ok(ComponentAction::Update)
                     }
                     KeyCode::Down => {
-                        if !self.config.synced_files.is_empty() {
+                        let synced_files = Self::get_synced_files(&self.config);
+                        if !synced_files.is_empty() {
                             self.list_state.select_next();
                         }
                         Ok(ComponentAction::Update)
@@ -162,7 +183,8 @@ impl Component for SyncedFilesComponent {
                         Ok(ComponentAction::Navigate(Screen::MainMenu))
                     }
                     MouseEventKind::ScrollUp => {
-                        if !self.config.synced_files.is_empty() {
+                        let synced_files = Self::get_synced_files(&self.config);
+                        if !synced_files.is_empty() {
                             self.list_state.select_previous();
                             Ok(ComponentAction::Update)
                         } else {
@@ -170,7 +192,8 @@ impl Component for SyncedFilesComponent {
                         }
                     }
                     MouseEventKind::ScrollDown => {
-                        if !self.config.synced_files.is_empty() {
+                        let synced_files = Self::get_synced_files(&self.config);
+                        if !synced_files.is_empty() {
                             self.list_state.select_next();
                             Ok(ComponentAction::Update)
                         } else {
