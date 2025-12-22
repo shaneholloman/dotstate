@@ -181,7 +181,7 @@ impl DotfileSelectionComponent {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD | Modifier::REVERSED)
             )
-            .highlight_symbol("> ");
+            .highlight_symbol("» ");
 
         StatefulWidget::render(list, list_preview_chunks[0], frame.buffer_mut(), &mut selection_state.file_browser_list_state);
 

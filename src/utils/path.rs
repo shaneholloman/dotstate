@@ -114,3 +114,15 @@ pub fn is_dotfile(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Get the repository path from the config file
+///
+/// # Returns
+/// PathBuf to the repository directory
+pub fn get_repository_path() -> anyhow::Result<PathBuf> {
+    use crate::config::Config;
+    let config_path = get_config_path();
+    let config = Config::load_or_create(&config_path)
+        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+    Ok(config.repo_path)
+}
+

@@ -53,8 +53,6 @@ fn main() -> Result<()> {
         .join("dotstate");
     std::fs::create_dir_all(&log_dir)?;
 
-    let log_file = log_dir.join("dotstate.log");
-
     // Initialize tracing with file logging
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -69,10 +67,6 @@ fn main() -> Result<()> {
         .with_writer(non_blocking)
         .with_ansi(false) // Disable ANSI colors in file
         .init();
-
-    // Print log location before TUI starts (this will be visible briefly)
-    eprintln!("Logs are being written to: {:?}", log_file);
-    eprintln!("View logs in real-time: tail -f {:?}", log_file);
 
     let mut app = App::new()?;
     let result = app.run();

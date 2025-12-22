@@ -2,9 +2,9 @@
 name = "dotstate"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <you@example.com>"]
+authors = ["Serkan Yersen"]
 description = "A friendly TUI tool for managing dotfiles with GitHub sync"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/yourusername/dotstate"
 
 [dependencies]

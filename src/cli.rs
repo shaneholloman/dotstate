@@ -5,9 +5,10 @@ use crate::git::GitManager;
 use crate::utils::SymlinkManager;
 use std::path::PathBuf;
 
+
 /// A friendly TUI tool for managing dotfiles with GitHub sync
 #[derive(Parser, Debug)]
-#[command(name = "dotstate", version, about = "A friendly TUI tool for managing dotfiles with GitHub sync", long_about = None, disable_help_subcommand = true)]
+#[command(name = "dotstate", version, about = "A friendly TUI tool for managing dotfiles with GitHub sync", long_about = None, disable_help_subcommand = true, arg_required_else_help = false)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -17,10 +18,6 @@ pub struct Cli {
 pub enum Commands {
     /// Sync with remote: commit, pull (with rebase), and push
     Sync,
-    /// Push changes to GitHub
-    Push,
-    /// Pull changes from GitHub
-    Pull,
     /// List all synced files
     List {
         /// Show detailed information
@@ -32,14 +29,20 @@ pub enum Commands {
         /// Path to the file to add
         path: PathBuf,
     },
-    /// Activate the current profile (create symlinks)
+    /// Activate the symlinks, restores app state after deactivation.
     Activate,
-    /// Deactivate the current profile (restore original files)
+    /// Deactivate symlinks. this might be useful if you are going to uninstall dotstate or you need the original files.
     Deactivate {
         /// Completely remove symlinks without restoring files
         #[arg(long)]
         completely: bool,
     },
+    /// Shows logs location and how to view them
+    Logs,
+    /// Configuration file location
+    Config,
+    /// Repository location
+    Repository,
     /// Show help for a specific command
     Help {
         /// Command to show help for
@@ -52,13 +55,14 @@ impl Cli {
     pub fn execute(self) -> Result<()> {
         match self.command {
             Some(Commands::Sync) => Self::cmd_sync(),
-            Some(Commands::Push) => Self::cmd_push(),
-            Some(Commands::Pull) => Self::cmd_pull(),
             Some(Commands::List { verbose }) => Self::cmd_list(verbose),
             Some(Commands::Add { path }) => Self::cmd_add(path),
             Some(Commands::Activate) => Self::cmd_activate(),
             Some(Commands::Deactivate { completely }) => Self::cmd_deactivate(completely),
             Some(Commands::Help { command }) => Self::cmd_help(command),
+            Some(Commands::Logs) => Self::cmd_logs(),
+            Some(Commands::Config) => Self::cmd_config(),
+            Some(Commands::Repository) => Self::cmd_repository(),
             None => {
                 // No command provided, launch TUI
                 Ok(())
@@ -106,79 +110,25 @@ impl Cli {
         Ok(())
     }
 
-    fn cmd_push() -> Result<()> {
-        let config_path = crate::utils::get_config_path();
-
-        let config = Config::load_or_create(&config_path)
-            .context("Failed to load configuration")?;
-
-        if config.github.is_none() {
-            eprintln!("❌ GitHub not configured. Please run 'dotstate' to set up GitHub sync.");
-            std::process::exit(1);
-        }
-
-        if !config.profile_activated {
-            eprintln!("⚠️  Profile is not activated. Please activate your profile first:");
-            eprintln!("   dotstate activate");
-            eprintln!("\n   This ensures your symlinks are active before pushing changes.");
-            std::process::exit(1);
-        }
-
-        let repo_path = &config.repo_path;
-        let git_mgr = GitManager::open_or_init(repo_path)
-            .context("Failed to open repository")?;
-
-        let branch = git_mgr.get_current_branch()
-            .unwrap_or_else(|| config.default_branch.clone());
-
-        println!("📝 Committing changes...");
-        git_mgr.commit_all("Update dotfiles")
-            .context("Failed to commit changes")?;
-
-        println!("📤 Pushing to GitHub...");
-        let token = config.github.as_ref()
-            .and_then(|gh| gh.token.as_deref());
-        git_mgr.push("origin", &branch, token)
-            .context("Failed to push to remote")?;
-
-        println!("✅ Successfully pushed changes to GitHub!");
+    fn cmd_logs() -> Result<()> {
+        let log_dir = dirs::cache_dir()
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
+            .join("dotstate");
+        println!("Logs are being written to: {:?}", log_dir);
+        println!("View logs in real-time: tail -f {:?}", log_dir);
         Ok(())
     }
 
-    fn cmd_pull() -> Result<()> {
+    fn cmd_config() -> Result<()> {
         let config_path = crate::utils::get_config_path();
+        println!("Configuration file is located at: {:?}", config_path);
+        Ok(())
+    }
 
-        let config = Config::load_or_create(&config_path)
-            .context("Failed to load configuration")?;
-
-        if config.github.is_none() {
-            eprintln!("❌ GitHub not configured. Please run 'dotstate' to set up GitHub sync.");
-            std::process::exit(1);
-        }
-
-        if !config.profile_activated {
-            eprintln!("⚠️  Profile is not activated. Please activate your profile first:");
-            eprintln!("   dotstate activate");
-            eprintln!("\n   This ensures your symlinks are active after pulling changes.");
-            std::process::exit(1);
-        }
-
-        let repo_path = &config.repo_path;
-        let git_mgr = GitManager::open_or_init(repo_path)
-            .context("Failed to open repository")?;
-
-        let branch = git_mgr.get_current_branch()
-            .unwrap_or_else(|| config.default_branch.clone());
-
-        // Get token from config
-        let token = config.github.as_ref()
-            .and_then(|gh| gh.token.as_deref());
-
-        println!("📥 Pulling from GitHub...");
-        git_mgr.pull("origin", &branch, token)
-            .context("Failed to pull from remote")?;
-
-        println!("✅ Successfully pulled changes from GitHub!");
+    fn cmd_repository() -> Result<()> {
+        let repo_path = crate::utils::get_repository_path()
+            .context("Failed to get repository path")?;
+        println!("Repository is located at: {:?}", repo_path);
         Ok(())
     }
 
@@ -602,23 +552,70 @@ impl Cli {
     }
 
     fn cmd_help(command: Option<String>) -> Result<()> {
-        // This will be handled by loading help files from help/ folder
-        // For now, just show a message
-        if let Some(cmd) = command {
-            println!("Help for '{}' command:", cmd);
-            println!("(Help system coming soon - help files will be loaded from help/ folder)");
+        use clap::CommandFactory;
+
+        if let Some(cmd_name) = command {
+            // Show help for a specific command
+            let mut cli = Cli::command();
+            if let Some(subcommand) = cli.find_subcommand_mut(&cmd_name) {
+                let help = subcommand.render_help();
+                println!("{}", help);
+            } else {
+                eprintln!("❌ Unknown command: {}", cmd_name);
+                eprintln!("\nAvailable commands:");
+                Self::print_all_commands();
+                std::process::exit(1);
+            }
         } else {
-            println!("Available commands:");
-            println!("  push      - Push changes to GitHub");
-            println!("  pull      - Pull changes from GitHub");
-            println!("  list      - List all synced files");
-            println!("  add       - Add a file to sync");
-            println!("  activate  - Activate current profile (create symlinks)");
-            println!("  deactivate - Deactivate current profile (restore files)");
-            println!("    --completely - Remove symlinks without restoring files");
-            println!("  help      - Show help for a command");
+            // Show list of all available commands
+            println!("Available commands:\n");
+            Self::print_all_commands();
+            println!("\nUse 'dotstate help <command>' to see detailed help for a specific command.");
         }
         Ok(())
+    }
+
+    /// Print all available commands with their descriptions (typesafe)
+    fn print_all_commands() {
+        use clap::CommandFactory;
+
+        let cli = Cli::command();
+        let subcommands = cli.get_subcommands();
+
+        for subcmd in subcommands {
+            let name = subcmd.get_name();
+            let about = subcmd.get_about()
+                .map(|s| s.to_string())
+                .or_else(|| subcmd.get_long_about().map(|s| s.to_string()))
+                .unwrap_or_else(|| "No description available".to_string());
+
+            // Format the command name with proper spacing
+            let name_width = 15;
+            let padded_name = if name.len() <= name_width {
+                format!("{:<width$}", name, width = name_width)
+            } else {
+                name.to_string()
+            };
+
+            println!("  {}{}", padded_name, about);
+
+            // Print arguments/flags if any
+            for arg in subcmd.get_arguments() {
+                if let Some(short) = arg.get_short() {
+                    if let Some(long) = arg.get_long() {
+                        let help = arg.get_help()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(String::new);
+                        println!("    -{}, --{:<12} {}", short, long, help);
+                    }
+                } else if let Some(long) = arg.get_long() {
+                    let help = arg.get_help()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(String::new);
+                    println!("    --{:<15} {}", long, help);
+                }
+            }
+        }
     }
 }
 

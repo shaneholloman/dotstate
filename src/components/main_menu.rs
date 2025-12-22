@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
 use crate::components::component::{Component, ComponentAction};
 use crate::components::header::Header;
 use crate::components::footer::Footer;
@@ -438,7 +438,7 @@ impl Component for MainMenuComponent {
         let _ = Header::render(
             frame,
             header_chunk,
-            "dotstate - Dotfile Manager",
+            "DotState - Dotfile Manager",
             "Manage your dotfiles with ease. Sync to GitHub, organize by profiles, and keep your configuration files safe."
         )?;
 
@@ -450,41 +450,6 @@ impl Component for MainMenuComponent {
                 Constraint::Percentage(50), // Right panel
             ])
             .split(content_chunk);
-
-        // Left panel: split vertically (welcome message on top, menu on bottom)
-        let left_split = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(6), // Welcome message
-                Constraint::Min(0),     // Menu items
-            ])
-            .split(content_split[0]);
-
-        // Welcome message block with colorful styling
-        let is_setup = self.config.as_ref().and_then(|c| c.github.as_ref()).is_some();
-        let welcome_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(if is_setup { Color::Green } else { Color::Blue }))
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(if is_setup { "✨ Welcome" } else { "🚀 Welcome" })
-            .title_style(Style::default()
-                .fg(if is_setup { Color::Green } else { Color::Blue })
-                .add_modifier(Modifier::BOLD))
-            .title_alignment(Alignment::Center)
-            .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
-
-        let welcome_text = if is_setup {
-            "Welcome to dotstate! Your dotfiles are synced and ready.\n\nSelect an option from the menu below to manage your configuration files."
-        } else {
-            "Welcome to dotstate! Get started by setting up your GitHub repository to sync your dotfiles.\n\nThis will allow you to keep your configuration files backed up and synchronized across all your computers."
-        };
-
-        let welcome_para = Paragraph::new(welcome_text)
-            .style(Style::default().fg(Color::White))
-            .wrap(Wrap { trim: true })
-            .block(welcome_block);
-
-        frame.render_widget(welcome_para, left_split[0]);
 
         // Menu items - now using MenuItem enum
         let menu_items = MenuItem::all();
@@ -530,6 +495,7 @@ impl Component for MainMenuComponent {
                         .fg(color)
                 };
                 ListItem::new(display_text).style(style)
+
             })
             .collect();
 
@@ -544,7 +510,7 @@ impl Component for MainMenuComponent {
 
         // Store clickable area for mouse support
         self.clickable_areas.clear();
-        let list_inner = list_block.inner(left_split[1]);
+        let list_inner = list_block.inner(content_split[0]);
 
         let list = List::new(items)
             .block(list_block)
@@ -554,7 +520,8 @@ impl Component for MainMenuComponent {
                     .bg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD)
             )
-            .highlight_symbol("▶ ");
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_symbol("» ");
 
         let item_height = 1;
         for (i, menu_item) in menu_items.iter().enumerate() {
@@ -568,7 +535,7 @@ impl Component for MainMenuComponent {
         }
 
         // Render list
-        StatefulWidget::render(list, left_split[1], frame.buffer_mut(), &mut self.list_state);
+        StatefulWidget::render(list, content_split[0], frame.buffer_mut(), &mut self.list_state);
 
         // Right panel: Explanation and stats
         let right_split = Layout::default()
