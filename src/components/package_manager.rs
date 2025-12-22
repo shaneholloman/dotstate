@@ -216,13 +216,7 @@ impl PackageManagerComponent {
                 self.render_delete_popup(frame, area, state)?;
             }
             PackagePopupType::InstallMissing => {
-                // Will be implemented in Phase 5
-                let popup_area = center_popup(area, 60, 20);
-                frame.render_widget(Clear, popup_area);
-                let paragraph = Paragraph::new("Install Missing Packages (Coming Soon)")
-                    .block(Block::default().borders(Borders::ALL).title("Package Manager"))
-                    .wrap(Wrap { trim: true });
-                frame.render_widget(paragraph, popup_area);
+                self.render_install_missing_popup(frame, area, state)?;
             }
             PackagePopupType::None => return Ok(()),
         }
@@ -631,6 +625,90 @@ impl PackageManagerComponent {
                 footer::Footer::render(frame, chunks[2], footer_text)?;
             }
         }
+
+        Ok(())
+    }
+
+    fn render_install_missing_popup(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        state: &mut PackageManagerState,
+    ) -> Result<()> {
+        let popup_area = center_popup(area, 60, 25);
+        frame.render_widget(Clear, popup_area);
+
+        // Count missing packages
+        let missing_count = state.package_statuses.iter()
+            .filter(|s| matches!(s, PackageStatus::NotInstalled))
+            .count();
+
+        let missing_packages: Vec<String> = state.packages.iter()
+            .enumerate()
+            .filter_map(|(idx, pkg)| {
+                if matches!(state.package_statuses.get(idx), Some(PackageStatus::NotInstalled)) {
+                    Some(pkg.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Length(1), // Spacer
+                Constraint::Length(3), // Message
+                Constraint::Min(0),    // Package list
+                Constraint::Length(1), // Spacer
+                Constraint::Length(1), // Instructions
+            ])
+            .split(popup_area);
+
+        // Title
+        let title = Paragraph::new("Install Missing Packages")
+            .block(Block::default()
+                .borders(Borders::ALL)
+                .title("Package Manager")
+                .title_alignment(Alignment::Center)
+                .style(Style::default().bg(Color::Black)))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
+        frame.render_widget(title, chunks[0]);
+
+        // Message
+        let message = if missing_count == 1 {
+            format!("1 package is missing. Do you want to install it?")
+        } else {
+            format!("{} packages are missing. Do you want to install them?", missing_count)
+        };
+        let message_para = Paragraph::new(message)
+            .wrap(Wrap { trim: true })
+            .style(Style::default().fg(Color::White));
+        frame.render_widget(message_para, chunks[2]);
+
+        // Package list
+        if !missing_packages.is_empty() {
+            let package_list: Vec<ListItem> = missing_packages.iter()
+                .map(|name| {
+                    ListItem::new(format!("  • {}", name))
+                        .style(Style::default().fg(Color::Cyan))
+                })
+                .collect();
+            let list = List::new(package_list)
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .title("Packages to Install")
+                    .border_style(Style::default().fg(Color::DarkGray)));
+            frame.render_widget(list, chunks[3]);
+        }
+
+        // Instructions
+        let instructions = Paragraph::new("Press Y/Enter to install, N/Esc to cancel")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(instructions, chunks[5]);
 
         Ok(())
     }

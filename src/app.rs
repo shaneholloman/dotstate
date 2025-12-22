@@ -146,7 +146,8 @@ impl App {
             }
 
             // Process package checking if active (before polling events)
-            if self.ui_state.current_screen == Screen::ManagePackages {
+            // Note: Package checking can happen even when not on ManagePackages screen (e.g., after profile activation)
+            {
                 let state = &mut self.ui_state.package_manager;
                 if state.is_checking {
                     // Check if we need to wait for a delay
@@ -193,6 +194,33 @@ impl App {
             // Screen changed - check for changes when entering MainMenu
             if current_screen == Screen::MainMenu {
                 self.check_changes_to_push();
+            }
+            // Handle ManagePackages screen transitions
+            if current_screen == Screen::ManagePackages {
+                // Load packages from active profile first (before mutable borrow)
+                let packages = self.get_active_profile_info()
+                    .ok()
+                    .flatten()
+                    .map(|p| p.packages.clone())
+                    .unwrap_or_default();
+
+                let state = &mut self.ui_state.package_manager;
+                state.packages = packages;
+                state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+                // Auto-start checking if we have packages and not already checking
+                if !state.packages.is_empty() && !state.is_checking {
+                    state.is_checking = true;
+                    state.checking_index = None;
+                    state.checking_delay_until = Some(std::time::Instant::now() + Duration::from_millis(100));
+                }
+            } else if self.last_screen == Some(Screen::ManagePackages) {
+                // We just left ManagePackages - clear installation state to prevent it from showing elsewhere
+                let state = &mut self.ui_state.package_manager;
+                if !matches!(state.installation_step, InstallationStep::NotStarted) {
+                    state.installation_step = InstallationStep::NotStarted;
+                    state.installation_output.clear();
+                    state.installation_delay_until = None;
+                }
             }
             self.last_screen = Some(current_screen);
         }
@@ -801,6 +829,47 @@ impl App {
                                         }
                                     }
                                 }
+                                PackagePopupType::InstallMissing => {
+                                    match key.code {
+                                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                                            // User confirmed - start installation
+                                            let mut packages_to_install = Vec::new();
+                                            for (idx, status) in state.package_statuses.iter().enumerate() {
+                                                if matches!(status, PackageStatus::NotInstalled) {
+                                                    packages_to_install.push(idx);
+                                                }
+                                            }
+
+                                            if !packages_to_install.is_empty() {
+                                                // Start installation
+                                                if let Some(&first_idx) = packages_to_install.first() {
+                                                    let package_name = state.packages[first_idx].name.clone();
+                                                    let total = packages_to_install.len();
+                                                    let mut install_list = packages_to_install.clone();
+                                                    install_list.remove(0);
+
+                                                    state.installation_step = InstallationStep::Installing {
+                                                        package_index: first_idx,
+                                                        package_name,
+                                                        total_packages: total,
+                                                        packages_to_install: install_list,
+                                                        installed: Vec::new(),
+                                                        failed: Vec::new(),
+                                                        status_rx: None,
+                                                    };
+                                                    state.installation_output.clear();
+                                                    state.installation_delay_until = Some(std::time::Instant::now() + Duration::from_millis(100));
+                                                }
+                                            }
+                                            state.popup_type = PackagePopupType::None;
+                                        }
+                                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                            // User cancelled
+                                            state.popup_type = PackagePopupType::None;
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -815,10 +884,23 @@ impl App {
 
                 match event {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        // Handle installation completion dismissal first
+                        if matches!(state.installation_step, InstallationStep::Complete { .. }) {
+                            // Any key dismisses the completion summary
+                            state.installation_step = InstallationStep::NotStarted;
+                            state.installation_output.clear();
+                            state.installation_delay_until = None;
+                            // Continue to handle the key normally (e.g., Esc will still exit)
+                        }
+
                         match key.code {
                             KeyCode::Esc => {
                                 // Only allow ESC if not checking
                                 if !state.is_checking {
+                                    // Clear installation state when leaving
+                                    state.installation_step = InstallationStep::NotStarted;
+                                    state.installation_output.clear();
+                                    state.installation_delay_until = None;
                                     self.ui_state.current_screen = Screen::MainMenu;
                                 }
                             }
@@ -4601,6 +4683,18 @@ impl App {
         info!("Switched from '{}' to '{}'", old_profile_name, target_profile_name);
         info!("Removed {} symlinks, created {} symlinks", switch_result.removed.len(), switch_result.created.len());
 
+        // Phase 6: Check packages after profile switch
+        if !target_profile.packages.is_empty() {
+            info!("Profile '{}' has {} packages, checking installation status", target_profile_name, target_profile.packages.len());
+            // Initialize package checking state
+            let state = &mut self.ui_state.package_manager;
+            state.packages = target_profile.packages.clone();
+            state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+            state.is_checking = true;
+            state.checking_index = None;
+            state.checking_delay_until = Some(std::time::Instant::now() + Duration::from_millis(100));
+        }
+
         Ok(())
     }
 
@@ -4748,6 +4842,18 @@ impl App {
                 self.config.profile_activated = true;
                 self.config.save(&self.config_path)?;
 
+                // Phase 6: Check packages after activation
+                if !profile.packages.is_empty() {
+                    info!("Profile '{}' has {} packages, checking installation status", profile_name, profile.packages.len());
+                    // Initialize package checking state
+                    let state = &mut self.ui_state.package_manager;
+                    state.packages = profile.packages.clone();
+                    state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+                    state.is_checking = true;
+                    state.checking_index = None;
+                    state.checking_delay_until = Some(std::time::Instant::now() + Duration::from_millis(100));
+                }
+
                 Ok(())
             }
             Err(e) => {
@@ -4888,6 +4994,15 @@ impl App {
             // All packages checked
             state.is_checking = false;
             state.checking_delay_until = None;
+
+            // Check if any packages are missing and show prompt
+            let missing_count = state.package_statuses.iter()
+                .filter(|s| matches!(s, PackageStatus::NotInstalled))
+                .count();
+
+            if missing_count > 0 {
+                state.popup_type = PackagePopupType::InstallMissing;
+            }
         }
 
         Ok(())
@@ -5331,53 +5446,78 @@ impl App {
                         let package_name_for_log = package.name.clone();
                         let (tx, rx) = mpsc::channel();
 
-                        // Spawn thread to run installation
+                        // Spawn thread to run installation with real-time output streaming
                         thread::spawn(move || {
+                            use std::process::Stdio;
+                            use std::io::{BufRead, BufReader};
+
                             info!("Installation thread: Starting installation for package: {}", package_name_for_log);
                             let mut cmd = PackageManagerImpl::get_install_command_builder(&package_clone);
-                            debug!("Installation thread: Command built, executing...");
-                            match cmd.output() {
-                                Ok(output) => {
-                                    info!("Installation thread: Command executed, exit code: {:?}", output.status.code());
-                                    // Send stdout lines
-                                    if let Ok(stdout_str) = String::from_utf8(output.stdout) {
-                                        let stdout_lines: Vec<_> = stdout_str.lines().filter(|l| !l.trim().is_empty()).collect();
-                                        debug!("Installation thread: Sending {} stdout lines", stdout_lines.len());
-                                        for line in stdout_lines {
-                                            if let Err(e) = tx.send(InstallationStatus::Output(line.to_string())) {
-                                                error!("Installation thread: Failed to send stdout line: {}", e);
+
+                            // Set up stdout and stderr as piped for streaming
+                            cmd.stdout(Stdio::piped());
+                            cmd.stderr(Stdio::piped());
+
+                            debug!("Installation thread: Command built, spawning process...");
+                            match cmd.spawn() {
+                                Ok(mut child) => {
+                                    // Spawn thread to read stdout in real-time
+                                    let stdout = child.stdout.take().expect("Failed to capture stdout");
+                                    let tx_stdout = tx.clone();
+                                    thread::spawn(move || {
+                                        let reader = BufReader::new(stdout);
+                                        for line in reader.lines() {
+                                            if let Ok(line) = line {
+                                                if !line.trim().is_empty() {
+                                                    if let Err(_) = tx_stdout.send(InstallationStatus::Output(line)) {
+                                                        // Channel closed, stop reading
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         }
-                                    }
-                                    // Send stderr lines
-                                    if let Ok(stderr_str) = String::from_utf8(output.stderr) {
-                                        let stderr_lines: Vec<_> = stderr_str.lines().filter(|l| !l.trim().is_empty()).collect();
-                                        debug!("Installation thread: Sending {} stderr lines", stderr_lines.len());
-                                        for line in stderr_lines {
-                                            if let Err(e) = tx.send(InstallationStatus::Output(format!("[stderr] {}", line))) {
-                                                error!("Installation thread: Failed to send stderr line: {}", e);
+                                    });
+
+                                    // Spawn thread to read stderr in real-time
+                                    let stderr = child.stderr.take().expect("Failed to capture stderr");
+                                    let tx_stderr = tx.clone();
+                                    thread::spawn(move || {
+                                        let reader = BufReader::new(stderr);
+                                        for line in reader.lines() {
+                                            if let Ok(line) = line {
+                                                if !line.trim().is_empty() {
+                                                    if let Err(_) = tx_stderr.send(InstallationStatus::Output(format!("[stderr] {}", line))) {
+                                                        // Channel closed, stop reading
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         }
-                                    }
-                                    // Send completion status
-                                    if output.status.success() {
-                                        info!("Installation thread: Installation succeeded for {}", package_name_for_log);
-                                        if let Err(e) = tx.send(InstallationStatus::Complete { success: true, error: None }) {
-                                            error!("Installation thread: Failed to send success status: {}", e);
+                                    });
+
+                                    // Wait for process to complete
+                                    match child.wait() {
+                                        Ok(status) => {
+                                            info!("Installation thread: Command executed, exit code: {:?}", status.code());
+                                            // Send completion status
+                                            if status.success() {
+                                                info!("Installation thread: Installation succeeded for {}", package_name_for_log);
+                                                let _ = tx.send(InstallationStatus::Complete { success: true, error: None });
+                                            } else {
+                                                let error_msg = format!("Installation failed with exit code: {}", status.code().unwrap_or(-1));
+                                                error!("Installation thread: Installation failed for {}: {}", package_name_for_log, error_msg);
+                                                let _ = tx.send(InstallationStatus::Complete { success: false, error: Some(error_msg) });
+                                            }
                                         }
-                                    } else {
-                                        let error_msg = format!("Installation failed with exit code: {}", output.status.code().unwrap_or(-1));
-                                        error!("Installation thread: Installation failed for {}: {}", package_name_for_log, error_msg);
-                                        if let Err(e) = tx.send(InstallationStatus::Complete { success: false, error: Some(error_msg) }) {
-                                            error!("Installation thread: Failed to send failure status: {}", e);
+                                        Err(e) => {
+                                            error!("Installation thread: Failed to wait for process for {}: {}", package_name_for_log, e);
+                                            let _ = tx.send(InstallationStatus::Complete { success: false, error: Some(format!("Failed to wait for installation: {}", e)) });
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("Installation thread: Failed to execute command for {}: {}", package_name_for_log, e);
-                                    if let Err(send_err) = tx.send(InstallationStatus::Complete { success: false, error: Some(format!("Failed to execute installation: {}", e)) }) {
-                                        error!("Installation thread: Failed to send error status: {}", send_err);
-                                    }
+                                    error!("Installation thread: Failed to spawn command for {}: {}", package_name_for_log, e);
+                                    let _ = tx.send(InstallationStatus::Complete { success: false, error: Some(format!("Failed to execute installation: {}", e)) });
                                 }
                             }
                         });
