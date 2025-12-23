@@ -4,6 +4,11 @@
 
 DotState is a terminal-based tool that helps you manage your dotfiles effortlessly. Whether you're syncing your configuration across multiple machines or setting up a new development environment, DotState makes it simple, safe, and fast.
 
+## Demo
+
+<video src="https://github.com/user-attachments/assets/69cb6017-042f-4cc0-9db7-a92845881035" width="600" controls></video>
+
+
 ## Why DotState?
 
 Managing dotfiles can be a pain. You want your `.zshrc`, `.vimrc`, and other config files synced across machines, but traditional solutions are either too complex, insecure, or require too much manual work.
