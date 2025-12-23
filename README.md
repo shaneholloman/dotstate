@@ -93,10 +93,14 @@ cargo install dotstate
 ### Using Homebrew
 
 ```bash
+brew tap serkanyersen/dotstate
 brew install dotstate
 ```
 
-*Note: Homebrew formula coming soon*
+Or use the direct install:
+```bash
+brew install serkanyersen/dotstate/dotstate
+```
 
 ## Quick Start
 

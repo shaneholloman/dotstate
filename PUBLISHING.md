@@ -59,6 +59,11 @@ Note: Publishing to crates.io is permanent. Make sure everything is correct!
    brew install dotstate
    ```
 
+   Or use the direct install:
+   ```bash
+   brew install serkanyersen/dotstate/dotstate
+   ```
+
 ## GitHub Releases
 
 1. **Create release** on GitHub:

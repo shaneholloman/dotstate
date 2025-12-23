@@ -29,7 +29,10 @@ brew tap serkanyersen/dotstate
 brew install dotstate
 ```
 
-*Note: Homebrew formula will be available after the first release.*
+Or use the direct install:
+```bash
+brew install serkanyersen/dotstate/dotstate
+```
 
 ## Building from Source
 
