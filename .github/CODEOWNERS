@@ -2,19 +2,19 @@
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Default owner for everything
-* @yourusername
+* @serkanyersen
 
 # Core application files
-/src/app.rs @yourusername
-/src/cli.rs @yourusername
-/src/config.rs @yourusername
+/src/app.rs @serkanyersen
+/src/cli.rs @serkanyersen
+/src/config.rs @serkanyersen
 
 # Package manager feature
-/src/components/package_manager.rs @yourusername
-/src/utils/package_manager.rs @yourusername
-/src/utils/package_installer.rs @yourusername
+/src/components/package_manager.rs @serkanyersen
+/src/utils/package_manager.rs @serkanyersen
+/src/utils/package_installer.rs @serkanyersen
 
 # GitHub integration
-/src/github.rs @yourusername
-/src/components/github_auth.rs @yourusername
+/src/github.rs @serkanyersen
+/src/components/github_auth.rs @serkanyersen
 

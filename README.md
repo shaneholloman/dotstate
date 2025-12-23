@@ -72,7 +72,7 @@ Managing dotfiles can be a pain. You want your `.zshrc`, `.vimrc`, and other con
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/dotstate.git
+git clone https://github.com/serkanyersen/dotstate.git
 cd dotstate
 
 # Build and install
@@ -182,8 +182,8 @@ Built with:
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/dotstate/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/dotstate/discussions)
+- **Issues**: [GitHub Issues](https://github.com/serkanyersen/dotstate/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/serkanyersen/dotstate/discussions)
 
 ---
 

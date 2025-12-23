@@ -12,7 +12,7 @@ cargo install dotstate
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/dotstate.git
+git clone https://github.com/serkanyersen/dotstate.git
 cd dotstate
 
 # Build and install
@@ -23,7 +23,7 @@ cargo install --path .
 
 ```bash
 # Add the tap (once)
-brew tap yourusername/dotstate
+brew tap serkanyersen/dotstate
 
 # Install
 brew install dotstate
@@ -43,7 +43,7 @@ brew install dotstate
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/dotstate.git
+   git clone https://github.com/serkanyersen/dotstate.git
    cd dotstate
    ```
 

@@ -78,7 +78,7 @@ impl InputField {
             let clamped_cursor = cursor_pos.min(text.chars().count());
             let x = input_inner.x + clamped_cursor.min(input_inner.width as usize) as u16;
             let y = input_inner.y;
-            frame.set_cursor(x, y);
+            frame.set_cursor_position((x, y));
         }
 
         Ok(())

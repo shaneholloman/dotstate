@@ -11,7 +11,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 ### Reporting Bugs
 
 Before reporting a bug, please:
-1. Check if the issue already exists in the [GitHub Issues](https://github.com/yourusername/dotstate/issues)
+1. Check if the issue already exists in the [GitHub Issues](https://github.com/serkanyersen/dotstate/issues)
 2. Try to reproduce the issue with the latest version
 3. Check the logs (run `dotstate logs` to see log location)
 
@@ -61,7 +61,7 @@ We welcome feature suggestions! Please:
 
 ```bash
 # Clone your fork
-git clone https://github.com/yourusername/dotstate.git
+git clone https://github.com/serkanyersen/dotstate.git
 cd dotstate
 
 # Build in debug mode
@@ -173,7 +173,7 @@ Use imperative mood ("Add" not "Added", "Fix" not "Fixed").
 ## Questions?
 
 If you have questions about contributing:
-- Open a [GitHub Discussion](https://github.com/yourusername/dotstate/discussions)
+- Open a [GitHub Discussion](https://github.com/serkanyersen/dotstate/discussions)
 - Check existing issues and discussions
 - Reach out to maintainers
 

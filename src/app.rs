@@ -37,11 +37,7 @@ fn list_files_in_profile_dir(profile_dir: &Path, _repo_path: &Path) -> Result<Ve
                     // Convert to string, handling the path properly
                     if let Some(relative_str) = relative.to_str() {
                         // Remove leading ./ if present
-                        let clean_path = if relative_str.starts_with("./") {
-                            &relative_str[2..]
-                        } else {
-                            relative_str
-                        };
+                        let clean_path = relative_str.strip_prefix("./").unwrap_or(relative_str);
                         entries.push(clean_path.to_string());
                     }
                 }
@@ -273,7 +269,7 @@ impl App {
         };
 
         self.tui.terminal_mut().draw(|frame| {
-            let area = frame.size();
+            let area = frame.area();
             match self.ui_state.current_screen {
                 Screen::Welcome => {
                     // Welcome screen removed - redirect to MainMenu
@@ -356,7 +352,7 @@ impl App {
                             .split(popup_area);
 
                         let default_profile = state.profiles.first()
-                            .map(|p| p.clone())
+                            .cloned()
                             .unwrap_or_else(|| "default".to_string());
 
                         let warning_text = format!(
@@ -447,12 +443,9 @@ impl App {
         if let Some(ref mut msg_component) = self.message_component {
             if self.ui_state.current_screen == Screen::MainMenu {
                 let action = msg_component.handle_event(event)?;
-                match action {
-                    ComponentAction::Navigate(Screen::MainMenu) => {
-                        // User dismissed the warning, clear it and show main menu
-                        self.message_component = None;
-                    }
-                    _ => {}
+                if let ComponentAction::Navigate(Screen::MainMenu) = action {
+                    // User dismissed the warning, clear it and show main menu
+                    self.message_component = None;
                 }
                 return Ok(());
             }
@@ -503,11 +496,8 @@ impl App {
             }
             Screen::ViewSyncedFiles => {
                 let action = self.synced_files_component.handle_event(event)?;
-                match action {
-                    ComponentAction::Navigate(Screen::MainMenu) => {
-                        self.ui_state.current_screen = Screen::MainMenu;
-                    }
-                    _ => {}
+                if let ComponentAction::Navigate(Screen::MainMenu) = action {
+                    self.ui_state.current_screen = Screen::MainMenu;
                 }
                 return Ok(());
             }
@@ -1812,18 +1802,12 @@ impl App {
             Err(_) => {
                 // Fallback to old method if get_changed_files fails
                 // Check for uncommitted changes
-                let has_uncommitted = match git_mgr.has_uncommitted_changes() {
-                    Ok(true) => true,
-                    _ => false,
-                };
+                let has_uncommitted = git_mgr.has_uncommitted_changes().unwrap_or(false);
 
                 // Check for unpushed commits
                 let branch = git_mgr.get_current_branch()
                     .unwrap_or_else(|| "main".to_string());
-                let has_unpushed = match git_mgr.has_unpushed_commits("origin", &branch) {
-                    Ok(true) => true,
-                    _ => false,
-                };
+                let has_unpushed = git_mgr.has_unpushed_commits("origin", &branch).unwrap_or(false);
 
                 self.ui_state.has_changes_to_push = has_uncommitted || has_unpushed;
             }
@@ -2649,7 +2633,7 @@ impl App {
                 let repo_path = self.config.repo_path.clone();
 
                 // Step 3: Checking if repo exists (already done, but show status)
-                auth_state.status_message = Some(format!("🔍 Checking if repository exists..."));
+                auth_state.status_message = Some("🔍 Checking if repository exists...".to_string());
                 *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
 
                 // Small delay for UX
@@ -2673,7 +2657,7 @@ impl App {
                     let remote_url = format!("https://github.com/{}/{}.git", username, repo_name);
                     match GitManager::clone(&remote_url, &repo_path, Some(&token)) {
                         Ok(_) => {
-                            auth_state.status_message = Some(format!("✅ Repository cloned successfully!"));
+                            auth_state.status_message = Some("✅ Repository cloned successfully!".to_string());
                             *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
 
                             // Small delay after cloning
@@ -2703,7 +2687,7 @@ impl App {
 
                     match create_result {
                         Ok(_) => {
-                            auth_state.status_message = Some(format!("⚙️  Initializing local repository..."));
+                            auth_state.status_message = Some("⚙️  Initializing local repository...".to_string());
                             *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
 
                             // Small delay for UX
@@ -2759,7 +2743,7 @@ impl App {
                             self.config.save(&self.config_path)
                                 .context("Failed to save configuration")?;
 
-                            auth_state.status_message = Some(format!("✅ Repository created and initialized successfully"));
+                            auth_state.status_message = Some("✅ Repository created and initialized successfully".to_string());
                             *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
                         }
                         Err(e) => {
@@ -2790,7 +2774,7 @@ impl App {
 
                 // Discover profiles from the cloned repo
                 if exists && repo_path.exists() {
-                    auth_state.status_message = Some(format!("🔎 Discovering profiles..."));
+                    auth_state.status_message = Some("🔎 Discovering profiles...".to_string());
                     *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
 
                     // Small delay for UX

@@ -11,7 +11,7 @@ We actively support the following versions with security updates:
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please **do not** open a public issue. Instead, please email security@yourdomain.com (or create a private security advisory on GitHub).
+If you discover a security vulnerability, please **do not** open a public issue. Instead, please email serkanyersen@gmail.com (or create a private security advisory on GitHub).
 
 ### What to Include
 

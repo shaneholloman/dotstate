@@ -39,7 +39,7 @@ Note: Publishing to crates.io is permanent. Make sure everything is correct!
 3. **Calculate SHA256**:
    ```bash
    # After creating a release on GitHub
-   wget https://github.com/yourusername/dotstate/archive/v0.1.0.tar.gz
+   wget https://github.com/serkanyersen/dotstate/archive/v0.1.0.tar.gz
    shasum -a 256 v0.1.0.tar.gz
    ```
 4. **Update formula** with the SHA256
@@ -55,7 +55,7 @@ Note: Publishing to crates.io is permanent. Make sure everything is correct!
 2. **Add formula** to the repository
 3. **Users install** with:
    ```bash
-   brew tap yourusername/dotstate
+   brew tap serkanyersen/dotstate
    brew install dotstate
    ```
 

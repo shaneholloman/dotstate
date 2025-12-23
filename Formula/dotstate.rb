@@ -1,10 +1,10 @@
 class Dotstate < Formula
   desc "A modern, secure, and user-friendly dotfile manager built with Rust"
-  homepage "https://github.com/yourusername/dotstate"
-  url "https://github.com/yourusername/dotstate/archive/v0.1.0.tar.gz"
+  homepage "https://github.com/serkanyersen/dotstate"
+  url "https://github.com/serkanyersen/dotstate/archive/v0.1.0.tar.gz"
   sha256 "PLACEHOLDER_SHA256"
   license "MIT"
-  head "https://github.com/yourusername/dotstate.git", branch: "main"
+  head "https://github.com/serkanyersen/dotstate.git", branch: "main"
 
   depends_on "rust" => :build
 
