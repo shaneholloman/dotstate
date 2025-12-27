@@ -26,10 +26,6 @@ jobs:
             target: aarch64-apple-darwin
             binary_name: dotstate
             asset_name: dotstate-aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary_name: dotstate.exe
-            asset_name: dotstate-x86_64-pc-windows-msvc.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -46,23 +42,13 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Create archive (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Create archive
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ${{ github.workspace }}/${{ matrix.asset_name }}.tar.gz ${{ matrix.binary_name }}
           cd ${{ github.workspace }}
           shasum -a 256 ${{ matrix.asset_name }}.tar.gz | awk '{print $1}' > ${{ matrix.asset_name }}.tar.gz.sha256
           ls -lh ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}.tar.gz.sha256
-
-      - name: Create archive (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ${{ github.workspace }}/${{ matrix.asset_name }}.tar.gz ${{ matrix.binary_name }}
-          cd ${{ github.workspace }}
-          for /f "tokens=*" %i in ('certutil -hashfile ${{ matrix.asset_name }}.tar.gz SHA256 ^| findstr /v "SHA256" ^| findstr /v "certutil"') do @echo %i > ${{ matrix.asset_name }}.tar.gz.sha256
-          dir ${{ matrix.asset_name }}.tar.gz ${{ matrix.asset_name }}.tar.gz.sha256
 
       - name: Verify files exist
         run: |
