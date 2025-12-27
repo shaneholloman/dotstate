@@ -2,7 +2,10 @@ name: Release
 
 on:
   release:
-    types: [published]
+    types: [created]  # Only trigger on draft releases, not published (immutable releases can't be modified)
+
+permissions:
+  contents: write
 
 jobs:
   build-and-upload:
