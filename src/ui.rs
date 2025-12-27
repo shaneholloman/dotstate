@@ -229,6 +229,9 @@ pub struct ProfileSelectionState {
     #[allow(dead_code)] // Reserved for future use
     pub selected_profile: Option<String>, // Selected profile to activate
     pub show_exit_warning: bool, // Show warning when user tries to exit without selecting
+    pub show_create_popup: bool, // Show create new profile popup
+    pub create_name_input: String, // Input for new profile name
+    pub create_name_cursor: usize, // Cursor position in name input
 }
 
 /// Package manager state

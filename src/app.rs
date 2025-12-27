@@ -417,7 +417,7 @@ impl App {
                     if state.show_exit_warning {
                         use crate::utils::center_popup;
                         use crate::components::footer::Footer;
-                        use ratatui::widgets::{Block, Borders, Paragraph, Wrap, Clear};
+                        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
                         use ratatui::prelude::*;
 
                         let popup_area = center_popup(area, 60, 35);
@@ -432,17 +432,12 @@ impl App {
                             ])
                             .split(popup_area);
 
-                        let default_profile = state.profiles.first()
-                            .cloned()
-                            .unwrap_or_else(|| "default".to_string());
-
-                        let warning_text = format!(
-                            "⚠️  Profile Selection Required\n\n\
-                            You need to select a profile to activate.\n\
-                            If you exit now, the default profile '{}' will be activated automatically.\n\n\
-                            Do you want to continue?",
-                            default_profile
-                        );
+                        let warning_text = "⚠️  Profile Selection Required\n\n\
+                            You MUST select a profile before continuing.\n\
+                            Activating a profile will replace your current dotfiles with symlinks.\n\
+                            This action cannot be undone without restoring from backups.\n\n\
+                            Please select a profile or create a new one.\n\
+                            Press Esc again to cancel and return to main menu.".to_string();
 
                         let warning = Paragraph::new(warning_text)
                             .block(Block::default()
@@ -450,18 +445,68 @@ impl App {
                                 .title("Exit Profile Selection")
                                 .title_alignment(Alignment::Center)
                                 .border_style(Style::default().fg(Color::Yellow)))
-                            .wrap(Wrap { trim: true })
+                            .wrap(ratatui::widgets::Wrap { trim: true })
                             .alignment(Alignment::Center);
                         frame.render_widget(warning, chunks[0]);
 
                         // Footer with instructions
-                        let footer_text = "Y: Activate Default Profile & Exit  |  Esc: Cancel";
+                        let footer_text = "Esc: Cancel & Return to Main Menu";
                         let _ = Footer::render(frame, chunks[2], footer_text);
                         return;
                     }
 
+                    // Check if create popup should be shown
+                    if state.show_create_popup {
+                        use crate::utils::center_popup;
+                        use crate::components::footer::Footer;
+                        use crate::components::input_field::InputField;
+                        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
+                        use ratatui::prelude::*;
+
+                        let popup_area = center_popup(area, 60, 12);
+                        frame.render_widget(Clear, popup_area);
+
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([
+                                Constraint::Length(3), // Title
+                                Constraint::Length(3), // Input field
+                                Constraint::Min(0),    // Spacer
+                                Constraint::Length(2), // Footer
+                            ])
+                            .split(popup_area);
+
+                        let title = Paragraph::new("Create New Profile")
+                            .block(Block::default()
+                                .borders(Borders::ALL)
+                                .title("New Profile")
+                                .title_alignment(Alignment::Center)
+                                .border_style(Style::default().fg(Color::Cyan)))
+                            .alignment(Alignment::Center);
+                        frame.render_widget(title, chunks[0]);
+
+                        if let Err(e) = InputField::render(
+                            frame,
+                            chunks[1],
+                            &state.create_name_input,
+                            state.create_name_cursor,
+                            true,
+                            "Profile Name:",
+                            Some("Enter profile name"),
+                            Alignment::Left,
+                            false,
+                        ) {
+                            error!("Failed to render input field: {}", e);
+                        }
+
+                        let footer_text = "Enter: Create  |  Esc: Cancel";
+                        let _ = Footer::render(frame, chunks[3], footer_text);
+                        return;
+                    }
+
                     // Build items list (profile_selection_profiles already obtained before closure)
-                    let items: Vec<ListItem> = state.profiles.iter()
+                    // Add "Create New Profile" option at the end
+                    let mut items: Vec<ListItem> = state.profiles.iter()
                         .map(|name| {
                             let profile = profile_selection_profiles.iter().find(|p| p.name == *name);
                             let description = profile.and_then(|p| p.description.as_ref())
@@ -476,6 +521,8 @@ impl App {
                             ListItem::new(format!("{} {}{}", name, file_text, description))
                         })
                         .collect();
+                    // Add "Create New Profile" option
+                    items.push(ListItem::new("➕ Create New Profile (blank)").style(Style::default().fg(Color::Green)));
 
                     // Render the screen inline
                     use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
@@ -511,7 +558,7 @@ impl App {
 
                     frame.render_stateful_widget(list, content_chunk, &mut state.list_state);
 
-                    let footer_text = "↑↓: Navigate | Enter: Activate Profile | Esc: Skip";
+                    let footer_text = "↑↓: Navigate | Enter: Activate/Create | C: Create New | Esc: Cancel (requires confirmation)";
                     let _ = Footer::render(frame, footer_chunk, footer_text);
                 }
             }
@@ -718,34 +765,11 @@ impl App {
                 if state.show_exit_warning {
                     match event {
                         Event::Key(key) if key.kind == KeyEventKind::Press => {
-                            match key.code {
-                                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                    // User confirmed - activate default profile (first one) and exit
-                                    state.show_exit_warning = false;
-                                    if !state.profiles.is_empty() {
-                                        let default_profile = state.profiles[0].clone();
-                                        if let Err(e) =
-                                            self.activate_profile_after_setup(&default_profile)
-                                        {
-                                            error!("Failed to activate default profile: {}", e);
-                                            self.message_component = Some(MessageComponent::new(
-                                                "Activation Failed".to_string(),
-                                                format!(
-                                                    "Failed to activate default profile '{}': {}",
-                                                    default_profile, e
-                                                ),
-                                                Screen::MainMenu,
-                                            ));
-                                        }
-                                    }
-                                    self.ui_state.current_screen = Screen::MainMenu;
-                                    self.ui_state.profile_selection = Default::default();
-                                }
-                                KeyCode::Esc => {
-                                    // Cancel - hide warning
-                                    state.show_exit_warning = false;
-                                }
-                                _ => {}
+                            if key.code == KeyCode::Esc {
+                                // User confirmed exit - go back to main menu WITHOUT activating
+                                state.show_exit_warning = false;
+                                self.ui_state.current_screen = Screen::MainMenu;
+                                self.ui_state.profile_selection = Default::default();
                             }
                         }
                         _ => {}
@@ -758,21 +782,37 @@ impl App {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         match key.code {
                             KeyCode::Up => {
-                                if let Some(current) = state.list_state.selected() {
+                                if state.show_create_popup {
+                                    // Handle input in create popup
+                                    use crate::utils::text_input::handle_cursor_movement;
+                                    handle_cursor_movement(
+                                        &state.create_name_input,
+                                        &mut state.create_name_cursor,
+                                        key.code,
+                                    );
+                                } else if let Some(current) = state.list_state.selected() {
                                     if current > 0 {
                                         state.list_state.select(Some(current - 1));
                                     } else {
-                                        state
-                                            .list_state
-                                            .select(Some(state.profiles.len().saturating_sub(1)));
+                                        // Wrap to last item (Create New Profile)
+                                        state.list_state.select(Some(state.profiles.len()));
                                     }
                                 } else if !state.profiles.is_empty() {
-                                    state.list_state.select(Some(state.profiles.len() - 1));
+                                    state.list_state.select(Some(state.profiles.len()));
                                 }
                             }
                             KeyCode::Down => {
-                                if let Some(current) = state.list_state.selected() {
-                                    if current < state.profiles.len().saturating_sub(1) {
+                                if state.show_create_popup {
+                                    // Handle input in create popup
+                                    use crate::utils::text_input::handle_cursor_movement;
+                                    handle_cursor_movement(
+                                        &state.create_name_input,
+                                        &mut state.create_name_cursor,
+                                        key.code,
+                                    );
+                                } else if let Some(current) = state.list_state.selected() {
+                                    // Include "Create New Profile" in navigation (profiles.len() is the last index)
+                                    if current < state.profiles.len() {
                                         state.list_state.select(Some(current + 1));
                                     } else {
                                         state.list_state.select(Some(0));
@@ -782,38 +822,167 @@ impl App {
                                 }
                             }
                             KeyCode::Enter => {
-                                // Activate selected profile
-                                // Clone profile name to release borrow of state
-                                let profile_name =
-                                    if let Some(selected_idx) = state.list_state.selected() {
-                                        state.profiles.get(selected_idx).cloned()
-                                    } else {
-                                        None
-                                    };
+                                if state.show_create_popup {
+                                    // Create the new profile
+                                    let profile_name = state.create_name_input.trim().to_string();
+                                    if !profile_name.is_empty() {
+                                        // Close popup first
+                                        state.show_create_popup = false;
 
-                                if let Some(profile_name) = profile_name {
-                                    // state borrow ends here, allowing us to borrow self mutably
-                                    if let Err(e) = self.activate_profile_after_setup(&profile_name)
-                                    {
-                                        error!("Failed to activate profile: {}", e);
-                                        // Show error message
-                                        self.message_component = Some(MessageComponent::new(
-                                            "Activation Failed".to_string(),
-                                            format!(
-                                                "Failed to activate profile '{}': {}",
-                                                profile_name, e
-                                            ),
-                                            Screen::MainMenu,
-                                        ));
+                                        // Drop state borrow before calling methods on self
+                                        let profile_name_clone = profile_name.clone();
+                                        let _ = state; // End borrow
+
+                                        // Create blank profile
+                                        match self.create_profile(&profile_name_clone, None, None) {
+                                            Ok(_) => {
+                                                // Refresh profile list
+                                                let manifest = self.load_manifest()?;
+                                                let state = &mut self.ui_state.profile_selection;
+                                                state.profiles = manifest
+                                                    .profiles
+                                                    .iter()
+                                                    .map(|p| p.name.clone())
+                                                    .collect();
+
+                                                // Select the newly created profile
+                                                if let Some(idx) = state
+                                                    .profiles
+                                                    .iter()
+                                                    .position(|n| n == &profile_name_clone)
+                                                {
+                                                    state.list_state.select(Some(idx));
+                                                }
+
+                                                // Activate the new profile
+                                                if let Err(e) = self.activate_profile_after_setup(
+                                                    &profile_name_clone,
+                                                ) {
+                                                    error!("Failed to activate newly created profile: {}", e);
+                                                    self.message_component = Some(MessageComponent::new(
+                                                        "Activation Failed".to_string(),
+                                                        format!(
+                                                            "Profile '{}' was created but activation failed: {}",
+                                                            profile_name_clone, e
+                                                        ),
+                                                        Screen::MainMenu,
+                                                    ));
+                                                }
+
+                                                // Go to main menu
+                                                self.ui_state.current_screen = Screen::MainMenu;
+                                                self.ui_state.profile_selection =
+                                                    Default::default();
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to create profile: {}", e);
+                                                // Show error but keep popup open
+                                                let state = &mut self.ui_state.profile_selection;
+                                                state.show_create_popup = true; // Reopen popup
+                                                self.message_component =
+                                                    Some(MessageComponent::new(
+                                                        "Creation Failed".to_string(),
+                                                        format!(
+                                                            "Failed to create profile '{}': {}",
+                                                            profile_name_clone, e
+                                                        ),
+                                                        Screen::ProfileSelection,
+                                                    ));
+                                            }
+                                        }
                                     }
-                                    // Go to main menu
-                                    self.ui_state.current_screen = Screen::MainMenu;
-                                    self.ui_state.profile_selection = Default::default();
+                                } else {
+                                    // Activate selected profile or create new
+                                    if let Some(selected_idx) = state.list_state.selected() {
+                                        // Check if "Create New Profile" is selected (last item)
+                                        if selected_idx == state.profiles.len() {
+                                            // Show create popup
+                                            state.show_create_popup = true;
+                                            state.create_name_input.clear();
+                                            state.create_name_cursor = 0;
+                                        } else if let Some(profile_name) =
+                                            state.profiles.get(selected_idx)
+                                        {
+                                            // Activate existing profile
+                                            let profile_name = profile_name.clone();
+                                            // state borrow ends here, allowing us to borrow self mutably
+                                            if let Err(e) =
+                                                self.activate_profile_after_setup(&profile_name)
+                                            {
+                                                error!("Failed to activate profile: {}", e);
+                                                // Show error message
+                                                self.message_component =
+                                                    Some(MessageComponent::new(
+                                                        "Activation Failed".to_string(),
+                                                        format!(
+                                                            "Failed to activate profile '{}': {}",
+                                                            profile_name, e
+                                                        ),
+                                                        Screen::MainMenu,
+                                                    ));
+                                            }
+                                            // Go to main menu
+                                            self.ui_state.current_screen = Screen::MainMenu;
+                                            self.ui_state.profile_selection = Default::default();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('c') | KeyCode::Char('C') => {
+                                if !state.show_create_popup {
+                                    // Create new profile shortcut
+                                    state.show_create_popup = true;
+                                    state.create_name_input.clear();
+                                    state.create_name_cursor = 0;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if state.show_create_popup {
+                                    use crate::utils::text_input::handle_backspace;
+                                    handle_backspace(
+                                        &mut state.create_name_input,
+                                        &mut state.create_name_cursor,
+                                    );
+                                }
+                            }
+                            KeyCode::Delete => {
+                                if state.show_create_popup {
+                                    use crate::utils::text_input::handle_delete;
+                                    handle_delete(
+                                        &mut state.create_name_input,
+                                        &mut state.create_name_cursor,
+                                    );
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                                if state.show_create_popup {
+                                    use crate::utils::text_input::handle_cursor_movement;
+                                    handle_cursor_movement(
+                                        &state.create_name_input,
+                                        &mut state.create_name_cursor,
+                                        key.code,
+                                    );
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if state.show_create_popup {
+                                    use crate::utils::text_input::handle_char_insertion;
+                                    handle_char_insertion(
+                                        &mut state.create_name_input,
+                                        &mut state.create_name_cursor,
+                                        c,
+                                    );
                                 }
                             }
                             KeyCode::Esc => {
-                                // Show warning before exiting
-                                state.show_exit_warning = true;
+                                // Show warning before exiting - require confirmation
+                                if state.show_create_popup {
+                                    // Cancel create popup
+                                    state.show_create_popup = false;
+                                } else {
+                                    // Show warning before exiting
+                                    state.show_exit_warning = true;
+                                }
                             }
                             _ => {}
                         }
@@ -5411,16 +5580,28 @@ impl App {
             return Err(anyhow::anyhow!("Invalid profile name: {}", e));
         }
 
-        // Create profile folder in repo
+        // Check if profile folder exists but is not in manifest
         let profile_path = self.config.repo_path.join(&sanitized_name);
-        if profile_path.exists() {
+        let folder_exists = profile_path.exists();
+        let profile_in_manifest = existing_names.contains(&sanitized_name);
+
+        if folder_exists && !profile_in_manifest {
+            // Folder exists but profile not in manifest - this is a warning case
+            // We'll handle this by asking user (but for now, we'll allow override)
+            // In the future, this could be a confirmation dialog
+            warn!("Profile folder '{}' already exists but is not in manifest. Will use existing folder.", sanitized_name);
+        } else if folder_exists && profile_in_manifest {
+            // Both exist - this is a duplicate name error
             return Err(anyhow::anyhow!(
-                "Profile folder already exists: {:?}",
-                profile_path
+                "Profile '{}' already exists in manifest",
+                sanitized_name
             ));
         }
 
-        std::fs::create_dir_all(&profile_path).context("Failed to create profile directory")?;
+        // Create folder if it doesn't exist
+        if !folder_exists {
+            std::fs::create_dir_all(&profile_path).context("Failed to create profile directory")?;
+        }
 
         // Copy files from source profile if specified
         let synced_files = if let Some(source_idx) = copy_from {

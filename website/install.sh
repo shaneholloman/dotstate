@@ -1,8 +1,8 @@
 #!/bin/bash
 # DotState Installation Script
-# This script installs DotState using Cargo if available, or downloads a pre-built binary
+# This script downloads a pre-built binary by default, falling back to Cargo if binaries fail
 
-set -e
+# Don't use set -e so we can handle errors gracefully and fall back to Cargo
 
 VERSION="${DOTSTATE_VERSION:-latest}"
 REPO="serkanyersen/dotstate"
@@ -53,12 +53,15 @@ check_cargo() {
     fi
 }
 
-# Function to install via Cargo
+# Function to install via Cargo (fallback option)
 install_via_cargo() {
-    echo "📦 Installing DotState via Cargo..."
-    cargo install dotstate
+    if ! command -v cargo &> /dev/null; then
+        return 1
+    fi
 
-    if [ $? -eq 0 ]; then
+    echo "📦 Attempting installation via Cargo (fallback)..."
+    echo ""
+    if cargo install dotstate 2>/dev/null; then
         echo ""
         echo "✅ DotState installed successfully via Cargo!"
         echo ""
@@ -66,7 +69,7 @@ install_via_cargo() {
         exit 0
     else
         echo ""
-        echo "⚠️  Cargo installation failed. Falling back to binary download..."
+        echo "❌ Cargo installation also failed."
         echo ""
         return 1
     fi
@@ -84,17 +87,17 @@ download_binary() {
     fi
 
     # Determine asset name based on OS and architecture
-    # Standard Rust target triple naming
+    # Standard Rust target triple naming (matches GitHub release assets)
     if [ "$OS" = "linux" ]; then
-        ASSET_NAME="dotstate-${ARCH}-unknown-linux-gnu${EXT}"
+        ASSET_NAME="dotstate-x86_64-unknown-linux-gnu.tar.gz"
     elif [ "$OS" = "macos" ]; then
         if [ "$ARCH" = "arm64" ]; then
-            ASSET_NAME="dotstate-aarch64-apple-darwin${EXT}"
+            ASSET_NAME="dotstate-aarch64-apple-darwin.tar.gz"
         else
-            ASSET_NAME="dotstate-x86_64-apple-darwin${EXT}"
+            ASSET_NAME="dotstate-x86_64-apple-darwin.tar.gz"
         fi
     elif [ "$OS" = "windows" ]; then
-        ASSET_NAME="dotstate-x86_64-pc-windows-msvc${EXT}"
+        ASSET_NAME="dotstate-x86_64-pc-windows-msvc.exe.tar.gz"
     fi
 
     echo "📥 Downloading DotState binary for ${OS}-${ARCH}..."
@@ -108,7 +111,7 @@ download_binary() {
         # Get latest release
         DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | \
             grep "browser_download_url.*${ASSET_NAME}" | \
-            cut -d '"' -f 4)
+            cut -d '"' -f 4 | head -1)
     else
         # Get specific version
         DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET_NAME}"
@@ -118,16 +121,32 @@ download_binary() {
         echo "❌ Error: Could not find download URL for ${ASSET_NAME}"
         echo ""
         echo "Available releases: https://github.com/${REPO}/releases"
-        exit 1
+        return 1
     fi
 
     echo "Downloading from: $DOWNLOAD_URL"
 
-    # Download and install
-    TEMP_FILE=$(mktemp)
+    # Download and extract
+    TEMP_DIR=$(mktemp -d)
+    TEMP_FILE="$TEMP_DIR/${ASSET_NAME}"
+
     if curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"; then
-        mv "$TEMP_FILE" "$INSTALL_DIR/$BINARY_NAME${EXT}"
-        chmod +x "$INSTALL_DIR/$BINARY_NAME${EXT}"
+        # Extract the archive
+        cd "$TEMP_DIR"
+        tar xzf "$TEMP_FILE"
+
+        # Move binary to install directory
+        if [ -f "$BINARY_NAME${EXT}" ]; then
+            mv "$BINARY_NAME${EXT}" "$INSTALL_DIR/$BINARY_NAME${EXT}"
+            chmod +x "$INSTALL_DIR/$BINARY_NAME${EXT}"
+        else
+            echo "❌ Error: Binary not found in archive"
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
+
+        # Cleanup
+        rm -rf "$TEMP_DIR"
 
         echo ""
         echo "✅ DotState binary downloaded successfully!"
@@ -173,34 +192,44 @@ download_binary() {
             echo ""
             echo "After adding to PATH, run 'dotstate' to get started."
         fi
+        return 0
     else
         echo ""
         echo "❌ Error: Failed to download binary"
         echo ""
-        echo "Please check:"
-        echo "  1. Your internet connection"
-        echo "  2. GitHub releases page: https://github.com/${REPO}/releases"
-        exit 1
+        return 1
     fi
 }
 
 # Main installation logic
 main() {
-    # Try Cargo first if available
+    echo "📥 Attempting to download pre-built binary..."
+    echo ""
+
+    # Try binary download first (default method)
+    if download_binary; then
+        exit 0
+    fi
+
+    # If binary download fails, try Cargo as fallback
+    echo "⚠️  Binary download failed. Trying Cargo as fallback..."
+    echo ""
+
     if check_cargo; then
-        echo "✅ Cargo detected. Attempting installation via Cargo..."
-        echo ""
         if install_via_cargo; then
             exit 0
         fi
-        # If Cargo installation fails, fall through to binary download
     else
-        echo "ℹ️  Cargo not found. Will download pre-built binary instead."
+        echo "❌ Cargo is not installed and binary download failed."
         echo ""
     fi
 
-    # Download binary
-    download_binary
+    # If both methods failed, show error
+    echo "❌ Installation failed. Please check:"
+    echo "  1. Your internet connection"
+    echo "  2. GitHub releases page: https://github.com/${REPO}/releases"
+    echo "  3. Install Rust/Cargo if you want to build from source: https://rustup.rs/"
+    exit 1
 }
 
 # Run main function

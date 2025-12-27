@@ -19,14 +19,26 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "ver=$VER" >> $GITHUB_OUTPUT
 
-      - name: Download source tarball and compute sha256
+      - name: Download binary artifacts and compute sha256
         id: sha
         run: |
-          URL="https://github.com/${{ github.repository }}/archive/refs/tags/${{ steps.v.outputs.tag }}.tar.gz"
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          curl -L "$URL" -o src.tar.gz
-          SHA=$(sha256sum src.tar.gz | awk '{print $1}')
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          TAG="${{ steps.v.outputs.tag }}"
+          REPO="${{ github.repository }}"
+
+          # Download both macOS binaries (Intel and Apple Silicon)
+          curl -L "https://github.com/${REPO}/releases/download/${TAG}/dotstate-x86_64-apple-darwin.tar.gz" -o binary-intel.tar.gz
+          curl -L "https://github.com/${REPO}/releases/download/${TAG}/dotstate-aarch64-apple-darwin.tar.gz" -o binary-arm.tar.gz
+
+          # Compute SHA256 for both
+          SHA_INTEL=$(sha256sum binary-intel.tar.gz | awk '{print $1}')
+          SHA_ARM=$(sha256sum binary-arm.tar.gz | awk '{print $1}')
+
+          echo "sha_intel=$SHA_INTEL" >> $GITHUB_OUTPUT
+          echo "sha_arm=$SHA_ARM" >> $GITHUB_OUTPUT
+
+          # URLs for both architectures
+          echo "url_intel=https://github.com/${REPO}/releases/download/${TAG}/dotstate-x86_64-apple-darwin.tar.gz" >> $GITHUB_OUTPUT
+          echo "url_arm=https://github.com/${REPO}/releases/download/${TAG}/dotstate-aarch64-apple-darwin.tar.gz" >> $GITHUB_OUTPUT
 
       - name: Checkout tap repo
         uses: actions/checkout@v4
@@ -36,16 +48,57 @@ jobs:
           path: tap
 
       - name: Update formula
+        env:
+          URL_INTEL: ${{ steps.sha.outputs.url_intel }}
+          URL_ARM: ${{ steps.sha.outputs.url_arm }}
+          SHA_INTEL: ${{ steps.sha.outputs.sha_intel }}
+          SHA_ARM: ${{ steps.sha.outputs.sha_arm }}
         run: |
-          FORMULA="tap/Formula/dotstate.rb"
-          TAG="${{ steps.v.outputs.tag }}"
-          URL="${{ steps.sha.outputs.url }}"
-          SHA="${{ steps.sha.outputs.sha }}"
+          # Use Python to update the formula more reliably
+          python3 << 'EOF'
+          import os
+          import re
 
-          # Replace url line
-          sed -i "s|^  url \".*\"|  url \"$URL\"|g" "$FORMULA"
-          # Replace sha256 line
-          sed -i "s|^  sha256 \".*\"|  sha256 \"$SHA\"|g" "$FORMULA"
+          formula_path = "tap/Formula/dotstate.rb"
+          url_intel = os.environ['URL_INTEL']
+          url_arm = os.environ['URL_ARM']
+          sha_intel = os.environ['SHA_INTEL']
+          sha_arm = os.environ['SHA_ARM']
+
+          with open(formula_path, 'r') as f:
+              content = f.read()
+
+          # Update Intel URL (match the line after "if Hardware::CPU.intel?")
+          content = re.sub(
+              r'(if Hardware::CPU\.intel\?\s*\n\s+url ")[^"]+(")',
+              rf'\1{url_intel}\2',
+              content
+          )
+
+          # Update Intel SHA256 (match the line after the Intel URL)
+          content = re.sub(
+              r'(if Hardware::CPU\.intel\?\s*\n\s+url "[^"]+"\s*\n\s+sha256 ")[^"]+(")',
+              rf'\1{sha_intel}\2',
+              content
+          )
+
+          # Update ARM URL (match the line after "else")
+          content = re.sub(
+              r'(else\s*\n\s+url ")[^"]+(")',
+              rf'\1{url_arm}\2',
+              content
+          )
+
+          # Update ARM SHA256 (match the line after the ARM URL)
+          content = re.sub(
+              r'(else\s*\n\s+url "[^"]+"\s*\n\s+sha256 ")[^"]+(")',
+              rf'\1{sha_arm}\2',
+              content
+          )
+
+          with open(formula_path, 'w') as f:
+              f.write(content)
+          EOF
 
       - name: Commit and push
         run: |
