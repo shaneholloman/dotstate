@@ -5,7 +5,7 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write  # Need write access to push to tap repo
 
 jobs:
   bump-tap:
@@ -71,28 +71,28 @@ jobs:
           # Update Intel URL (match the line after "if Hardware::CPU.intel?")
           content = re.sub(
               r'(if Hardware::CPU\.intel\?\s*\n\s+url ")[^"]+(")',
-              rf'\1{url_intel}\2',
+              r'\1' + url_intel + r'\2',
               content
           )
 
           # Update Intel SHA256 (match the line after the Intel URL)
           content = re.sub(
               r'(if Hardware::CPU\.intel\?\s*\n\s+url "[^"]+"\s*\n\s+sha256 ")[^"]+(")',
-              rf'\1{sha_intel}\2',
+              r'\1' + sha_intel + r'\2',
               content
           )
 
           # Update ARM URL (match the line after "else")
           content = re.sub(
               r'(else\s*\n\s+url ")[^"]+(")',
-              rf'\1{url_arm}\2',
+              r'\1' + url_arm + r'\2',
               content
           )
 
           # Update ARM SHA256 (match the line after the ARM URL)
           content = re.sub(
               r'(else\s*\n\s+url "[^"]+"\s*\n\s+sha256 ")[^"]+(")',
-              rf'\1{sha_arm}\2',
+              r'\1' + sha_arm + r'\2',
               content
           )
 
