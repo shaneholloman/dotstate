@@ -1148,6 +1148,9 @@ impl App {
                                                         PackageManager::Custom
                                                     );
                                                 }
+                                            } else {
+                                                // Space in text fields - pass through to handle_package_popup_event
+                                                self.handle_package_popup_event(event)?;
                                             }
                                         }
                                         KeyCode::Enter => {
