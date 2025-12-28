@@ -6,11 +6,6 @@
   "installCommand": null,
   "framework": null,
   "public": true,
-  "git": {
-    "deploymentEnabled": {
-      "main": false
-    }
-  },
   "rewrites": [
     {
       "source": "/install.sh",
@@ -91,4 +86,3 @@
   "cleanUrls": true,
   "trailingSlash": false
 }
-
