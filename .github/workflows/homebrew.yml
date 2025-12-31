@@ -1,8 +1,10 @@
 name: Bump Homebrew Tap
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
 
 permissions:
   contents: write  # Need write access to push to tap repo
@@ -10,11 +12,13 @@ permissions:
 jobs:
   bump-tap:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Extract version
         id: v
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
         run: |
-          TAG="${GITHUB_REF_NAME}"   # e.g. v0.1.2
+          TAG="${{ github.event.workflow_run.head_branch }}"   # e.g. v0.1.2
           VER="${TAG#v}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "ver=$VER" >> $GITHUB_OUTPUT
@@ -71,7 +75,7 @@ jobs:
           # Update Intel URL - match url line within the if block
           content = re.sub(
               r'(if Hardware::CPU\.intel\?\s*\n\s+url ")[^"]+(")',
-              r'\1' + url_intel + r'\2',
+              r'\g<1>' + url_intel + r'\g<2>',
               content,
               flags=re.MULTILINE
           )
@@ -79,7 +83,7 @@ jobs:
           # Update Intel SHA256 - match sha256 line after Intel URL
           content = re.sub(
               r'(if Hardware::CPU\.intel\?\s*\n\s+url "[^"]+"\s*\n\s+sha256 ")[^"]+(")',
-              r'\1' + sha_intel + r'\2',
+              r'\g<1>' + sha_intel + r'\g<2>',
               content,
               flags=re.MULTILINE
           )
@@ -87,7 +91,7 @@ jobs:
           # Update ARM URL - match url line within the else block
           content = re.sub(
               r'(else\s*\n\s+url ")[^"]+(")',
-              r'\1' + url_arm + r'\2',
+              r'\g<1>' + url_arm + r'\g<2>',
               content,
               flags=re.MULTILINE
           )
@@ -95,7 +99,7 @@ jobs:
           # Update ARM SHA256 - match sha256 line after ARM URL
           content = re.sub(
               r'(else\s*\n\s+url "[^"]+"\s*\n\s+sha256 ")[^"]+(")',
-              r'\1' + sha_arm + r'\2',
+              r'\g<1>' + sha_arm + r'\g<2>',
               content,
               flags=re.MULTILINE
           )
