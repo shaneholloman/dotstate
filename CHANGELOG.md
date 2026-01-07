@@ -5,59 +5,6 @@ All notable changes to DotState will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-- **Local Repository Mode**: Use your own git repository instead of having DotState create one via GitHub
-  - Support for any git host (GitHub, GitLab, Bitbucket, self-hosted, etc.)
-  - Uses system git credentials (SSH keys, git credential manager) - no token required
-  - New setup mode selection screen on initial setup
-  - Validation for local repos (checks for .git directory and origin remote)
-- **Update Notifications**: DotState now checks for updates and notifies you when a new version is available
-  - Update notification banner in main menu
-  - New `dotstate upgrade` CLI command with interactive options
-  - Configurable check interval and ability to disable update checks
-  - Multiple update methods: install script, cargo, or homebrew
-- **Theme System**: Comprehensive theme support for light and dark terminal backgrounds
-  - Automatic theme detection and adaptation
-  - Light and dark themes with consistent color palette
-  - Syntax highlighting themes automatically match UI theme (light/dark)
-  - All UI elements (headers, footers, borders, text, lists) use theme colors
-  - Configurable via `theme` setting in config file (`"dark"` or `"light"`)
-  - `--no-colors` CLI flag to disable colors entirely
-  - `theme = "nocolor"` to disable all UI colors (same as `NO_COLOR=1`)
-- Package manager feature with support for multiple package managers
-- Profile-based package management
-- Custom package support with user-defined install commands
-- Real-time installation output streaming
-- Check selected package feature
-- Horizontal wrapping checkbox list for package manager selection
-- Custom commit message support for `dotstate sync -m "message"`
-- Automatic commit message generation from changed files (when no `-m` flag is provided)
-- Unified commit logic for both CLI and TUI
-
-### Changed
-- Renamed "Setup GitHub Repository" to "Setup git repository" in main menu
-- Updated menu explanation to describe both setup options (GitHub vs Local)
-- Sync operations now work without token in Local mode
-- CLI commands updated to support Local mode
-- Improved popup sizing for custom packages
-- Enhanced package checking UX (removed auto-check on page load)
-- Better error messages and user feedback
-- Commit messages are now automatically generated from changed files instead of generic "Update dotfiles"
-- Made existence check field optional for custom packages (if empty, uses standard binary name check)
-- **UI Color System**: All hardcoded colors replaced with theme-based system
-  - Consistent color usage across all components
-  - Better visibility in both light and dark terminals
-  - All borders, headers, footers, and text now respect theme settings
-
-### Fixed
-- Fixed git clone failures caused by `.gitconfig` URL rewrites (e.g., `url."git@github.com:".insteadOf = "https://github.com/"`)
-  - Token is now embedded directly in the URL to bypass gitconfig rewrites
-  - Improved error messages to show underlying git2 errors with troubleshooting tips
-  - Handle existing repositories more gracefully (reuse instead of failing)
-- Fixed `dotstate logs` command showing incomplete path (now includes `dotstate.log` filename)
-
 ## [0.1.0] - 2025-01-XX
 
 ### Added
@@ -101,3 +48,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - cargo publish workflow
 - updated website instructions
 
+## [0.2.0] - 2026-01-07
+
+### Added
+- **Local Repository Mode**: Use your own git repository instead of having DotState create one via GitHub
+  - Support for any git host (GitHub, GitLab, Bitbucket, self-hosted, etc.)
+  - Uses system git credentials (SSH keys, git credential manager) - no token required
+  - New setup mode selection screen on initial setup
+  - Validation for local repos (checks for .git directory and origin remote)
+- **Update Notifications**: DotState now checks for updates and notifies you when a new version is available
+  - Update notification banner in main menu
+  - New `dotstate upgrade` CLI command with interactive options
+  - Configurable check interval and ability to disable update checks
+  - Multiple update methods: install script, cargo, or homebrew
+- **Theme System**: Comprehensive theme support for light and dark terminal backgrounds
+  - Automatic theme detection and adaptation
+  - Light and dark themes with consistent color palette
+  - Syntax highlighting themes automatically match UI theme (light/dark)
+  - All UI elements (headers, footers, borders, text, lists) use theme colors
+  - Configurable via `theme` setting in config file (`"dark"` or `"light"`)
+  - `--no-colors` CLI flag to disable colors entirely
+  - `theme = "nocolor"` to disable all UI colors (same as `NO_COLOR=1`)
+- Custom commit message support for `dotstate sync -m "message"`
+- Automatic commit message generation from changed files (when no `-m` flag is provided)
+- Unified commit logic for both CLI and TUI
+
+### Changed
+- Renamed "Setup GitHub Repository" to "Setup git repository" in main menu
+- Updated menu explanation to describe both setup options (GitHub vs Local)
+- Sync operations now work without token in Local mode
+- CLI commands updated to support Local mode
+- Improved popup sizing for custom packages
+- Enhanced package checking UX (removed auto-check on page load)
+- Better error messages and user feedback
+- Commit messages are now automatically generated from changed files instead of generic "Update dotfiles"
+- Made existence check field optional for custom packages (if empty, uses standard binary name check)
+- **UI Color System**: All hardcoded colors replaced with theme-based system
+  - Consistent color usage across all components
+  - Better visibility in both light and dark terminals
+  - All borders, headers, footers, and text now respect theme settings
+
+### Fixed
+- Fixed git clone failures caused by `.gitconfig` URL rewrites (e.g., `url."git@github.com:".insteadOf = "https://github.com/"`)
+  - Token is now embedded directly in the URL to bypass gitconfig rewrites
+  - Improved error messages to show underlying git2 errors with troubleshooting tips
+  - Handle existing repositories more gracefully (reuse instead of failing)
+- Fixed `dotstate logs` command showing incomplete path (now includes `dotstate.log` filename)
