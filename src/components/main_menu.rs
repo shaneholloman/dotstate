@@ -3,6 +3,7 @@ use crate::components::footer::Footer;
 use crate::components::header::Header;
 use crate::config::Config;
 use crate::utils::create_standard_layout;
+use crate::version_check::UpdateInfo;
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
@@ -331,10 +332,16 @@ pub struct MainMenuComponent {
     list_state: ListState,
     /// Clickable areas: (rect, MenuItem)
     clickable_areas: Vec<(Rect, MenuItem)>,
+    /// Clickable area for update notification (shown as last menu item)
+    update_clickable_area: Option<Rect>,
     /// Config for displaying stats
     config: Option<Config>,
     /// Changed files pending sync
     changed_files: Vec<String>,
+    /// Update information if a new version is available
+    update_info: Option<UpdateInfo>,
+    /// Selected index (can be > menu items count if update item is selected)
+    selected_index: usize,
 }
 
 impl MainMenuComponent {
@@ -342,15 +349,44 @@ impl MainMenuComponent {
         let mut list_state = ListState::default();
         // Default to SetupRepository if not set up, otherwise first item
         let default_item = MenuItem::SetupRepository;
-        list_state.select(Some(default_item.to_index()));
+        let default_index = default_item.to_index();
+        list_state.select(Some(default_index));
 
         Self {
             selected_item: default_item,
             has_changes_to_push,
             list_state,
             clickable_areas: Vec::new(),
+            update_clickable_area: None,
             config: None,
             changed_files: Vec::new(),
+            update_info: None,
+            selected_index: default_index,
+        }
+    }
+
+    /// Set update information when a new version is available
+    pub fn set_update_info(&mut self, info: Option<UpdateInfo>) {
+        self.update_info = info;
+    }
+
+    /// Get the update info
+    pub fn get_update_info(&self) -> Option<&UpdateInfo> {
+        self.update_info.as_ref()
+    }
+
+    /// Check if the update menu item is currently selected
+    fn is_update_item_selected(&self) -> bool {
+        self.update_info.is_some() && self.selected_index == MenuItem::all().len()
+    }
+
+    /// Get the total number of items (menu items + update item if available)
+    fn total_items(&self) -> usize {
+        let base = MenuItem::all().len();
+        if self.update_info.is_some() {
+            base + 1
+        } else {
+            base
         }
     }
 
@@ -400,6 +436,56 @@ impl MainMenuComponent {
 
     /// Get explanation text for selected menu item
     fn get_explanation(&self) -> Text<'static> {
+        if self.is_update_item_selected() {
+            if let Some(ref update_info) = self.update_info {
+                let lines = vec![
+                    Line::from(vec![Span::styled(
+                        "Update Available!",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::raw("A new version of DotState is available: "),
+                        Span::styled(
+                            format!(
+                                "{} → {}",
+                                update_info.current_version, update_info.latest_version
+                            ),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![Span::styled(
+                        "Update options:",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Yellow)),
+                        Span::raw("Run: "),
+                        Span::styled("dotstate upgrade", Style::default().fg(Color::Cyan)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Yellow)),
+                        Span::raw("Or: "),
+                        Span::styled(
+                            "cargo install dotstate --force",
+                            Style::default().fg(Color::Cyan),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Yellow)),
+                        Span::raw("Or: "),
+                        Span::styled("brew upgrade dotstate", Style::default().fg(Color::Cyan)),
+                    ]),
+                ];
+                return Text::from(lines);
+            }
+        }
         self.selected_item.explanation()
     }
 
@@ -497,10 +583,10 @@ impl Component for MainMenuComponent {
 
         // Menu items - now using MenuItem enum
         let menu_items = MenuItem::all();
-        let selected_index = self.selected_item.to_index();
         let is_setup = self.is_setup();
+        let update_item_index = menu_items.len(); // Index where update item would be
 
-        let items: Vec<ListItem> = menu_items
+        let mut items: Vec<ListItem> = menu_items
             .iter()
             .enumerate()
             .map(|(i, menu_item)| {
@@ -526,7 +612,7 @@ impl Component for MainMenuComponent {
                     format!("{} {}", icon, text)
                 };
 
-                let style = if i == selected_index {
+                let style = if i == self.selected_index {
                     if is_enabled {
                         Style::default().fg(color).add_modifier(Modifier::BOLD)
                     } else {
@@ -541,6 +627,23 @@ impl Component for MainMenuComponent {
                 ListItem::new(display_text).style(style)
             })
             .collect();
+
+        // Add update item if there's an update available
+        if let Some(ref update_info) = self.update_info {
+            let is_selected = self.selected_index == update_item_index;
+            let update_text = format!(
+                "🎉 Update available: {} → {}",
+                update_info.current_version, update_info.latest_version
+            );
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Yellow)
+            };
+            items.push(ListItem::new(update_text).style(style));
+        }
 
         let list_block = Block::default()
             .borders(Borders::ALL)
@@ -581,6 +684,20 @@ impl Component for MainMenuComponent {
             }
         }
 
+        // Add clickable area for update item if present
+        if self.update_info.is_some() {
+            let y = list_inner.y + menu_items.len() as u16;
+            if y < list_inner.y + list_inner.height {
+                self.update_clickable_area =
+                    Some(Rect::new(list_inner.x, y, list_inner.width, item_height));
+            }
+        } else {
+            self.update_clickable_area = None;
+        }
+
+        // Update list_state selection
+        self.list_state.select(Some(self.selected_index));
+
         // Render list
         StatefulWidget::render(
             list,
@@ -599,8 +716,14 @@ impl Component for MainMenuComponent {
             .split(content_split[1]);
 
         // Explanation block with colorful styling
-        let icon = self.selected_item.explanation_icon();
-        let color = self.selected_item.explanation_color();
+        let (icon, color) = if self.is_update_item_selected() {
+            ("🎉", Color::Yellow)
+        } else {
+            (
+                self.selected_item.explanation_icon(),
+                self.selected_item.explanation_color(),
+            )
+        };
 
         let explanation_block = Block::default()
             .borders(Borders::ALL)
@@ -729,19 +852,21 @@ impl Component for MainMenuComponent {
 
     fn handle_event(&mut self, event: Event) -> Result<ComponentAction> {
         let menu_items = MenuItem::all();
-        let max_index = menu_items.len().saturating_sub(1);
-        let current_index = self.selected_item.to_index();
+        let menu_count = menu_items.len();
+        let max_index = self.total_items().saturating_sub(1);
         let is_setup = self.is_setup();
 
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 match key.code {
                     KeyCode::Up => {
-                        if current_index > 0 {
-                            let new_index = current_index - 1;
-                            if let Some(item) = MenuItem::from_index(new_index) {
-                                self.selected_item = item;
-                                self.list_state.select_previous();
+                        if self.selected_index > 0 {
+                            self.selected_index -= 1;
+                            // Update selected_item if within menu items range
+                            if self.selected_index < menu_count {
+                                if let Some(item) = MenuItem::from_index(self.selected_index) {
+                                    self.selected_item = item;
+                                }
                             }
                             Ok(ComponentAction::Update)
                         } else {
@@ -749,11 +874,13 @@ impl Component for MainMenuComponent {
                         }
                     }
                     KeyCode::Down => {
-                        if current_index < max_index {
-                            let new_index = current_index + 1;
-                            if let Some(item) = MenuItem::from_index(new_index) {
-                                self.selected_item = item;
-                                self.list_state.select_next();
+                        if self.selected_index < max_index {
+                            self.selected_index += 1;
+                            // Update selected_item if within menu items range
+                            if self.selected_index < menu_count {
+                                if let Some(item) = MenuItem::from_index(self.selected_index) {
+                                    self.selected_item = item;
+                                }
                             }
                             Ok(ComponentAction::Update)
                         } else {
@@ -761,8 +888,10 @@ impl Component for MainMenuComponent {
                         }
                     }
                     KeyCode::Enter => {
-                        // Only allow Enter if the selected item is enabled
-                        if self.selected_item.is_enabled(is_setup) {
+                        if self.is_update_item_selected() {
+                            // Trigger update action
+                            Ok(ComponentAction::Custom("show_update_info".to_string()))
+                        } else if self.selected_item.is_enabled(is_setup) {
                             Ok(ComponentAction::Update) // App will handle selection
                         } else {
                             Ok(ComponentAction::None) // Ignore Enter on disabled items
@@ -775,7 +904,19 @@ impl Component for MainMenuComponent {
             Event::Mouse(mouse) => {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
-                        // Check if click is in any clickable area
+                        // Check if click is on update item
+                        if let Some(ref update_rect) = self.update_clickable_area {
+                            if mouse.column >= update_rect.x
+                                && mouse.column < update_rect.x + update_rect.width
+                                && mouse.row >= update_rect.y
+                                && mouse.row < update_rect.y + update_rect.height
+                            {
+                                self.selected_index = menu_count; // Update item index
+                                return Ok(ComponentAction::Custom("show_update_info".to_string()));
+                            }
+                        }
+
+                        // Check if click is in any menu clickable area
                         for (rect, menu_item) in &self.clickable_areas {
                             if mouse.column >= rect.x
                                 && mouse.column < rect.x + rect.width
@@ -783,8 +924,7 @@ impl Component for MainMenuComponent {
                                 && mouse.row < rect.y + rect.height
                             {
                                 self.selected_item = *menu_item;
-                                let index = menu_item.to_index();
-                                self.list_state.select(Some(index));
+                                self.selected_index = menu_item.to_index();
                                 // Only trigger action if item is enabled
                                 if menu_item.is_enabled(is_setup) {
                                     return Ok(ComponentAction::Update);
@@ -796,21 +936,23 @@ impl Component for MainMenuComponent {
                         }
                     }
                     MouseEventKind::ScrollUp => {
-                        if current_index > 0 {
-                            let new_index = current_index - 1;
-                            if let Some(item) = MenuItem::from_index(new_index) {
-                                self.selected_item = item;
-                                self.list_state.select_previous();
+                        if self.selected_index > 0 {
+                            self.selected_index -= 1;
+                            if self.selected_index < menu_count {
+                                if let Some(item) = MenuItem::from_index(self.selected_index) {
+                                    self.selected_item = item;
+                                }
                             }
                             return Ok(ComponentAction::Update);
                         }
                     }
                     MouseEventKind::ScrollDown => {
-                        if current_index < max_index {
-                            let new_index = current_index + 1;
-                            if let Some(item) = MenuItem::from_index(new_index) {
-                                self.selected_item = item;
-                                self.list_state.select_next();
+                        if self.selected_index < max_index {
+                            self.selected_index += 1;
+                            if self.selected_index < menu_count {
+                                if let Some(item) = MenuItem::from_index(self.selected_index) {
+                                    self.selected_item = item;
+                                }
                             }
                             return Ok(ComponentAction::Update);
                         }
