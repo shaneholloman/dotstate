@@ -90,9 +90,9 @@ download_binary() {
     # Standard Rust target triple naming (matches GitHub release assets)
     if [ "$OS" = "linux" ]; then
         if [ "$ARCH" = "arm64" ]; then
-            ASSET_NAME="dotstate-aarch64-unknown-linux-gnu.tar.gz"
+            ASSET_NAME="dotstate-aarch64-unknown-linux-musl.tar.gz"
         else
-            ASSET_NAME="dotstate-x86_64-unknown-linux-gnu.tar.gz"
+            ASSET_NAME="dotstate-x86_64-unknown-linux-musl.tar.gz"
         fi
     elif [ "$OS" = "macos" ]; then
         if [ "$ARCH" = "arm64" ]; then

@@ -12,49 +12,94 @@ permissions:
   contents: read
 
 jobs:
-  test-aarch64-build:
-    name: Test aarch64-unknown-linux-gnu build
+  test-musl-builds:
+    name: Test Linux musl builds
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-gnu
-
-      - name: Install cross-compilation dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-
-      - name: Configure cargo for cross-compilation
-        run: |
-          mkdir -p .cargo
-          cat >> .cargo/config.toml <<EOF
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
-
-      - name: Set environment variables for cross-compilation
-        run: |
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-          echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> $GITHUB_ENV
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          targets: ${{ matrix.target }}
 
       - name: Cache Cargo dependencies
         uses: swatinem/rust-cache@v2
         with:
           workspaces: '.'
 
-      - name: Build for aarch64-unknown-linux-gnu
-        run: cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build for ${{ matrix.target }}
+        run: cross build --release --target ${{ matrix.target }}
 
       - name: Verify binary
         run: |
-          file target/aarch64-unknown-linux-gnu/release/dotstate
-          # Check that it's actually an ARM64 binary
-          file target/aarch64-unknown-linux-gnu/release/dotstate | grep -q "ARM aarch64" || (echo "❌ Binary is not ARM64!" && exit 1)
-          echo "✅ Binary is ARM64"
+          echo "Binary info:"
+          file target/${{ matrix.target }}/release/dotstate
 
+          # Check architecture
+          if [[ "${{ matrix.target }}" == *"aarch64"* ]]; then
+            file target/${{ matrix.target }}/release/dotstate | grep -q "ARM aarch64" || (echo "❌ Binary is not ARM64!" && exit 1)
+            echo "✅ Binary is ARM64"
+          else
+            file target/${{ matrix.target }}/release/dotstate | grep -q "x86-64" || (echo "❌ Binary is not x86-64!" && exit 1)
+            echo "✅ Binary is x86-64"
+          fi
+
+          # Check that it's statically linked (musl)
+          if file target/${{ matrix.target }}/release/dotstate | grep -q "statically linked"; then
+            echo "✅ Binary is statically linked"
+          else
+            echo "⚠️ Binary might not be fully statically linked, checking ldd..."
+            if ldd target/${{ matrix.target }}/release/dotstate 2>&1 | grep -q "not a dynamic executable"; then
+              echo "✅ Binary has no dynamic dependencies"
+            else
+              echo "Current ldd output (may show musl loader, which is OK):"
+              ldd target/${{ matrix.target }}/release/dotstate || true
+            fi
+          fi
+
+  test-macos-builds:
+    name: Test macOS builds
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '.'
+
+      - name: Build for ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Verify binary
+        run: |
+          echo "Binary info:"
+          file target/${{ matrix.target }}/release/dotstate
+
+          # Check architecture
+          if [[ "${{ matrix.target }}" == *"aarch64"* ]]; then
+            file target/${{ matrix.target }}/release/dotstate | grep -q "arm64" || (echo "❌ Binary is not arm64!" && exit 1)
+            echo "✅ Binary is arm64"
+          else
+            file target/${{ matrix.target }}/release/dotstate | grep -q "x86_64" || (echo "❌ Binary is not x86_64!" && exit 1)
+            echo "✅ Binary is x86_64"
+          fi
