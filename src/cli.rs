@@ -4,7 +4,7 @@ use crate::utils::SymlinkManager;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// A friendly TUI tool for managing dotfiles with GitHub sync
 #[derive(Parser, Debug)]
@@ -286,25 +286,39 @@ impl Cli {
             std::process::exit(1);
         }
 
-        // Sanity checks
-        let repo_path = &config.repo_path;
-        let (is_safe, reason) = crate::utils::is_safe_to_add(&resolved_path, repo_path);
-        if !is_safe {
+        // Get relative path from home (needed for validation)
+        let relative_path = resolved_path
+            .strip_prefix(&home)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| resolved_path.clone());
+        let relative_str = relative_path.to_string_lossy().to_string();
+
+        // Comprehensive validation before any operations
+        let manifest = crate::utils::ProfileManifest::load_or_backfill(&config.repo_path)
+            .context("Failed to load profile manifest")?;
+
+        let synced_files: std::collections::HashSet<String> = manifest
+            .profiles
+            .iter()
+            .find(|p| p.name == config.active_profile)
+            .map(|p| p.synced_files.iter().cloned().collect())
+            .unwrap_or_default();
+
+        let validation = crate::utils::sync_validation::validate_before_sync(
+            &relative_str,
+            &resolved_path,
+            &synced_files,
+            &config.repo_path,
+        );
+
+        if !validation.is_safe {
             eprintln!(
                 "❌ {}",
-                reason.unwrap_or_else(|| "Cannot add this path".to_string())
+                validation
+                    .error_message
+                    .unwrap_or_else(|| "Cannot add this path".to_string())
             );
             eprintln!("   Path: {:?}", resolved_path);
-            std::process::exit(1);
-        }
-
-        // Check if it's a git repo (deny if directory is a git repo)
-        if resolved_path.is_dir() && crate::utils::is_git_repo(&resolved_path) {
-            eprintln!(
-                "❌ Cannot sync a git repository. Path contains a .git directory: {:?}",
-                resolved_path
-            );
-            eprintln!("   You cannot have a git repository inside a git repository.");
             std::process::exit(1);
         }
 
@@ -327,42 +341,25 @@ impl Cli {
             return Ok(());
         }
 
-        // Get relative path from home
-        let relative_path = resolved_path
-            .strip_prefix(&home)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| resolved_path.clone());
-
-        let relative_str = relative_path.to_string_lossy().to_string();
         let profile_name = config.active_profile.clone();
         let repo_path = config.repo_path.clone();
 
-        // Check if already synced
-        let manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)
-            .context("Failed to load profile manifest")?;
-
-        if let Some(profile) = manifest.profiles.iter().find(|p| p.name == profile_name) {
-            if profile.synced_files.contains(&relative_str) {
-                println!("ℹ️  File is already synced: {}", relative_str);
-                return Ok(());
-            }
-        } else {
-            eprintln!("❌ Active profile '{}' not found in manifest", profile_name);
-            std::process::exit(1);
+        // Check if already synced (validation already checked, but double-check for user feedback)
+        if synced_files.contains(&relative_str) {
+            println!("ℹ️  File is already synced: {}", relative_str);
+            return Ok(());
         }
 
-        // Copy file to repo
-        let file_manager = crate::file_manager::FileManager::new()?;
+        // Validate symlink can be created before deleting original file
         let profile_path = repo_path.join(&profile_name);
         let repo_file_path = profile_path.join(&relative_path);
+        let target_path = home.join(&relative_path);
 
-        // Create parent directories
-        if let Some(parent) = repo_file_path.parent() {
-            std::fs::create_dir_all(parent).context("Failed to create repo directory")?;
-        }
+        // Create file manager for symlink resolution
+        let file_manager = crate::file_manager::FileManager::new()?;
 
-        // Handle symlinks: resolve to original file
-        let source_path = if file_manager.is_symlink(&resolved_path) {
+        // Handle symlinks: resolve to original file for validation
+        let original_source = if file_manager.is_symlink(&resolved_path) {
             file_manager
                 .resolve_symlink(&resolved_path)
                 .context("Failed to resolve symlink")?
@@ -370,19 +367,69 @@ impl Cli {
             resolved_path.clone()
         };
 
+        let symlink_validation = crate::utils::sync_validation::validate_symlink_creation(
+            &original_source,
+            &repo_file_path,
+            &target_path,
+        )
+        .context("Failed to validate symlink creation")?;
+
+        if !symlink_validation.is_safe {
+            eprintln!(
+                "❌ {}",
+                symlink_validation
+                    .error_message
+                    .unwrap_or_else(|| "Cannot create symlink".to_string())
+            );
+            std::process::exit(1);
+        }
+
+        // Copy file to repo FIRST (before deleting original)
+        // This ensures we have a backup before any destructive operations
+        // (file_manager already created above for validation)
+        info!("CLI: Adding file to sync: {}", relative_str);
+        info!("CLI: Source path: {:?}", resolved_path);
+        info!("CLI: Repo destination: {:?}", repo_file_path);
+        info!("CLI: Symlink target: {:?}", target_path);
+
+        // Create parent directories
+        if let Some(parent) = repo_file_path.parent() {
+            if !parent.exists() {
+                info!("CLI: Creating repo directory: {:?}", parent);
+            }
+            std::fs::create_dir_all(parent).context("Failed to create repo directory")?;
+        }
+
+        // Handle symlinks: resolve to original file
+        let source_path = if file_manager.is_symlink(&resolved_path) {
+            info!("CLI: Resolving symlink: {:?}", resolved_path);
+            let resolved = file_manager
+                .resolve_symlink(&resolved_path)
+                .context("Failed to resolve symlink")?;
+            info!("CLI: Resolved symlink to: {:?}", resolved);
+            resolved
+        } else {
+            resolved_path.clone()
+        };
+
         // Copy to repo
+        info!("CLI: Copying file to repository...");
         file_manager
             .copy_to_repo(&source_path, &repo_file_path)
             .context("Failed to copy file to repo")?;
+        info!("CLI: Successfully copied file to repository");
 
         // Create symlink using SymlinkManager
+        info!("CLI: Creating symlink...");
         let mut symlink_mgr =
             SymlinkManager::new_with_backup(repo_path.clone(), config.backup_enabled)?;
         symlink_mgr
             .activate_profile(&profile_name, std::slice::from_ref(&relative_str))
             .context("Failed to create symlink")?;
+        info!("CLI: Successfully created symlink");
 
         // Update manifest
+        info!("CLI: Updating profile manifest...");
         let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
         let current_files = manifest
             .profiles
@@ -391,10 +438,17 @@ impl Cli {
             .map(|p| p.synced_files.clone())
             .unwrap_or_default();
         if !current_files.contains(&relative_str) {
+            debug!(
+                "CLI: Adding {} to manifest for profile {}",
+                relative_str, profile_name
+            );
             let mut new_files = current_files;
             new_files.push(relative_str.clone());
             manifest.update_synced_files(&profile_name, new_files)?;
             manifest.save(&repo_path)?;
+            info!("CLI: Updated manifest with new file: {}", relative_str);
+        } else {
+            debug!("CLI: File already in manifest, skipping update");
         }
 
         // Check if this is a custom file (not in default dotfile candidates)
