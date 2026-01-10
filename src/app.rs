@@ -1706,9 +1706,50 @@ impl App {
                                     if state.focus == DotfileSelectionFocus::FilesList {
                                         state.dotfile_list_state.select_last();
                                         state.preview_scroll = 0;
+                                    } else if state.focus == DotfileSelectionFocus::Preview {
+                                        // Scroll preview to end
+                                        if let Some(selected_index) = state.dotfile_list_state.selected() {
+                                            if selected_index < state.dotfiles.len() {
+                                                let dotfile = &state.dotfiles[selected_index];
+                                                // Calculate max scroll: read file and get line count
+                                                if let Ok(content) = std::fs::read_to_string(&dotfile.original_path) {
+                                                    let total_lines = content.lines().count();
+                                                    // Estimate visible height (will be clamped during render)
+                                                    // Use a reasonable estimate: terminal height minus header/footer/borders
+                                                    let estimated_visible = 20; // Conservative estimate
+                                                    let max_scroll = total_lines.saturating_sub(estimated_visible).max(0);
+                                                    state.preview_scroll = max_scroll;
+                                                } else {
+                                                    // If file can't be read, set to large number
+                                                    state.preview_scroll = 10000;
+                                                }
+                                            }
+                                        }
                                     } else if state.focus == DotfileSelectionFocus::FileBrowserList
                                     {
                                         state.file_browser_list_state.select_last();
+                                    } else if state.focus == DotfileSelectionFocus::FileBrowserPreview {
+                                        // Scroll file browser preview to end
+                                        if let Some(selected) = state.file_browser_list_state.selected() {
+                                            if selected < state.file_browser_entries.len() {
+                                                let entry = &state.file_browser_entries[selected];
+                                                let full_path = if entry.is_absolute() {
+                                                    entry.clone()
+                                                } else {
+                                                    state.file_browser_path.join(entry)
+                                                };
+                                                if full_path.is_file() {
+                                                    if let Ok(content) = std::fs::read_to_string(&full_path) {
+                                                        let total_lines = content.lines().count();
+                                                        let estimated_visible = 20;
+                                                        let max_scroll = total_lines.saturating_sub(estimated_visible).max(0);
+                                                        state.file_browser_preview_scroll = max_scroll;
+                                                    } else {
+                                                        state.file_browser_preview_scroll = 10000;
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 Action::Create => {

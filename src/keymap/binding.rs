@@ -40,7 +40,9 @@ impl KeyBinding {
     /// Check if this binding matches the given key event
     pub fn matches(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
         if let Ok(parsed) = self.parse() {
-            parsed.code == code && parsed.modifiers == modifiers
+            // Normalize character keys with Shift: uppercase char with SHIFT -> lowercase char with SHIFT
+            let (normalized_code, normalized_modifiers) = normalize_shift_char(code, modifiers);
+            normalized_code == parsed.code && normalized_modifiers == parsed.modifiers
         } else {
             false
         }
@@ -62,6 +64,20 @@ impl KeyBinding {
             .as_deref()
             .unwrap_or_else(|| self.action.description())
     }
+}
+
+/// Normalize Shift+character: uppercase Char with SHIFT becomes lowercase Char with SHIFT
+/// This handles terminal behavior where Shift+G sends Char('G') + SHIFT instead of Char('g') + SHIFT
+fn normalize_shift_char(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
+    if modifiers.contains(KeyModifiers::SHIFT) {
+        if let KeyCode::Char(c) = code {
+            if c.is_uppercase() {
+                // Convert uppercase to lowercase but keep SHIFT modifier
+                return (KeyCode::Char(c.to_ascii_lowercase()), modifiers);
+            }
+        }
+    }
+    (code, modifiers)
 }
 
 /// Parse a key string like "ctrl+shift+n" into KeyCode and KeyModifiers
@@ -186,6 +202,7 @@ pub fn format_key_display(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keymap::Action;
 
     #[test]
     fn test_parse_simple_key() {
@@ -266,5 +283,33 @@ mod tests {
     fn test_key_binding_description() {
         let binding = KeyBinding::new("j", Action::MoveDown);
         assert_eq!(binding.get_description(), "Move down");
+    }
+
+    #[test]
+    fn test_shift_g_matches() {
+        // Test that Shift+G (Char('G') + SHIFT) matches "shift+g" binding
+        let binding = KeyBinding::new("shift+g", Action::GoToEnd);
+        assert!(binding.matches(KeyCode::Char('G'), KeyModifiers::SHIFT));
+        assert!(binding.matches(KeyCode::Char('g'), KeyModifiers::SHIFT));
+        assert!(!binding.matches(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert!(!binding.matches(KeyCode::Char('G'), KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn test_normalize_shift_char() {
+        // Test normalization function
+        let (code, modifiers) = normalize_shift_char(KeyCode::Char('G'), KeyModifiers::SHIFT);
+        assert_eq!(code, KeyCode::Char('g'));
+        assert_eq!(modifiers, KeyModifiers::SHIFT);
+
+        // Non-uppercase should not be affected
+        let (code, modifiers) = normalize_shift_char(KeyCode::Char('g'), KeyModifiers::SHIFT);
+        assert_eq!(code, KeyCode::Char('g'));
+        assert_eq!(modifiers, KeyModifiers::SHIFT);
+
+        // Non-shift should not be affected
+        let (code, modifiers) = normalize_shift_char(KeyCode::Char('G'), KeyModifiers::NONE);
+        assert_eq!(code, KeyCode::Char('G'));
+        assert_eq!(modifiers, KeyModifiers::NONE);
     }
 }
