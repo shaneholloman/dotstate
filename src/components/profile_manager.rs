@@ -8,7 +8,7 @@ use crate::utils::{
     center_popup, create_standard_layout, focused_border_style, unfocused_border_style,
 };
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{Event, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
@@ -106,17 +106,14 @@ impl Component for ProfileManagerComponent {
     }
 
     fn handle_event(&mut self, event: Event) -> Result<ComponentAction> {
+        // Note: This method is not actually called - event handling is done in app.rs
+        // This is kept to satisfy the Component trait interface
+        // All keyboard events are handled in app.rs using the keymap system
         match event {
-            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::Up => Ok(ComponentAction::Update),
-                KeyCode::Down => Ok(ComponentAction::Update),
-                KeyCode::Enter => Ok(ComponentAction::Update),
-                KeyCode::Char('c') | KeyCode::Char('C') => Ok(ComponentAction::Update),
-                KeyCode::Char('r') | KeyCode::Char('R') => Ok(ComponentAction::Update),
-                KeyCode::Char('d') | KeyCode::Char('D') => Ok(ComponentAction::Update),
-                KeyCode::Esc => Ok(ComponentAction::Quit),
-                _ => Ok(ComponentAction::None),
-            },
+            Event::Key(_) => {
+                // Keyboard events are handled in app.rs, not here
+                Ok(ComponentAction::None)
+            }
             Event::Mouse(mouse) => {
                 match mouse.kind {
                     MouseEventKind::Down(MouseButton::Left) => {
@@ -187,14 +184,52 @@ impl ProfileManagerComponent {
         }
 
         // Footer
+        let k = |a| config.keymap.get_key_display_for_action(a);
         let footer_text = match state.popup_type {
-            ProfilePopupType::Create => "Tab: Next Field | ↑↓: Navigate Copy From | Space: Toggle Selection | Enter: Create | Esc: Cancel",
-            ProfilePopupType::Switch => "Enter: Confirm Switch | Esc: Cancel",
-            ProfilePopupType::Rename => "Enter: Confirm Rename | Esc: Cancel",
-            ProfilePopupType::Delete => "Type profile name to confirm | Enter: Delete | Esc: Cancel",
-            ProfilePopupType::None => "↑↓: Navigate | Enter: Switch Profile | C: Create | R: Rename | D: Delete | Esc: Back",
+            ProfilePopupType::Create => {
+                format!(
+                    "{}: Next Field | {}: Navigate Copy From | {}: Toggle Selection | {}: Create | {}: Cancel",
+                    k(crate::keymap::Action::NextTab),
+                    config.keymap.navigation_display(),
+                    k(crate::keymap::Action::ToggleSelect),
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Cancel)
+                )
+            }
+            ProfilePopupType::Switch => {
+                format!(
+                    "{}: Confirm Switch | {}: Cancel",
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Cancel)
+                )
+            }
+            ProfilePopupType::Rename => {
+                format!(
+                    "{}: Confirm Rename | {}: Cancel",
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Cancel)
+                )
+            }
+            ProfilePopupType::Delete => {
+                format!(
+                    "Type profile name to confirm | {}: Delete | {}: Cancel",
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Cancel)
+                )
+            }
+            ProfilePopupType::None => {
+                format!(
+                    "{}: Navigate | {}: Switch Profile | {}: Create | {}: Rename | {}: Delete | {}: Back",
+                    config.keymap.navigation_display(),
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Create),
+                    k(crate::keymap::Action::Edit),
+                    k(crate::keymap::Action::Delete),
+                    k(crate::keymap::Action::Cancel)
+                )
+            }
         };
-        Footer::render(frame, footer_chunk, footer_text)?;
+        Footer::render(frame, footer_chunk, &footer_text)?;
 
         Ok(())
     }

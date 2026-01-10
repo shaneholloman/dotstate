@@ -439,6 +439,11 @@ pub struct UiState {
     pub profile_selection: ProfileSelectionState,
     /// State for package manager
     pub package_manager: PackageManagerState,
+    /// Whether a text input is currently focused (blocks navigation keybindings)
+    /// When true, keymap navigation is disabled so users can type freely
+    pub input_mode_active: bool,
+    /// Whether the help overlay is currently showing
+    pub show_help_overlay: bool,
 }
 
 impl Default for UiState {
@@ -459,6 +464,8 @@ impl UiState {
             has_changes_to_push: false,
             profile_selection: ProfileSelectionState::default(),
             package_manager: PackageManagerState::default(),
+            input_mode_active: false,
+            show_help_overlay: false,
         }
     }
 }

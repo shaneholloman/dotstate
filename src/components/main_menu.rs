@@ -2,11 +2,12 @@ use crate::components::component::{Component, ComponentAction};
 use crate::components::footer::Footer;
 use crate::components::header::Header;
 use crate::config::Config;
+use crate::keymap::Action;
 use crate::styles::{theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::utils::create_standard_layout;
 use crate::version_check::UpdateInfo;
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget,
@@ -388,7 +389,7 @@ impl MainMenuComponent {
     }
 
     /// Check if the update menu item is currently selected
-    fn is_update_item_selected(&self) -> bool {
+    pub fn is_update_item_selected(&self) -> bool {
         self.update_info.is_some() && self.selected_index == MenuItem::all().len()
     }
 
@@ -399,6 +400,35 @@ impl MainMenuComponent {
             base + 1
         } else {
             base
+        }
+    }
+
+    /// Move selection up
+    pub fn move_up(&mut self) {
+        let menu_count = MenuItem::all().len();
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+            if self.selected_index < menu_count {
+                if let Some(item) = MenuItem::from_index(self.selected_index) {
+                    self.selected_item = item;
+                    self.list_state.select(Some(self.selected_index));
+                }
+            }
+        }
+    }
+
+    /// Move selection down
+    pub fn move_down(&mut self) {
+        let menu_count = MenuItem::all().len();
+        let max_index = self.total_items().saturating_sub(1);
+        if self.selected_index < max_index {
+            self.selected_index += 1;
+            if self.selected_index < menu_count {
+                if let Some(item) = MenuItem::from_index(self.selected_index) {
+                    self.selected_item = item;
+                    self.list_state.select(Some(self.selected_index));
+                }
+            }
         }
     }
 
@@ -843,12 +873,13 @@ impl Component for MainMenuComponent {
 
         frame.render_widget(stats_para, right_split[1]);
 
-        // Footer
-        let _ = Footer::render(
-            frame,
-            footer_chunk,
-            "↑↓: Navigate | Enter/Click: Select | q: Quit",
-        )?;
+        // Footer with dynamic keybindings from keymap
+        let footer_text = self
+            .config
+            .as_ref()
+            .map(|c| c.keymap.footer_navigation())
+            .unwrap_or_else(|| "↑↓: Navigate | Enter: Select | q: Back | ?: Help".to_string());
+        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
 
         Ok(())
     }
@@ -861,8 +892,14 @@ impl Component for MainMenuComponent {
 
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                match key.code {
-                    KeyCode::Up => {
+                // Use keymap if available, otherwise fall back to standard keys
+                let action = self
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.keymap.get_action(key.code, key.modifiers));
+
+                match action {
+                    Some(Action::MoveUp) => {
                         if self.selected_index > 0 {
                             self.selected_index -= 1;
                             // Update selected_item if within menu items range
@@ -876,7 +913,7 @@ impl Component for MainMenuComponent {
                             Ok(ComponentAction::None)
                         }
                     }
-                    KeyCode::Down => {
+                    Some(Action::MoveDown) => {
                         if self.selected_index < max_index {
                             self.selected_index += 1;
                             // Update selected_item if within menu items range
@@ -890,7 +927,7 @@ impl Component for MainMenuComponent {
                             Ok(ComponentAction::None)
                         }
                     }
-                    KeyCode::Enter => {
+                    Some(Action::Confirm) => {
                         if self.is_update_item_selected() {
                             // Trigger update action
                             Ok(ComponentAction::Custom("show_update_info".to_string()))
@@ -900,8 +937,12 @@ impl Component for MainMenuComponent {
                             Ok(ComponentAction::None) // Ignore Enter on disabled items
                         }
                     }
-                    KeyCode::Char('q') | KeyCode::Esc => Ok(ComponentAction::Quit),
-                    _ => Ok(ComponentAction::None),
+                    Some(Action::Quit) | Some(Action::Cancel) => Ok(ComponentAction::Quit),
+                    _ => {
+                        // Fallback for unmapped keys (shouldn't happen in normal usage)
+                        // This is only called for mouse events in practice, but kept for completeness
+                        Ok(ComponentAction::None)
+                    }
                 }
             }
             Event::Mouse(mouse) => {
