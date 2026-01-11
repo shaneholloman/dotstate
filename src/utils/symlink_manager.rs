@@ -166,8 +166,6 @@ impl SymlinkManager {
             let source = profile_path.join(file);
             let target = home_dir.join(file);
 
-            debug!("Creating symlink: {:?} -> {:?}", target, source);
-
             let operation = self.create_symlink(&source, &target, file)?;
             operations.push(operation);
         }

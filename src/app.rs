@@ -22,7 +22,6 @@ use crossterm::event::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::Duration;
 use syntect::parsing::SyntaxSet;
 use tokio::runtime::Runtime;
@@ -116,6 +115,7 @@ impl App {
 
         let has_changes = false; // Will be checked on first draw
         let config_clone = config.clone();
+        let main_menu_component = MainMenuComponent::new(has_changes, &config);
         let app = Self {
             config_path,
             config,
@@ -125,7 +125,7 @@ impl App {
             should_quit: false,
             runtime,
             last_screen: None,
-            main_menu_component: MainMenuComponent::new(has_changes),
+            main_menu_component,
             github_auth_component: GitHubAuthComponent::new(),
             dotfile_selection_component: DotfileSelectionComponent::new(),
             synced_files_component: SyncedFilesComponent::new(config_clone),
@@ -183,20 +183,20 @@ impl App {
             self.draw()?;
 
             // Start async update check after first render (non-blocking for UI)
-            if !self.has_checked_updates
-                && self.config.updates.check_enabled
-                && self.update_check_receiver.is_none()
-            {
-                debug!("Spawning async update check (deferred until after first render)...");
-                let (tx, rx) = oneshot::channel();
-                thread::spawn(move || {
-                    let result = crate::version_check::check_for_updates_with_result()
-                        .map_err(|e| e.to_string());
-                    // Ignore send error - receiver might be dropped if app quits
-                    let _ = tx.send(result);
-                });
-                self.update_check_receiver = Some(rx);
-            }
+            // if !self.has_checked_updates
+            //     && self.config.updates.check_enabled
+            //     && self.update_check_receiver.is_none()
+            // {
+            //     debug!("Spawning async update check (deferred until after first render)...");
+            //     let (tx, rx) = oneshot::channel();
+            //     thread::spawn(move || {
+            //         let result = crate::version_check::check_for_updates_with_result()
+            //             .map_err(|e| e.to_string());
+            //         // Ignore send error - receiver might be dropped if app quits
+            //         let _ = tx.send(result);
+            //     });
+            //     self.update_check_receiver = Some(rx);
+            // }
 
             // Check if update check result is ready (non-blocking)
             if let Some(receiver) = &mut self.update_check_receiver {
@@ -390,8 +390,6 @@ impl App {
         if self.ui_state.current_screen == Screen::MainMenu {
             self.main_menu_component
                 .set_has_changes_to_push(self.ui_state.has_changes_to_push);
-            self.main_menu_component
-                .set_selected(self.ui_state.selected_index);
             // Update changed files for status display
             self.main_menu_component
                 .update_changed_files(self.ui_state.sync_with_remote.changed_files.clone());
@@ -843,10 +841,14 @@ impl App {
                 use crate::keymap::Action;
                 use crossterm::event::KeyCode;
 
-                // Theme cycling with 't' key (global, works everywhere)
+                // Theme cycling with 't' key (global, but skip if in input field)
                 if key.code == KeyCode::Char('t') && key.modifiers.is_empty() {
-                    self.cycle_theme()?;
-                    return Ok(());
+                    // Don't cycle theme if user is typing in an input field - let 't' be used as input
+                    if !self.ui_state.input_mode_active {
+                        self.cycle_theme()?;
+                        return Ok(());
+                    }
+                    // If in input mode, fall through to let 't' be processed as text input
                 }
 
                 if let Some(action) = self.get_action(key.code, key.modifiers) {
@@ -1708,16 +1710,22 @@ impl App {
                                         state.preview_scroll = 0;
                                     } else if state.focus == DotfileSelectionFocus::Preview {
                                         // Scroll preview to end
-                                        if let Some(selected_index) = state.dotfile_list_state.selected() {
+                                        if let Some(selected_index) =
+                                            state.dotfile_list_state.selected()
+                                        {
                                             if selected_index < state.dotfiles.len() {
                                                 let dotfile = &state.dotfiles[selected_index];
                                                 // Calculate max scroll: read file and get line count
-                                                if let Ok(content) = std::fs::read_to_string(&dotfile.original_path) {
+                                                if let Ok(content) =
+                                                    std::fs::read_to_string(&dotfile.original_path)
+                                                {
                                                     let total_lines = content.lines().count();
                                                     // Estimate visible height (will be clamped during render)
                                                     // Use a reasonable estimate: terminal height minus header/footer/borders
                                                     let estimated_visible = 20; // Conservative estimate
-                                                    let max_scroll = total_lines.saturating_sub(estimated_visible).max(0);
+                                                    let max_scroll = total_lines
+                                                        .saturating_sub(estimated_visible)
+                                                        .max(0);
                                                     state.preview_scroll = max_scroll;
                                                 } else {
                                                     // If file can't be read, set to large number
@@ -1728,9 +1736,13 @@ impl App {
                                     } else if state.focus == DotfileSelectionFocus::FileBrowserList
                                     {
                                         state.file_browser_list_state.select_last();
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserPreview {
+                                    } else if state.focus
+                                        == DotfileSelectionFocus::FileBrowserPreview
+                                    {
                                         // Scroll file browser preview to end
-                                        if let Some(selected) = state.file_browser_list_state.selected() {
+                                        if let Some(selected) =
+                                            state.file_browser_list_state.selected()
+                                        {
                                             if selected < state.file_browser_entries.len() {
                                                 let entry = &state.file_browser_entries[selected];
                                                 let full_path = if entry.is_absolute() {
@@ -1739,11 +1751,16 @@ impl App {
                                                     state.file_browser_path.join(entry)
                                                 };
                                                 if full_path.is_file() {
-                                                    if let Ok(content) = std::fs::read_to_string(&full_path) {
+                                                    if let Ok(content) =
+                                                        std::fs::read_to_string(&full_path)
+                                                    {
                                                         let total_lines = content.lines().count();
                                                         let estimated_visible = 20;
-                                                        let max_scroll = total_lines.saturating_sub(estimated_visible).max(0);
-                                                        state.file_browser_preview_scroll = max_scroll;
+                                                        let max_scroll = total_lines
+                                                            .saturating_sub(estimated_visible)
+                                                            .max(0);
+                                                        state.file_browser_preview_scroll =
+                                                            max_scroll;
                                                     } else {
                                                         state.file_browser_preview_scroll = 10000;
                                                     }
@@ -3454,6 +3471,13 @@ impl App {
         let selected_item = self.main_menu_component.selected_item();
         info!("Menu selection: {:?}", selected_item);
 
+        // Check if the selected menu item is enabled (not disabled)
+        let is_setup = self.config.is_repo_configured();
+        if !selected_item.is_enabled(is_setup) {
+            // Menu item is disabled, ignore the selection
+            return Ok(());
+        }
+
         match selected_item {
             MenuItem::SetupRepository => {
                 // Setup git repository
@@ -3496,10 +3520,6 @@ impl App {
                 self.ui_state.dotfile_selection.backup_enabled = self.config.backup_enabled;
                 self.ui_state.current_screen = Screen::DotfileSelection;
             }
-            // MenuItem::ViewSyncedFiles => {
-            //     // View Synced Files
-            //     self.ui_state.current_screen = Screen::ViewSyncedFiles;
-            // }
             MenuItem::SyncWithRemote => {
                 // Sync with Remote - just navigate, don't sync yet
                 self.ui_state.current_screen = Screen::SyncWithRemote;

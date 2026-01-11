@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use git2::{build::RepoBuilder, Cred, FetchOptions, RemoteCallbacks, Repository, Signature};
 use std::path::Path;
+use std::process::Command;
 use tracing::{debug, info};
 
 /// Git operations for managing the dotfiles repository
@@ -321,28 +322,10 @@ impl GitManager {
             .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote_name))?;
 
         let mut callbacks = RemoteCallbacks::new();
-
-        // Try to get token from parameter first, then from URL
         let token_to_use = token
             .map(|t| t.to_string())
             .or_else(|| Self::extract_token_from_url(remote_url));
-
-        if let Some(token) = token_to_use {
-            // Set up credentials callback with the token
-            // For GitHub PAT authentication, use token as username and password
-            let token_clone = token.clone();
-            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
-                // GitHub PAT: use token as both username and password
-                Cred::userpass_plaintext(&token_clone, &token_clone)
-            });
-        } else {
-            // If no token found, provide a helpful error
-            callbacks.credentials(|_url, _username_from_url, _allowed_types| {
-                Err(git2::Error::from_str(
-                    "No credentials found. Please provide a GitHub token.",
-                ))
-            });
-        }
+        Self::setup_credentials(&mut callbacks, token_to_use);
 
         let mut push_options = git2::PushOptions::new();
         push_options.remote_callbacks(callbacks);
@@ -382,10 +365,9 @@ impl GitManager {
 
     /// Extract token from a GitHub URL (format: https://token@github.com/...)
     fn extract_token_from_url(url: &str) -> Option<String> {
-        // Parse URL like https://token@github.com/user/repo.git
         if let Some(at_pos) = url.find('@') {
             if url.starts_with("https://") {
-                let start = 8; // Skip "https://"
+                let start = 8;
                 if at_pos > start {
                     let token_part = &url[start..at_pos];
                     if !token_part.is_empty() {
@@ -395,6 +377,126 @@ impl GitManager {
             }
         }
         None
+    }
+
+    /// Setup credential callback for remote operations
+    fn setup_credentials(callbacks: &mut RemoteCallbacks, token: Option<String>) {
+        if let Some(token_clone) = token {
+            callbacks.credentials(move |_url, username_from_url, allowed_types| {
+                // Only use userpass if it's allowed
+                if !allowed_types.is_user_pass_plaintext() {
+                    return Err(git2::Error::from_str(
+                        "User/password authentication not allowed",
+                    ));
+                }
+                // Use canonical GitHub token format: "x-access-token" as username
+                let username = username_from_url.unwrap_or("x-access-token");
+                Cred::userpass_plaintext(username, &token_clone)
+            });
+        } else {
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                let url_str = url.to_string();
+                let username = username_from_url.unwrap_or("git");
+
+                // Try credential helper for HTTPS URLs (only if allowed)
+                if url_str.starts_with("https://") && allowed_types.is_user_pass_plaintext() {
+                    // Parse URL to extract protocol, host, and path (standard format)
+                    let (host, path) = if let Some(after_proto) = url_str.strip_prefix("https://") {
+                        if let Some(slash_idx) = after_proto.find('/') {
+                            let h = &after_proto[..slash_idx];
+                            let p = &after_proto[slash_idx + 1..];
+                            (h, p)
+                        } else {
+                            (after_proto, "")
+                        }
+                    } else {
+                        ("", "")
+                    };
+
+                    let credential_input = format!("protocol=https\nhost={}\npath={}\n", host, path);
+
+                    if let Ok(output) = Command::new("git")
+                        .arg("credential")
+                        .arg("fill")
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                        .and_then(|mut child| {
+                            use std::io::Write;
+                            if let Some(mut stdin) = child.stdin.take() {
+                                stdin.write_all(credential_input.as_bytes())?;
+                                stdin.flush()?;
+                            }
+                            child.wait_with_output()
+                        })
+                    {
+                        if output.status.success() {
+                            let output_str = String::from_utf8_lossy(&output.stdout);
+                            let mut parsed_username = None;
+                            let mut parsed_password = None;
+
+                            for line in output_str.lines() {
+                                if let Some((key, value)) = line.split_once('=') {
+                                    match key {
+                                        "username" => parsed_username = Some(value.to_string()),
+                                        "password" => parsed_password = Some(value.to_string()),
+                                        _ => {}
+                                    }
+                                }
+                            }
+
+                            if let (Some(user), Some(pass)) = (parsed_username, parsed_password) {
+                                return Cred::userpass_plaintext(&user, &pass);
+                            }
+                        }
+                    }
+                }
+
+                // Try SSH agent for SSH URLs (only if allowed)
+                if (url_str.starts_with("git@") || url_str.starts_with("ssh://"))
+                    && allowed_types.is_ssh_key()
+                {
+                    if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+                        return Ok(cred);
+                    }
+
+                    // Optional: Try default SSH key files if agent fails
+                    let home = std::env::var("HOME").ok();
+                    if let Some(ref home_dir) = home {
+                        let key_paths = [
+                            format!("{}/.ssh/id_ed25519", home_dir),
+                            format!("{}/.ssh/id_rsa", home_dir),
+                        ];
+
+                        for key_path in &key_paths {
+                            let key_path_obj = std::path::Path::new(key_path);
+                            if key_path_obj.exists() {
+                                let pubkey_path_str = format!("{}.pub", key_path);
+                                let pubkey_path_obj = std::path::Path::new(&pubkey_path_str);
+                                // Try without passphrase first (most common case)
+                                if pubkey_path_obj.exists() {
+                                    if let Ok(cred) = Cred::ssh_key(username, Some(pubkey_path_obj), key_path_obj, None) {
+                                        return Ok(cred);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Try username-only if allowed
+                if allowed_types.is_username() {
+                    if let Ok(cred) = Cred::username(username) {
+                        return Ok(cred);
+                    }
+                }
+
+                Err(git2::Error::from_str(
+                    "No credentials available. Please ensure you have:\n  - Git credential helper configured (e.g., osxkeychain)\n  - SSH keys set up and added to ssh-agent (for SSH URLs)"
+                ))
+            });
+        }
     }
 
     /// Pull from remote
@@ -411,18 +513,10 @@ impl GitManager {
         let remote_url = remote
             .url()
             .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote_name))?;
-
-        // Try to get token from parameter first, then from URL
         let token_to_use = token
             .map(|t| t.to_string())
             .or_else(|| Self::extract_token_from_url(remote_url));
-
-        if let Some(token) = token_to_use {
-            let token_clone = token.clone();
-            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
-                Cred::userpass_plaintext(&token_clone, &token_clone)
-            });
-        }
+        Self::setup_credentials(&mut callbacks, token_to_use);
 
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
@@ -549,18 +643,10 @@ impl GitManager {
         let remote_url = remote
             .url()
             .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote_name))?;
-
-        // Try to get token from parameter first, then from URL
         let token_to_use = token
             .map(|t| t.to_string())
             .or_else(|| Self::extract_token_from_url(remote_url));
-
-        if let Some(token) = token_to_use {
-            let token_clone = token.clone();
-            callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
-                Cred::userpass_plaintext(&token_clone, &token_clone)
-            });
-        }
+        Self::setup_credentials(&mut callbacks, token_to_use);
 
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);

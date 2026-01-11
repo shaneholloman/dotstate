@@ -350,17 +350,20 @@ pub struct MainMenuComponent {
     changed_files: Vec<String>,
     /// Update information if a new version is available
     update_info: Option<UpdateInfo>,
-    /// Selected index (can be > menu items count if update item is selected)
-    selected_index: usize,
-    /// Whether initial selection has been checked based on config
-    initial_selection_set: bool,
+    /// Whether the update item is currently selected (instead of a menu item)
+    is_update_selected: bool,
 }
 
 impl MainMenuComponent {
-    pub fn new(has_changes_to_push: bool) -> Self {
+    pub fn new(has_changes_to_push: bool, config: &Config) -> Self {
         let mut list_state = ListState::default();
-        // Default to SetupRepository if not set up, otherwise first item
-        let default_item = MenuItem::SetupRepository;
+        // Select based on whether repo is configured
+        let default_item = if config.is_repo_configured() {
+            MenuItem::ScanDotfiles
+        } else {
+            MenuItem::SetupRepository
+        };
+
         let default_index = default_item.to_index();
         list_state.select(Some(default_index));
 
@@ -370,11 +373,10 @@ impl MainMenuComponent {
             list_state,
             clickable_areas: Vec::new(),
             update_clickable_area: None,
-            config: None,
+            config: Some(config.clone()),
             changed_files: Vec::new(),
             update_info: None,
-            selected_index: default_index,
-            initial_selection_set: false,
+            is_update_selected: false,
         }
     }
 
@@ -390,7 +392,16 @@ impl MainMenuComponent {
 
     /// Check if the update menu item is currently selected
     pub fn is_update_item_selected(&self) -> bool {
-        self.update_info.is_some() && self.selected_index == MenuItem::all().len()
+        self.is_update_selected && self.update_info.is_some()
+    }
+
+    /// Get the current selected index (for rendering)
+    fn current_selected_index(&self) -> usize {
+        if self.is_update_selected {
+            MenuItem::all().len()
+        } else {
+            self.selected_item.to_index()
+        }
     }
 
     /// Get the total number of items (menu items + update item if available)
@@ -406,12 +417,21 @@ impl MainMenuComponent {
     /// Move selection up
     pub fn move_up(&mut self) {
         let menu_count = MenuItem::all().len();
-        if self.selected_index > 0 {
-            self.selected_index -= 1;
-            if self.selected_index < menu_count {
-                if let Some(item) = MenuItem::from_index(self.selected_index) {
+        if self.is_update_selected {
+            // Move from update item to last menu item
+            self.is_update_selected = false;
+            if let Some(item) = MenuItem::from_index(menu_count - 1) {
+                self.selected_item = item;
+                let index = item.to_index();
+                self.list_state.select(Some(index));
+            }
+        } else {
+            let current_index = self.selected_item.to_index();
+            if current_index > 0 {
+                if let Some(item) = MenuItem::from_index(current_index - 1) {
                     self.selected_item = item;
-                    self.list_state.select(Some(self.selected_index));
+                    let index = item.to_index();
+                    self.list_state.select(Some(index));
                 }
             }
         }
@@ -421,13 +441,24 @@ impl MainMenuComponent {
     pub fn move_down(&mut self) {
         let menu_count = MenuItem::all().len();
         let max_index = self.total_items().saturating_sub(1);
-        if self.selected_index < max_index {
-            self.selected_index += 1;
-            if self.selected_index < menu_count {
-                if let Some(item) = MenuItem::from_index(self.selected_index) {
+
+        if self.is_update_selected {
+            // Already at the bottom
+            return;
+        }
+
+        let current_index = self.selected_item.to_index();
+        if current_index < max_index {
+            if current_index < menu_count - 1 {
+                // Move to next menu item
+                if let Some(item) = MenuItem::from_index(current_index + 1) {
                     self.selected_item = item;
-                    self.list_state.select(Some(self.selected_index));
+                    let index = item.to_index();
+                    self.list_state.select(Some(index));
                 }
+            } else if current_index == menu_count - 1 && self.update_info.is_some() {
+                // Move from last menu item to update item
+                self.is_update_selected = true;
             }
         }
     }
@@ -448,6 +479,7 @@ impl MainMenuComponent {
     /// Set the selected item by MenuItem enum
     pub fn set_selected_item(&mut self, item: MenuItem) {
         self.selected_item = item;
+        self.is_update_selected = false;
         let index = item.to_index();
         self.list_state.select(Some(index));
     }
@@ -468,21 +500,9 @@ impl MainMenuComponent {
         self.has_changes_to_push = has_changes;
     }
 
+    /// Update config (only updates config, doesn't change selection)
     pub fn update_config(&mut self, config: Config) {
         self.config = Some(config);
-
-        // One-time initialization of default selection based on config
-        if !self.initial_selection_set {
-            if self.is_setup() {
-                // Select ScanDotfiles by default if setup is complete
-                let first_item = MenuItem::ScanDotfiles;
-                self.selected_item = first_item;
-                let index = first_item.to_index();
-                self.selected_index = index;
-                self.list_state.select(Some(index));
-            }
-            self.initial_selection_set = true;
-        }
     }
 
     pub fn update_changed_files(&mut self, changed_files: Vec<String>) {
@@ -639,7 +659,14 @@ impl Component for MainMenuComponent {
         // Menu items - now using MenuItem enum
         let menu_items = MenuItem::all();
         let is_setup = self.is_setup();
-        let update_item_index = menu_items.len(); // Index where update item would be
+
+        // Ensure list_state matches selected_item BEFORE building items (so highlighting works correctly)
+        // if !self.is_update_selected {
+        //     let index = self.selected_item.to_index();
+        //     if self.list_state.selected() != Some(index) {
+        //         self.list_state.select(Some(index));
+        //     }
+        // }
 
         let mut items: Vec<ListItem> = menu_items
             .iter()
@@ -667,7 +694,7 @@ impl Component for MainMenuComponent {
                     format!("{} {}", icon, text)
                 };
 
-                let style = if i == self.selected_index {
+                let style = if i == self.current_selected_index() {
                     if is_enabled {
                         Style::default().fg(color).add_modifier(Modifier::BOLD)
                     } else {
@@ -685,7 +712,7 @@ impl Component for MainMenuComponent {
 
         // Add update item if there's an update available
         if let Some(ref update_info) = self.update_info {
-            let is_selected = self.selected_index == update_item_index;
+            let is_selected = self.is_update_selected;
             let update_text = format!(
                 "🎉 Update available: {} → {}",
                 update_info.current_version, update_info.latest_version
@@ -741,10 +768,7 @@ impl Component for MainMenuComponent {
             self.update_clickable_area = None;
         }
 
-        // Update list_state selection
-        self.list_state.select(Some(self.selected_index));
-
-        // Render list
+        // Render list (list_state is already synced above)
         StatefulWidget::render(
             list,
             content_split[0],
@@ -885,9 +909,6 @@ impl Component for MainMenuComponent {
     }
 
     fn handle_event(&mut self, event: Event) -> Result<ComponentAction> {
-        let menu_items = MenuItem::all();
-        let menu_count = menu_items.len();
-        let max_index = self.total_items().saturating_sub(1);
         let is_setup = self.is_setup();
 
         match event {
@@ -900,32 +921,12 @@ impl Component for MainMenuComponent {
 
                 match action {
                     Some(Action::MoveUp) => {
-                        if self.selected_index > 0 {
-                            self.selected_index -= 1;
-                            // Update selected_item if within menu items range
-                            if self.selected_index < menu_count {
-                                if let Some(item) = MenuItem::from_index(self.selected_index) {
-                                    self.selected_item = item;
-                                }
-                            }
-                            Ok(ComponentAction::Update)
-                        } else {
-                            Ok(ComponentAction::None)
-                        }
+                        self.move_up();
+                        Ok(ComponentAction::Update)
                     }
                     Some(Action::MoveDown) => {
-                        if self.selected_index < max_index {
-                            self.selected_index += 1;
-                            // Update selected_item if within menu items range
-                            if self.selected_index < menu_count {
-                                if let Some(item) = MenuItem::from_index(self.selected_index) {
-                                    self.selected_item = item;
-                                }
-                            }
-                            Ok(ComponentAction::Update)
-                        } else {
-                            Ok(ComponentAction::None)
-                        }
+                        self.move_down();
+                        Ok(ComponentAction::Update)
                     }
                     Some(Action::Confirm) => {
                         if self.is_update_item_selected() {
@@ -955,51 +956,41 @@ impl Component for MainMenuComponent {
                                 && mouse.row >= update_rect.y
                                 && mouse.row < update_rect.y + update_rect.height
                             {
-                                self.selected_index = menu_count; // Update item index
+                                self.is_update_selected = true;
                                 return Ok(ComponentAction::Custom("show_update_info".to_string()));
                             }
                         }
 
                         // Check if click is in any menu clickable area
-                        for (rect, menu_item) in &self.clickable_areas {
-                            if mouse.column >= rect.x
-                                && mouse.column < rect.x + rect.width
-                                && mouse.row >= rect.y
-                                && mouse.row < rect.y + rect.height
-                            {
-                                self.selected_item = *menu_item;
-                                self.selected_index = menu_item.to_index();
-                                // Only trigger action if item is enabled
-                                if menu_item.is_enabled(is_setup) {
-                                    return Ok(ComponentAction::Update);
-                                } else {
-                                    // Just select it, don't trigger action
-                                    return Ok(ComponentAction::None);
-                                }
+                        let clicked_menu_item = self
+                            .clickable_areas
+                            .iter()
+                            .find(|(rect, _)| {
+                                mouse.column >= rect.x
+                                    && mouse.column < rect.x + rect.width
+                                    && mouse.row >= rect.y
+                                    && mouse.row < rect.y + rect.height
+                            })
+                            .map(|(_, menu_item)| *menu_item);
+
+                        if let Some(menu_item) = clicked_menu_item {
+                            self.set_selected_item(menu_item);
+                            // Only trigger action if item is enabled
+                            if menu_item.is_enabled(is_setup) {
+                                return Ok(ComponentAction::Update);
+                            } else {
+                                // Just select it, don't trigger action
+                                return Ok(ComponentAction::None);
                             }
                         }
                     }
                     MouseEventKind::ScrollUp => {
-                        if self.selected_index > 0 {
-                            self.selected_index -= 1;
-                            if self.selected_index < menu_count {
-                                if let Some(item) = MenuItem::from_index(self.selected_index) {
-                                    self.selected_item = item;
-                                }
-                            }
-                            return Ok(ComponentAction::Update);
-                        }
+                        self.move_up();
+                        return Ok(ComponentAction::Update);
                     }
                     MouseEventKind::ScrollDown => {
-                        if self.selected_index < max_index {
-                            self.selected_index += 1;
-                            if self.selected_index < menu_count {
-                                if let Some(item) = MenuItem::from_index(self.selected_index) {
-                                    self.selected_item = item;
-                                }
-                            }
-                            return Ok(ComponentAction::Update);
-                        }
+                        self.move_down();
+                        return Ok(ComponentAction::Update);
                     }
                     _ => {}
                 }
