@@ -3677,8 +3677,8 @@ impl App {
                     }
                 }
 
-                // Check for Save action (Ctrl+S or equivalent)
-                if matches!(action, Some(Action::Save)) {
+                // Check for Save/Confirm action (Ctrl+S or Enter)
+                if matches!(action, Some(Action::Save) | Some(Action::Confirm)) {
                     if auth_state.repo_already_configured && auth_state.is_editing_token {
                         // Just update the token
                         self.update_github_token()?;
