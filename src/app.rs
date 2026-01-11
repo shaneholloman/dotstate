@@ -22,6 +22,7 @@ use crossterm::event::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::Duration;
 use syntect::parsing::SyntaxSet;
 use tokio::runtime::Runtime;
