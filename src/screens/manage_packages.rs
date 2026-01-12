@@ -1,4 +1,4 @@
-use crate::components::package_manager::PackageManagerComponent;
+
 use crate::config::Config;
 use crate::keymap::{Action, Keymap};
 use crate::screens::{RenderContext, Screen, ScreenAction, ScreenContext};
@@ -20,7 +20,6 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 pub struct ManagePackagesScreen {
-    component: PackageManagerComponent,
     pub state: PackageManagerState,
 }
 
@@ -33,7 +32,6 @@ impl Default for ManagePackagesScreen {
 impl ManagePackagesScreen {
     pub fn new() -> Self {
         Self {
-            component: PackageManagerComponent::new(),
             state: PackageManagerState::default(),
         }
     }
@@ -419,7 +417,7 @@ impl Screen for ManagePackagesScreen {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
         let config = ctx.config;
         let packages = self.state.packages.clone();
-        self.component
+        crate::components::package_manager::PackageManagerComponent::new()
             .render_with_state(frame, area, &mut self.state, config, &packages)?;
         Ok(())
     }
