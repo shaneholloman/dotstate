@@ -1,5 +1,7 @@
 pub mod backup_manager;
+pub mod form;
 pub mod layout;
+pub mod list_navigation;
 pub mod package_installer;
 pub mod package_manager;
 pub mod path;
@@ -8,6 +10,7 @@ pub mod profile_validation;
 pub mod style;
 pub mod symlink_manager;
 pub mod sync_validation;
+pub mod syntax_theme;
 pub mod text;
 pub mod text_input;
 
@@ -25,6 +28,9 @@ pub use style::{
     input_text_style, unfocused_border_style,
 };
 pub use symlink_manager::SymlinkManager;
+pub use form::{Form, FormField};
+pub use list_navigation::{ListStateExt, DEFAULT_PAGE_SIZE};
+pub use syntax_theme::get_current_syntax_theme;
 pub use text_input::{
     handle_backspace, handle_char_insertion, handle_cursor_movement, handle_delete,
 };

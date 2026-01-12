@@ -6,7 +6,6 @@ use std::path::PathBuf;
 /// Application screens
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
-    Welcome,
     MainMenu,
     DotfileSelection,
     GitHubAuth,
@@ -158,17 +157,13 @@ pub enum DotfileSelectionFocus {
     FileBrowserList,    // File browser list pane is focused
     FileBrowserPreview, // File browser preview pane is focused
     FileBrowserInput,   // File browser path input is focused
-    #[allow(dead_code)]
-    CustomInput, // Custom file input is focused (reserved for future use)
 }
 
 /// Dotfile selection state
 #[derive(Debug)]
 pub struct DotfileSelectionState {
     pub dotfiles: Vec<Dotfile>,
-    pub selected_index: usize, // Deprecated, using dotfile_list_state now
     pub preview_index: Option<usize>,
-    pub scroll_offset: usize, // Deprecated, using dotfile_list_state now
     pub preview_scroll: usize,
     pub selected_for_sync: std::collections::HashSet<usize>, // Indices of selected files
     pub dotfile_list_scrollbar: ScrollbarState,              // Scrollbar state for dotfile list
@@ -182,8 +177,6 @@ pub struct DotfileSelectionState {
     pub file_browser_path: PathBuf,    // Current directory in file browser
     pub file_browser_selected: usize,  // Selected file index in browser
     pub file_browser_entries: Vec<PathBuf>, // Files/dirs in current directory
-    #[allow(dead_code)]
-    pub file_browser_scroll: usize, // Scroll offset for file browser list (deprecated, using ListState now)
     pub file_browser_scrollbar: ScrollbarState, // Scrollbar state for file browser
     pub file_browser_list_state: ListState, // ListState for file browser (handles selection and scrolling)
     pub file_browser_preview_scroll: usize, // Scroll offset for file browser preview
@@ -202,9 +195,7 @@ impl Default for DotfileSelectionState {
     fn default() -> Self {
         Self {
             dotfiles: Vec::new(),
-            selected_index: 0,
             preview_index: None,
-            scroll_offset: 0,
             preview_scroll: 0,
             selected_for_sync: std::collections::HashSet::new(),
             dotfile_list_scrollbar: ScrollbarState::new(0),
@@ -218,7 +209,6 @@ impl Default for DotfileSelectionState {
             file_browser_path: dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
             file_browser_selected: 0,
             file_browser_entries: Vec::new(),
-            file_browser_scroll: 0,
             file_browser_scrollbar: ScrollbarState::new(0),
             file_browser_list_state: ListState::default(),
             file_browser_preview_scroll: 0,
@@ -455,7 +445,7 @@ impl Default for UiState {
 impl UiState {
     pub fn new() -> Self {
         Self {
-            current_screen: Screen::Welcome,
+            current_screen: Screen::MainMenu,
             selected_index: 0,
             github_auth: GitHubAuthState::default(),
             dotfile_selection: DotfileSelectionState::default(),

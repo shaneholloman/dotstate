@@ -1,12 +1,11 @@
 use crate::components::package_manager::PackageManagerComponent;
 use crate::components::profile_manager::ProfilePopupType;
 use crate::components::{
-    Component, ComponentAction, DotfileSelectionComponent, GitHubAuthComponent, MainMenuComponent,
-    MenuItem, MessageComponent, ProfileManagerComponent, PushChangesComponent,
-    SyncedFilesComponent,
+    Component, ComponentAction, DotfileSelectionComponent,
+    MenuItem, MessageComponent, ProfileManagerComponent,
 };
 use crate::config::{Config, GitHubConfig};
-use crate::file_manager::FileManager;
+use crate::screens::{GitHubAuthScreen, MainMenuScreen, SyncWithRemoteScreen, ViewSyncedFilesScreen};
 use crate::git::GitManager;
 use crate::github::GitHubClient;
 use crate::styles::LIST_HIGHLIGHT_SYMBOL;
@@ -15,7 +14,8 @@ use crate::ui::{
     AddPackageField, GitHubAuthField, GitHubAuthStep, GitHubSetupStep, InstallationStep,
     PackagePopupType, PackageStatus, Screen, UiState,
 };
-use crate::utils::profile_manifest::{Package, PackageManager};
+use crate::utils::list_navigation::ListStateExt;
+use crate::utils::profile_manifest::PackageManager;
 use anyhow::{Context, Result};
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
@@ -64,20 +64,18 @@ fn list_files_in_profile_dir(profile_dir: &Path, _repo_path: &Path) -> Result<Ve
 pub struct App {
     config: Config,
     config_path: PathBuf,
-    #[allow(dead_code)]
-    file_manager: FileManager,
     tui: Tui,
     ui_state: UiState,
     should_quit: bool,
     runtime: Runtime,
     /// Track the last screen to detect screen transitions
     last_screen: Option<Screen>,
-    /// Component instances for screens with mouse support
-    main_menu_component: MainMenuComponent,
-    github_auth_component: GitHubAuthComponent,
+    /// Screen controllers (new architecture)
+    main_menu_screen: MainMenuScreen,
+    github_auth_screen: GitHubAuthScreen,
     dotfile_selection_component: DotfileSelectionComponent,
-    synced_files_component: SyncedFilesComponent,
-    push_changes_component: PushChangesComponent,
+    view_synced_files_screen: ViewSyncedFilesScreen,
+    sync_with_remote_screen: SyncWithRemoteScreen,
     profile_manager_component: ProfileManagerComponent,
     package_manager_component: PackageManagerComponent,
     message_component: Option<MessageComponent>,
@@ -104,7 +102,6 @@ impl App {
             config.active_profile, config.repo_path
         );
 
-        let file_manager = FileManager::new()?;
         let tui = Tui::new()?;
         let ui_state = UiState::new();
 
@@ -116,21 +113,20 @@ impl App {
 
         let has_changes = false; // Will be checked on first draw
         let config_clone = config.clone();
-        let main_menu_component = MainMenuComponent::new(has_changes, &config);
+        let main_menu_screen = MainMenuScreen::with_config(&config, has_changes);
         let app = Self {
             config_path,
             config,
-            file_manager,
             tui,
             ui_state,
             should_quit: false,
             runtime,
             last_screen: None,
-            main_menu_component,
-            github_auth_component: GitHubAuthComponent::new(),
+            main_menu_screen,
+            github_auth_screen: GitHubAuthScreen::new(),
             dotfile_selection_component: DotfileSelectionComponent::new(),
-            synced_files_component: SyncedFilesComponent::new(config_clone),
-            push_changes_component: PushChangesComponent::new(),
+            view_synced_files_screen: ViewSyncedFilesScreen::new(config_clone),
+            sync_with_remote_screen: SyncWithRemoteScreen::new(),
             profile_manager_component: ProfileManagerComponent::new(),
             package_manager_component: PackageManagerComponent::new(),
 
@@ -207,7 +203,7 @@ impl App {
                             "New version available: {} -> {}",
                             update_info.current_version, update_info.latest_version
                         );
-                        self.main_menu_component.set_update_info(Some(update_info));
+                        self.main_menu_screen.set_update_info(Some(update_info));
                         self.has_checked_updates = true;
                         self.update_check_receiver = None;
                     }
@@ -389,23 +385,23 @@ impl App {
 
         // Update components with current state
         if self.ui_state.current_screen == Screen::MainMenu {
-            self.main_menu_component
+            self.main_menu_screen
                 .set_has_changes_to_push(self.ui_state.has_changes_to_push);
             // Update changed files for status display
-            self.main_menu_component
+            self.main_menu_screen
                 .update_changed_files(self.ui_state.sync_with_remote.changed_files.clone());
         }
 
         // Update GitHub auth component state
         if self.ui_state.current_screen == Screen::GitHubAuth {
-            *self.github_auth_component.get_auth_state_mut() = self.ui_state.github_auth.clone();
+            *self.github_auth_screen.get_auth_state_mut() = self.ui_state.github_auth.clone();
         }
 
         // DotfileSelectionComponent just handles Clear widget, state stays in ui_state
 
-        // Update synced files component config (only if on that screen to avoid unnecessary clones)
+        // Update synced files screen config (only if on that screen to avoid unnecessary clones)
         if self.ui_state.current_screen == Screen::ViewSyncedFiles {
-            self.synced_files_component
+            self.view_synced_files_screen
                 .update_config(self.config.clone());
         }
 
@@ -445,60 +441,25 @@ impl App {
         self.tui.terminal_mut().draw(|frame| {
             let area = frame.area();
             match self.ui_state.current_screen {
-                Screen::Welcome => {
-                    // Welcome screen removed - redirect to MainMenu
-                    self.ui_state.current_screen = Screen::MainMenu;
-                    self.main_menu_component.update_config(config_clone.clone());
-                    let _ = self.main_menu_component.render(frame, area);
-                }
                 Screen::MainMenu => {
                     // Show deactivation warning message if present
                     if let Some(ref mut msg_component) = self.message_component {
                         let _ = msg_component.render(frame, area);
                     } else {
                         // Pass config to main menu for stats
-                        self.main_menu_component.update_config(config_clone.clone());
-                        let _ = self.main_menu_component.render(frame, area);
+                        self.main_menu_screen.update_config(config_clone.clone());
+                        let _ = self.main_menu_screen.render_frame(frame, area);
                     }
                 }
                 Screen::GitHubAuth => {
                     // Sync state back after render (component may update it)
-                    self.github_auth_component.update_config(config_clone.clone());
-                    let _ = self.github_auth_component.render(frame, area);
-                    self.ui_state.github_auth = self.github_auth_component.get_auth_state().clone();
+                    self.github_auth_screen.update_config(config_clone.clone());
+                    let _ = self.github_auth_screen.render_frame(frame, area);
+                    self.ui_state.github_auth = self.github_auth_screen.get_auth_state().clone();
                 }
                 Screen::DotfileSelection => {
                     // Component handles all rendering including Clear
-                    // Get theme reference before mutable borrows
-                    let syntax_theme = {
-                        use crate::styles::theme as ui_theme;
-                        let theme_type = ui_theme().theme_type;
-                        let preferred_names = match theme_type {
-                            crate::styles::ThemeType::Light => vec![
-                                "base16-ocean.light",
-                                "Solarized (light)",
-                                "GitHub",
-                            ],
-                            crate::styles::ThemeType::Dark | crate::styles::ThemeType::NoColor => vec![
-                                "base16-ocean.dark",
-                                "base16-eighties.dark",
-                                "base16-mocha.dark",
-                                "InspiredGitHub",
-                            ],
-                        };
-
-                        let mut theme_opt = None;
-                        for name in &preferred_names {
-                            if let Some(theme) = self.theme_set.themes.get(*name) {
-                                theme_opt = Some(theme);
-                                break;
-                            }
-                        }
-                        theme_opt.unwrap_or_else(|| {
-                            self.theme_set.themes.values().next()
-                                .expect("No syntect themes available")
-                        })
-                    };
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
 
                     if let Err(e) = self.dotfile_selection_component.render_with_state(
                         frame,
@@ -512,45 +473,16 @@ impl App {
                     }
                 }
                 Screen::ViewSyncedFiles => {
-                    let _ = self.synced_files_component.render(frame, area);
+                    let _ = self.view_synced_files_screen.render_frame(frame, area);
                 }
                 Screen::SyncWithRemote => {
-                    // Component handles all rendering including Clear
-                    // Get theme reference before mutable borrows
-                    let syntax_theme = {
-                        use crate::styles::theme as ui_theme;
-                        let theme_type = ui_theme().theme_type;
-                        let preferred_names = match theme_type {
-                            crate::styles::ThemeType::Light => vec![
-                                "base16-ocean.light",
-                                "Solarized (light)",
-                                "GitHub",
-                            ],
-                            crate::styles::ThemeType::Dark | crate::styles::ThemeType::NoColor => vec![
-                                "base16-ocean.dark",
-                                "base16-eighties.dark",
-                                "base16-mocha.dark",
-                                "InspiredGitHub",
-                            ],
-                        };
+                    // Sync state with screen (transitional - will be removed when state moves to screen)
+                    *self.sync_with_remote_screen.get_state_mut() = self.ui_state.sync_with_remote.clone();
 
-                        let mut theme_opt = None;
-                        for name in &preferred_names {
-                            if let Some(theme) = self.theme_set.themes.get(*name) {
-                                theme_opt = Some(theme);
-                                break;
-                            }
-                        }
-                        theme_opt.unwrap_or_else(|| {
-                            self.theme_set.themes.values().next()
-                                .expect("No syntect themes available")
-                        })
-                    };
-
-                    if let Err(e) = self.push_changes_component.render_with_state(
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                    if let Err(e) = self.sync_with_remote_screen.render_with_context(
                         frame,
                         area,
-                        &mut self.ui_state.sync_with_remote,
                         &config_clone,
                         &self.syntax_set,
                         syntax_theme,
@@ -922,20 +854,20 @@ impl App {
                             use crate::keymap::Action;
                             match action {
                                 Action::MoveUp => {
-                                    self.main_menu_component.move_up();
+                                    self.main_menu_screen.move_up();
                                     self.ui_state.selected_index =
-                                        self.main_menu_component.selected_index();
+                                        self.main_menu_screen.selected_index();
                                     return Ok(());
                                 }
                                 Action::MoveDown => {
-                                    self.main_menu_component.move_down();
+                                    self.main_menu_screen.move_down();
                                     self.ui_state.selected_index =
-                                        self.main_menu_component.selected_index();
+                                        self.main_menu_screen.selected_index();
                                     return Ok(());
                                 }
                                 Action::Confirm => {
                                     // Check for update item selection
-                                    if self.main_menu_component.is_update_item_selected() {
+                                    if self.main_menu_screen.is_update_item_selected() {
                                         self.show_update_info_popup();
                                     } else {
                                         self.handle_menu_selection()?;
@@ -952,15 +884,15 @@ impl App {
                     }
                 }
 
-                // Pass mouse events to component
+                // Pass mouse events to screen
                 if matches!(event, Event::Mouse(_)) {
-                    let comp_action = self.main_menu_component.handle_event(event)?;
+                    let comp_action = self.main_menu_screen.handle_mouse_event(event)?;
                     match comp_action {
                         ComponentAction::Update => {
                             self.ui_state.selected_index =
-                                self.main_menu_component.selected_index();
+                                self.main_menu_screen.selected_index();
                             // Mouse click also triggers selection
-                            if self.main_menu_component.is_update_item_selected() {
+                            if self.main_menu_screen.is_update_item_selected() {
                                 self.show_update_info_popup();
                             } else {
                                 self.handle_menu_selection()?;
@@ -977,31 +909,33 @@ impl App {
                 return Ok(());
             }
             Screen::GitHubAuth => {
-                // Let component handle mouse events, but keyboard events go to app
+                // Let screen handle mouse events, but keyboard events go to app
                 if matches!(event, Event::Mouse(_)) {
-                    let action = self.github_auth_component.handle_event(event)?;
+                    let action = self.github_auth_screen.handle_mouse_event(event)?;
                     if action == ComponentAction::Update {
                         // Sync state back
                         self.ui_state.github_auth =
-                            self.github_auth_component.get_auth_state().clone();
+                            self.github_auth_screen.get_auth_state().clone();
                     }
                     return Ok(());
                 }
                 // Keyboard events handled in app (complex logic)
+                // TODO: Move handle_github_auth_input into GitHubAuthScreen.handle_event
                 if let Event::Key(key) = event {
                     if key.kind == KeyEventKind::Press {
                         self.handle_github_auth_input(key)?;
-                        // Sync state to component
-                        *self.github_auth_component.get_auth_state_mut() =
+                        // Sync state to screen
+                        *self.github_auth_screen.get_auth_state_mut() =
                             self.ui_state.github_auth.clone();
                     }
                 }
                 return Ok(());
             }
             Screen::ViewSyncedFiles => {
-                let action = self.synced_files_component.handle_event(event)?;
-                if let ComponentAction::Navigate(Screen::MainMenu) = action {
-                    self.ui_state.current_screen = Screen::MainMenu;
+                // This screen is fully self-contained - uses ScreenAction pattern
+                let action = self.view_synced_files_screen.handle_event_action(event)?;
+                if let crate::screens::ScreenAction::Navigate(target) = action {
+                    self.ui_state.current_screen = target;
                 }
                 return Ok(());
             }
@@ -1604,11 +1538,8 @@ impl App {
                                 }
                                 Action::PageUp => {
                                     if state.focus == DotfileSelectionFocus::FilesList {
-                                        if let Some(current) = state.dotfile_list_state.selected() {
-                                            let new_index = current.saturating_sub(10);
-                                            state.dotfile_list_state.select(Some(new_index));
-                                            state.preview_scroll = 0;
-                                        }
+                                        state.dotfile_list_state.page_up(10, state.dotfiles.len());
+                                        state.preview_scroll = 0;
                                     } else if state.focus == DotfileSelectionFocus::Preview
                                         && state.preview_scroll > 0
                                     {
@@ -1616,12 +1547,7 @@ impl App {
                                             state.preview_scroll.saturating_sub(20);
                                     } else if state.focus == DotfileSelectionFocus::FileBrowserList
                                     {
-                                        if let Some(current) =
-                                            state.file_browser_list_state.selected()
-                                        {
-                                            let new_index = current.saturating_sub(10);
-                                            state.file_browser_list_state.select(Some(new_index));
-                                        }
+                                        state.file_browser_list_state.page_up(10, state.file_browser_entries.len());
                                     } else if state.focus
                                         == DotfileSelectionFocus::FileBrowserPreview
                                         && state.file_browser_preview_scroll > 0
@@ -1632,30 +1558,14 @@ impl App {
                                 }
                                 Action::PageDown => {
                                     if state.focus == DotfileSelectionFocus::FilesList {
-                                        if let Some(current) = state.dotfile_list_state.selected() {
-                                            let new_index = (current + 10)
-                                                .min(state.dotfiles.len().saturating_sub(1));
-                                            state.dotfile_list_state.select(Some(new_index));
-                                            state.preview_scroll = 0;
-                                        } else if !state.dotfiles.is_empty() {
-                                            state
-                                                .dotfile_list_state
-                                                .select(Some(10.min(state.dotfiles.len() - 1)));
-                                            state.preview_scroll = 0;
-                                        }
+                                        state.dotfile_list_state.page_down(10, state.dotfiles.len());
+                                        state.preview_scroll = 0;
                                     } else if state.focus == DotfileSelectionFocus::Preview {
                                         state.preview_scroll =
                                             state.preview_scroll.saturating_add(20);
                                     } else if state.focus == DotfileSelectionFocus::FileBrowserList
                                     {
-                                        if let Some(current) =
-                                            state.file_browser_list_state.selected()
-                                        {
-                                            let new_index = (current + 10).min(
-                                                state.file_browser_entries.len().saturating_sub(1),
-                                            );
-                                            state.file_browser_list_state.select(Some(new_index));
-                                        }
+                                        state.file_browser_list_state.page_down(10, state.file_browser_entries.len());
                                     } else if state.focus
                                         == DotfileSelectionFocus::FileBrowserPreview
                                     {
@@ -3243,22 +3153,10 @@ impl App {
                             use crate::keymap::Action;
                             match action {
                                 Action::MoveUp => {
-                                    if let Some(current) = state.list_state.selected() {
-                                        if current > 0 {
-                                            state.list_state.select(Some(current - 1));
-                                        }
-                                    } else if !profiles.is_empty() {
-                                        state.list_state.select(Some(profiles.len() - 1));
-                                    }
+                                    state.list_state.move_up_by(1, profiles.len());
                                 }
                                 Action::MoveDown => {
-                                    if let Some(current) = state.list_state.selected() {
-                                        if current < profiles.len().saturating_sub(1) {
-                                            state.list_state.select(Some(current + 1));
-                                        }
-                                    } else if !profiles.is_empty() {
-                                        state.list_state.select(Some(0));
-                                    }
+                                    state.list_state.move_down_by(1, profiles.len());
                                 }
                                 Action::Confirm => {
                                     // Open switch popup (only if not already active)
@@ -3390,22 +3288,12 @@ impl App {
                             }
                             crossterm::event::MouseEventKind::ScrollUp => {
                                 if state.popup_type == ProfilePopupType::None {
-                                    if let Some(selected) = state.list_state.selected() {
-                                        if selected > 0 {
-                                            state.list_state.select(Some(selected - 1));
-                                        }
-                                    }
+                                    state.list_state.move_up_by(1, profiles.len());
                                 }
                             }
                             crossterm::event::MouseEventKind::ScrollDown => {
                                 if state.popup_type == ProfilePopupType::None {
-                                    if let Some(selected) = state.list_state.selected() {
-                                        if selected < profiles.len().saturating_sub(1) {
-                                            state.list_state.select(Some(selected + 1));
-                                        }
-                                    } else if !profiles.is_empty() {
-                                        state.list_state.select(Some(0));
-                                    }
+                                    state.list_state.move_down_by(1, profiles.len());
                                 }
                             }
                             _ => {}
@@ -3415,25 +3303,12 @@ impl App {
                 }
                 return Ok(());
             }
-            _ => {
-                // Fall through to old event handling for other screens
-            }
         }
-
-        // Old event handling for screens not yet converted to components
-        match event {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {}
-            Event::Mouse(mouse) => {
-                self.handle_mouse(mouse)?;
-            }
-            _ => {}
-        }
-        Ok(())
     }
 
     /// Show the update info popup when user selects the update notification
     fn show_update_info_popup(&mut self) {
-        if let Some(ref update_info) = self.main_menu_component.get_update_info().cloned() {
+        if let Some(ref update_info) = self.main_menu_screen.get_update_info().cloned() {
             let message = format!(
                 "🎉 New version available: {} → {}\n\n\
                 Update options:\n\n\
@@ -3469,7 +3344,7 @@ impl App {
         }
 
         // Get the selected menu item from the component
-        let selected_item = self.main_menu_component.selected_item();
+        let selected_item = self.main_menu_screen.selected_item();
         info!("Menu selection: {:?}", selected_item);
 
         // Check if the selected menu item is enabled (not disabled)
@@ -3557,48 +3432,10 @@ impl App {
 
     /// Check for changes to push and update UI state
     fn check_changes_to_push(&mut self) {
-        self.ui_state.has_changes_to_push = false;
-        self.ui_state.sync_with_remote.changed_files.clear();
-
-        // Check if repository is configured and repo exists
-        if !self.config.is_repo_configured() {
-            return;
-        }
-
-        let repo_path = &self.config.repo_path;
-        if !repo_path.exists() {
-            return;
-        }
-
-        // Open git repository
-        let git_mgr = match GitManager::open_or_init(repo_path) {
-            Ok(mgr) => mgr,
-            Err(_) => return,
-        };
-
-        // Get changed files (this includes both uncommitted and unpushed)
-        match git_mgr.get_changed_files() {
-            Ok(files) => {
-                self.ui_state.sync_with_remote.changed_files = files;
-                self.ui_state.has_changes_to_push =
-                    !self.ui_state.sync_with_remote.changed_files.is_empty();
-            }
-            Err(_) => {
-                // Fallback to old method if get_changed_files fails
-                // Check for uncommitted changes
-                let has_uncommitted = git_mgr.has_uncommitted_changes().unwrap_or(false);
-
-                // Check for unpushed commits
-                let branch = git_mgr
-                    .get_current_branch()
-                    .unwrap_or_else(|| "main".to_string());
-                let has_unpushed = git_mgr
-                    .has_unpushed_commits("origin", &branch)
-                    .unwrap_or(false);
-
-                self.ui_state.has_changes_to_push = has_uncommitted || has_unpushed;
-            }
-        }
+        use crate::services::GitService;
+        let result = GitService::check_changes_to_push(&self.config);
+        self.ui_state.has_changes_to_push = result.has_changes;
+        self.ui_state.sync_with_remote.changed_files = result.changed_files;
     }
 
     fn handle_github_auth_input(&mut self, key: KeyEvent) -> Result<()> {
@@ -3725,7 +3562,7 @@ impl App {
                             ),
                             is_new_repo: false,
                         });
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                     }
                     return Ok(());
                 }
@@ -4034,7 +3871,7 @@ impl App {
                 *auth_state = Default::default();
 
                 // Update main menu config
-                self.main_menu_component.update_config(self.config.clone());
+                self.main_menu_screen.update_config(self.config.clone());
             } else {
                 // Show profile selection
                 self.ui_state.profile_selection.profiles = profiles;
@@ -4142,7 +3979,7 @@ impl App {
                     auth_state.token_input = String::new(); // Clear for security
 
                     // Sync back to component
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                 } else {
                     auth_state.error_message = Some(
                         "GitHub configuration not found. Please complete setup first.".to_string(),
@@ -4214,7 +4051,7 @@ impl App {
                 setup_data.delay_until =
                     Some(std::time::Instant::now() + Duration::from_millis(800));
                 auth_state.setup_data = Some(setup_data);
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
             }
             GitHubSetupStep::ValidatingToken => {
                 // Perform async validation
@@ -4240,14 +4077,14 @@ impl App {
                         auth_state.status_message =
                             Some("🔍 Checking if repository exists...".to_string());
                         auth_state.setup_data = Some(setup_data); // Save setup_data with username and repo_exists
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                     }
                     Err(e) => {
                         auth_state.error_message = Some(format!("❌ Authentication failed: {}", e));
                         auth_state.status_message = None;
                         auth_state.step = GitHubAuthStep::Input;
                         auth_state.setup_data = None;
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                         return Ok(());
                     }
                 }
@@ -4263,7 +4100,7 @@ impl App {
                     auth_state.status_message = None;
                     auth_state.step = GitHubAuthStep::Input;
                     auth_state.setup_data = None;
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                     return Ok(());
                 }
 
@@ -4277,7 +4114,7 @@ impl App {
                     setup_data.delay_until =
                         Some(std::time::Instant::now() + Duration::from_millis(500));
                     auth_state.setup_data = Some(setup_data);
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                 } else {
                     auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::CreatingRepo);
                     let username = setup_data.username.as_ref().unwrap(); // Safe now after check
@@ -4288,7 +4125,7 @@ impl App {
                     setup_data.delay_until =
                         Some(std::time::Instant::now() + Duration::from_millis(600));
                     auth_state.setup_data = Some(setup_data);
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                 }
             }
             GitHubSetupStep::CloningRepo => {
@@ -4308,7 +4145,7 @@ impl App {
                         } else {
                             "✅ Repository cloned successfully!".to_string()
                         });
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
 
                         // Update config
                         self.config.github = Some(GitHubConfig {
@@ -4328,7 +4165,7 @@ impl App {
                         setup_data.delay_until =
                             Some(std::time::Instant::now() + Duration::from_millis(600));
                         auth_state.setup_data = Some(setup_data);
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                     }
                     Err(e) => {
                         auth_state.error_message =
@@ -4336,7 +4173,7 @@ impl App {
                         auth_state.status_message = None;
                         auth_state.step = GitHubAuthStep::Input;
                         auth_state.setup_data = None;
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                         return Ok(());
                     }
                 }
@@ -4352,7 +4189,7 @@ impl App {
                     auth_state.status_message = None;
                     auth_state.step = GitHubAuthStep::Input;
                     auth_state.setup_data = None;
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                    *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                     return Ok(());
                 }
                 let token = setup_data.token.clone();
@@ -4376,7 +4213,7 @@ impl App {
                         auth_state.status_message =
                             Some("⚙️  Initializing local repository...".to_string());
                         auth_state.setup_data = Some(setup_data); // Save setup_data
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                     }
                     Err(e) => {
                         auth_state.error_message =
@@ -4384,7 +4221,7 @@ impl App {
                         auth_state.status_message = None;
                         auth_state.step = GitHubAuthStep::Input;
                         auth_state.setup_data = None;
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                         return Ok(());
                     }
                 }
@@ -4402,7 +4239,7 @@ impl App {
                         auth_state.status_message = None;
                         auth_state.step = GitHubAuthStep::Input;
                         auth_state.setup_data = None;
-                        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
                         return Ok(());
                     }
                 };
@@ -4489,7 +4326,7 @@ impl App {
 
                 auth_state.status_message =
                     Some("✅ Repository created and initialized successfully".to_string());
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
 
                 // Move to complete step with delay to show success message
                 auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::Complete);
@@ -4503,7 +4340,7 @@ impl App {
                     Some(std::time::Instant::now() + Duration::from_millis(2000));
                 setup_data.is_new_repo = true; // Mark as new repo creation
                 auth_state.setup_data = Some(setup_data);
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
             }
             GitHubSetupStep::DiscoveringProfiles => {
                 // Discover profiles from the cloned repo
@@ -4562,7 +4399,7 @@ impl App {
                     Some(std::time::Instant::now() + Duration::from_millis(2000));
                 auth_state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::Complete);
                 auth_state.setup_data = Some(setup_data);
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
             }
             GitHubSetupStep::Complete => {
                 // Delay complete, transition to next screen
@@ -4585,7 +4422,7 @@ impl App {
                 auth_state.step = GitHubAuthStep::Input; // Reset to input state
                 auth_state.status_message = None;
                 auth_state.setup_data = None;
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
+                *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
 
                 // Drop mutable borrow of auth_state before calling scan_dotfiles
                 // Note: drop() on a reference doesn't do anything, but we're explicitly ending the borrow scope
@@ -4617,536 +4454,6 @@ impl App {
             // For now, let's not save here - each step handles its own saving
         }
 
-        Ok(())
-    }
-
-    #[allow(dead_code)] // Kept for reference, but replaced by process_github_setup_step
-    fn process_github_setup(&mut self) -> Result<()> {
-        let auth_state = &mut self.ui_state.github_auth;
-
-        // Set processing state FIRST before any blocking operations
-        auth_state.step = GitHubAuthStep::Processing;
-        auth_state.error_message = None;
-
-        // Step 1: Connecting to GitHub - set this immediately
-        auth_state.status_message = Some("🔌 Connecting to GitHub...".to_string());
-
-        // Sync state to component so UI can render it
-        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-        // Small delay to allow UI to render the progress screen
-        // This gives the event loop a chance to process and render
-        // Note: This won't work perfectly because we're blocking, but it helps
-        std::thread::sleep(Duration::from_millis(300));
-
-        // Trim whitespace from token
-        let token = auth_state.token_input.trim().to_string();
-        let repo_name = self.config.repo_name.clone();
-
-        // Token validation - do not log token content for security
-
-        // Validate token format before making API call
-        if !token.starts_with("ghp_") {
-            let actual_start = if token.len() >= 4 {
-                &token[..4]
-            } else {
-                "too short"
-            };
-            auth_state.error_message = Some(format!(
-                "❌ Invalid token format: Must start with 'ghp_' but starts with '{}'.\n\
-                    Token length: {} characters.\n\
-                    First 10 chars: '{}'\n\
-                    Please check that you copied the entire token correctly.\n\
-                    Make sure you're pasting the full token (40+ characters).",
-                actual_start,
-                token.len(),
-                if token.len() >= 10 {
-                    &token[..10]
-                } else {
-                    &token
-                }
-            ));
-            auth_state.step = GitHubAuthStep::Input;
-            auth_state.status_message = None;
-            return Ok(());
-        }
-
-        if token.len() < 40 {
-            auth_state.error_message = Some(format!(
-                "❌ Token appears incomplete: {} characters (expected 40+).\n\
-                    First 10 chars: '{}'\n\
-                    Make sure you copied the entire token from GitHub.",
-                token.len(),
-                &token[..token.len().min(10)]
-            ));
-            auth_state.step = GitHubAuthStep::Input;
-            auth_state.status_message = None;
-            return Ok(());
-        }
-
-        // Step 2: Validating token
-        auth_state.status_message = Some("🔑 Validating your token...".to_string());
-        *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-        // Small delay for UX
-        std::thread::sleep(Duration::from_millis(800));
-
-        // Use the runtime to run async code
-        let result = self.runtime.block_on(async {
-            // Verify token and get user
-            let client = GitHubClient::new(token.clone());
-            let user = client.get_user().await?;
-
-            // Step 3: Check if repo exists
-            let repo_exists = client.repo_exists(&user.login, &repo_name).await?;
-
-            Ok::<(String, bool), anyhow::Error>((user.login, repo_exists))
-        });
-
-        match result {
-            Ok((username, exists)) => {
-                let repo_path = self.config.repo_path.clone();
-
-                // Step 3: Checking if repo exists (already done, but show status)
-                auth_state.status_message = Some("🔍 Checking if repository exists...".to_string());
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-                // Small delay for UX
-                std::thread::sleep(Duration::from_millis(600));
-
-                if exists {
-                    // Step 4: Cloning the repo (or reusing existing)
-                    auth_state.status_message = Some(format!(
-                        "📥 Cloning repository {}/{}...",
-                        username, repo_name
-                    ));
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-                    // Small delay before cloning
-                    std::thread::sleep(Duration::from_millis(500));
-
-                    let remote_url = format!("https://github.com/{}/{}.git", username, repo_name);
-
-                    match GitManager::clone_or_open(&remote_url, &repo_path, Some(&token)) {
-                        Ok((_, was_existing)) => {
-                            auth_state.status_message = Some(if was_existing {
-                                "✅ Using existing repository!".to_string()
-                            } else {
-                                "✅ Repository cloned successfully!".to_string()
-                            });
-                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-                            std::thread::sleep(Duration::from_millis(500));
-                        }
-                        Err(e) => {
-                            auth_state.error_message =
-                                Some(format!("❌ Failed to clone repository: {}", e));
-                            auth_state.status_message = None;
-                            auth_state.step = GitHubAuthStep::Input;
-                            auth_state.setup_data = None;
-                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-                            return Ok(());
-                        }
-                    }
-                } else {
-                    // Step 4: Creating new repository
-                    auth_state.status_message = Some(format!(
-                        "📦 Creating repository {}/{}...",
-                        username, repo_name
-                    ));
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-                    // Small delay for UX
-                    std::thread::sleep(Duration::from_millis(600));
-
-                    // Create repository
-                    let is_private = auth_state.is_private;
-                    let create_result = self.runtime.block_on(async {
-                        let client = GitHubClient::new(token.clone());
-                        client
-                            .create_repo(&repo_name, "My dotfiles managed by dotstate", is_private)
-                            .await
-                    });
-
-                    match create_result {
-                        Ok(_) => {
-                            auth_state.status_message =
-                                Some("⚙️  Initializing local repository...".to_string());
-                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-                            // Small delay for UX
-                            std::thread::sleep(Duration::from_millis(500));
-
-                            // Initialize local repository
-                            std::fs::create_dir_all(&repo_path)
-                                .context("Failed to create repository directory")?;
-
-                            let mut git_mgr = GitManager::open_or_init(&repo_path)?;
-
-                            // Add remote
-                            let remote_url = format!(
-                                "https://{}@github.com/{}/{}.git",
-                                token, username, repo_name
-                            );
-                            // Add remote (this also sets up tracking)
-                            git_mgr.add_remote("origin", &remote_url)?;
-
-                            // Create initial commit
-                            std::fs::write(
-                                repo_path.join("README.md"),
-                                format!("# {}\n\nDotfiles managed by dotstate", repo_name),
-                            )?;
-
-                            // Create profile manifest with default profile
-                            // Use "Personal" as default profile name if active_profile is empty
-                            let default_profile_name = if self.config.active_profile.is_empty() {
-                                "Personal".to_string()
-                            } else {
-                                self.config.active_profile.clone()
-                            };
-
-                            let manifest = crate::utils::ProfileManifest {
-                                profiles: vec![crate::utils::profile_manifest::ProfileInfo {
-                                    name: default_profile_name.clone(),
-                                    description: None, // Default profile, no description yet
-                                    synced_files: Vec::new(),
-                                    packages: Vec::new(),
-                                }],
-                            };
-                            manifest.save(&repo_path)?;
-
-                            git_mgr.commit_all("Initial commit")?;
-
-                            // Get current branch name (should be 'main' after ensure_main_branch)
-                            let current_branch = git_mgr
-                                .get_current_branch()
-                                .unwrap_or_else(|| self.config.default_branch.clone());
-
-                            // Push to remote using the actual branch name and set upstream
-                            git_mgr.push("origin", &current_branch, Some(&token))?;
-
-                            // Ensure tracking is set up after push
-                            git_mgr.set_upstream_tracking("origin", &current_branch)?;
-
-                            // Update config with default profile name
-                            self.config.active_profile = default_profile_name.clone();
-                            self.config
-                                .save(&self.config_path)
-                                .context("Failed to save configuration")?;
-
-                            auth_state.status_message = Some(
-                                "✅ Repository created and initialized successfully".to_string(),
-                            );
-                            *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-                        }
-                        Err(e) => {
-                            auth_state.error_message =
-                                Some(format!("❌ Failed to create repository: {}", e));
-                            auth_state.status_message = None;
-                            auth_state.step = GitHubAuthStep::Input;
-                            return Ok(());
-                        }
-                    }
-                }
-
-                // Update config
-                self.config.github = Some(GitHubConfig {
-                    owner: username.clone(),
-                    repo: repo_name.clone(),
-                    token: Some(token.clone()),
-                });
-                self.config.repo_name = repo_name.clone();
-                self.config
-                    .save(&self.config_path)
-                    .context("Failed to save configuration")?;
-
-                // Verify config was saved
-                if !self.config_path.exists() {
-                    auth_state.error_message = Some(
-                        "Warning: Config file was not created. Please check permissions."
-                            .to_string(),
-                    );
-                    auth_state.step = GitHubAuthStep::Input;
-                    return Ok(());
-                }
-
-                // Discover profiles from the cloned repo
-                if exists && repo_path.exists() {
-                    auth_state.status_message = Some("🔎 Discovering profiles...".to_string());
-                    *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-                    // Small delay for UX
-                    std::thread::sleep(Duration::from_millis(600));
-
-                    // Discover profiles from manifest
-                    let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-
-                    // If manifest has profiles but synced_files are empty, backfill from directory
-                    for profile_info in &mut manifest.profiles {
-                        if profile_info.synced_files.is_empty() {
-                            let profile_dir = repo_path.join(&profile_info.name);
-                            if profile_dir.exists() && profile_dir.is_dir() {
-                                profile_info.synced_files =
-                                    list_files_in_profile_dir(&profile_dir, &repo_path)
-                                        .unwrap_or_default();
-                            }
-                        }
-                    }
-                    manifest.save(&repo_path)?;
-
-                    // Set active profile to first one if available and not already set
-                    if !manifest.profiles.is_empty() && self.config.active_profile.is_empty() {
-                        self.config.active_profile = manifest.profiles[0].name.clone();
-                    }
-
-                    // Save updated config
-                    self.config.save(&self.config_path)?;
-                } else {
-                    // For new repos, just reload config normally
-                    self.config = Config::load_or_create(&self.config_path)?;
-                }
-
-                // Check if we have profiles to activate (only if repo was cloned, not created)
-                if exists {
-                    // Set up profile selection state from manifest
-                    // Get manifest before borrowing ui_state (repo_path already cloned above)
-                    let repo_path_clone = self.config.repo_path.clone();
-                    let manifest =
-                        crate::utils::ProfileManifest::load_or_backfill(&repo_path_clone)
-                            .unwrap_or_default();
-                    let profile_names: Vec<String> =
-                        manifest.profiles.iter().map(|p| p.name.clone()).collect();
-                    self.ui_state.profile_selection.profiles = profile_names;
-                    if !self.ui_state.profile_selection.profiles.is_empty() {
-                        self.ui_state.profile_selection.list_state.select(Some(0));
-                    }
-
-                    if !self.ui_state.profile_selection.profiles.is_empty() {
-                        auth_state.status_message = Some(format!(
-                            "✅ Setup complete!\n\nFound {} profile(s) in the repository.\n\nPress Enter to select which profile to activate.",
-                            self.ui_state.profile_selection.profiles.len()
-                        ));
-                    } else {
-                        // No profiles found
-                        auth_state.status_message = Some(format!(
-                            "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nNo profiles found. You can create one from the main menu.\n\nPress Enter to continue.",
-                            username, repo_name, repo_path
-                        ));
-                    }
-                } else {
-                    // New repo - just created, no profiles to activate yet
-                    // Reload config to ensure it's up to date
-                    self.config = Config::load_or_create(&self.config_path)?;
-                    auth_state.status_message = Some(format!(
-                        "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nPress Enter to continue.",
-                        username, repo_name, repo_path
-                    ));
-                }
-
-                // Update component state
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-
-                // Ensure step is set to Processing so user can press Enter to continue
-                auth_state.step = GitHubAuthStep::Processing;
-            }
-            Err(e) => {
-                // Show detailed error message
-                let error_msg = format!("❌ Authentication failed: {}", e);
-                auth_state.error_message = Some(error_msg);
-                auth_state.status_message = None;
-                auth_state.step = GitHubAuthStep::Input;
-                *self.github_auth_component.get_auth_state_mut() = auth_state.clone();
-                // Don't clear the token input so user can see what they entered
-            }
-        }
-
-        Ok(())
-    }
-
-    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) -> Result<()> {
-        use crossterm::event::{MouseButton, MouseEventKind};
-
-        // Handle DotfileSelection screen mouse events
-        if self.ui_state.current_screen == Screen::DotfileSelection {
-            let state = &mut self.ui_state.dotfile_selection;
-            use crate::ui::DotfileSelectionFocus;
-
-            match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    if state.file_browser_mode {
-                        // File browser mode - scroll based on focus
-                        match state.focus {
-                            DotfileSelectionFocus::FileBrowserList => {
-                                state.file_browser_list_state.select_previous();
-                            }
-                            DotfileSelectionFocus::FileBrowserPreview => {
-                                if state.file_browser_preview_scroll > 0 {
-                                    state.file_browser_preview_scroll =
-                                        state.file_browser_preview_scroll.saturating_sub(1);
-                                }
-                            }
-                            _ => {}
-                        }
-                    } else if state.adding_custom_file {
-                        // Custom input mode - no scrolling
-                    } else {
-                        // Normal mode - scroll based on focus
-                        match state.focus {
-                            DotfileSelectionFocus::FilesList => {
-                                state.dotfile_list_state.select_previous();
-                                state.preview_scroll = 0;
-                            }
-                            DotfileSelectionFocus::Preview => {
-                                if state.preview_scroll > 0 {
-                                    state.preview_scroll = state.preview_scroll.saturating_sub(1);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    return Ok(());
-                }
-                MouseEventKind::ScrollDown => {
-                    if state.file_browser_mode {
-                        // File browser mode - scroll based on focus
-                        match state.focus {
-                            DotfileSelectionFocus::FileBrowserList => {
-                                state.file_browser_list_state.select_next();
-                            }
-                            DotfileSelectionFocus::FileBrowserPreview => {
-                                state.file_browser_preview_scroll =
-                                    state.file_browser_preview_scroll.saturating_add(1);
-                            }
-                            _ => {}
-                        }
-                    } else if state.adding_custom_file {
-                        // Custom input mode - no scrolling
-                    } else {
-                        // Normal mode - scroll based on focus
-                        match state.focus {
-                            DotfileSelectionFocus::FilesList => {
-                                state.dotfile_list_state.select_next();
-                                state.preview_scroll = 0;
-                            }
-                            DotfileSelectionFocus::Preview => {
-                                state.preview_scroll = state.preview_scroll.saturating_add(1);
-                            }
-                            _ => {}
-                        }
-                    }
-                    return Ok(());
-                }
-                MouseEventKind::Down(MouseButton::Left) => {
-                    let terminal_size = self.tui.terminal_mut().size()?;
-                    let header_height = 6; // Header is 6 lines
-                    let footer_height = 1; // Footer is 1 line
-
-                    if state.file_browser_mode {
-                        // File browser popup - improved click detection
-                        // Check if click is within popup area (centered, 80% width, 70% height)
-                        let popup_width = (terminal_size.width as f32 * 0.8) as u16;
-                        let popup_height = (terminal_size.height as f32 * 0.7) as u16;
-                        let popup_x = (terminal_size.width - popup_width) / 2;
-                        let popup_y = (terminal_size.height - popup_height) / 2;
-
-                        if mouse.column >= popup_x
-                            && mouse.column < popup_x + popup_width
-                            && mouse.row >= popup_y
-                            && mouse.row < popup_y + popup_height
-                        {
-                            let popup_inner_y = mouse.row.saturating_sub(popup_y);
-                            let popup_inner_x = mouse.column.saturating_sub(popup_x);
-
-                            // Layout: path display (1), path input (3), list+preview (min), footer (2)
-                            if popup_inner_y < 1 {
-                                // Clicked on path display - focus input
-                                state.focus = DotfileSelectionFocus::FileBrowserInput;
-                                state.file_browser_path_focused = true;
-                            } else if (1..4).contains(&popup_inner_y) {
-                                // Clicked on path input field
-                                state.focus = DotfileSelectionFocus::FileBrowserInput;
-                                state.file_browser_path_focused = true;
-                            } else if popup_inner_y >= 4 && popup_inner_y < popup_height - 2 {
-                                // Clicked in list/preview area
-                                let list_preview_y = popup_inner_y - 4; // After path display and input
-
-                                if popup_inner_x < popup_width / 2 {
-                                    // Clicked on file browser list
-                                    state.focus = DotfileSelectionFocus::FileBrowserList;
-                                    // Calculate which item was clicked (accounting for list borders)
-                                    // List has borders, so first clickable row is at y=1
-                                    if list_preview_y >= 1 {
-                                        let clicked_index = (list_preview_y - 1) as usize;
-                                        if clicked_index < state.file_browser_entries.len() {
-                                            state
-                                                .file_browser_list_state
-                                                .select(Some(clicked_index));
-                                        }
-                                    }
-                                } else {
-                                    // Clicked on preview pane
-                                    state.focus = DotfileSelectionFocus::FileBrowserPreview;
-                                }
-                            }
-                        }
-                    } else if !state.adding_custom_file && mouse.row >= header_height as u16 {
-                        // Normal mode - detect which pane was clicked
-                        let content_start_y = header_height as u16;
-                        let content_end_y = terminal_size.height.saturating_sub(footer_height);
-
-                        if mouse.row >= content_start_y && mouse.row < content_end_y {
-                            // Determine if click is in left half (files list) or right half (preview)
-                            if mouse.column < terminal_size.width / 2 {
-                                // Clicked on files list
-                                state.focus = DotfileSelectionFocus::FilesList;
-
-                                // Calculate which item was clicked
-                                let clicked_row =
-                                    mouse.row.saturating_sub(content_start_y) as usize;
-                                if clicked_row < state.dotfiles.len() {
-                                    state.dotfile_list_state.select(Some(clicked_row));
-                                    state.preview_scroll = 0;
-                                }
-                            } else {
-                                // Clicked on preview pane
-                                state.focus = DotfileSelectionFocus::Preview;
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
-
-        // Handle GitHubAuth screen mouse events
-        if let MouseEventKind::Down(button) = mouse.kind {
-            if button == MouseButton::Left {
-                let auth_state = &mut self.ui_state.github_auth;
-
-                // Get terminal size to determine click areas
-                let terminal_size = self.tui.terminal_mut().size()?;
-                let mouse_x = mouse.column;
-
-                // Check if click is in GitHub auth screen
-                if self.ui_state.current_screen == Screen::GitHubAuth
-                    && auth_state.step == GitHubAuthStep::Input
-                {
-                    // Check if click is in token input area (roughly row 4-6, column 2-78)
-                    // This is approximate - we'd need to track exact widget positions for precision
-                    // For now, clicking anywhere in the left half focuses token input
-                    if mouse_x < terminal_size.width / 2 {
-                        auth_state.input_focused = true;
-                        // Move cursor to clicked position (approximate)
-                        let relative_x = mouse_x.saturating_sub(2) as usize;
-                        auth_state.cursor_position =
-                            relative_x.min(auth_state.token_input.chars().count());
-                    } else {
-                        // Click in help area - unfocus input
-                        auth_state.input_focused = false;
-                    }
-                }
-            }
-        }
         Ok(())
     }
 
@@ -5315,52 +4622,11 @@ impl App {
         Ok(())
     }
 
-    /// Check if there are unsaved changes (selected files differ from synced files)
-    /// Check if there are unsaved changes in the dotfile selection
-    /// Compares the currently selected files with the synced files in the active profile
-    #[allow(dead_code)]
-    fn has_unsaved_changes(&self) -> bool {
-        let state = &self.ui_state.dotfile_selection;
-
-        // Get currently selected file paths
-        let currently_selected: std::collections::HashSet<String> = state
-            .selected_for_sync
-            .iter()
-            .filter_map(|&idx| {
-                state
-                    .dotfiles
-                    .get(idx)
-                    .map(|d| d.relative_path.to_string_lossy().to_string())
-            })
-            .collect();
-
-        // Get previously synced files from active profile
-        let previously_synced: std::collections::HashSet<String> = self
-            .get_active_profile_info()
-            .ok()
-            .flatten()
-            .map(|p| p.synced_files.iter().cloned().collect())
-            .unwrap_or_default();
-
-        // Check if they differ
-        currently_selected != previously_synced
-    }
-
     /// Add a single file to sync (copy to repo, create symlink, update manifest)
     fn add_file_to_sync(&mut self, file_index: usize) -> Result<()> {
-        use crate::utils::{sync_validation, SymlinkManager};
+        use crate::services::SyncService;
 
-        // Get profile info before borrowing state
-        let profile_name = self.config.active_profile.clone();
-        let repo_path = self.config.repo_path.clone();
-        let previously_synced: std::collections::HashSet<String> = self
-            .get_active_profile_info()
-            .ok()
-            .flatten()
-            .map(|p| p.synced_files.iter().cloned().collect())
-            .unwrap_or_default();
-
-        let state = &mut self.ui_state.dotfile_selection;
+        let state = &self.ui_state.dotfile_selection;
         if file_index >= state.dotfiles.len() {
             warn!(
                 "File index {} out of bounds ({} files)",
@@ -5372,325 +4638,67 @@ impl App {
 
         let dotfile = &state.dotfiles[file_index];
         let relative_str = dotfile.relative_path.to_string_lossy().to_string();
-
-        if previously_synced.contains(&relative_str) {
-            debug!("File already synced: {}", relative_str);
-            // Already synced, just mark as selected
-            state.selected_for_sync.insert(file_index);
-            return Ok(());
-        }
-
-        // VALIDATE BEFORE ANY OPERATIONS - prevent data loss
-        let validation = sync_validation::validate_before_sync(
-            &relative_str,
-            &dotfile.original_path,
-            &previously_synced,
-            &repo_path,
-        );
-        if !validation.is_safe {
-            let error_msg = validation
-                .error_message
-                .unwrap_or_else(|| "Cannot add this file or directory".to_string());
-            state.status_message = Some(format!("Error: {}", error_msg));
-            warn!("Validation failed for {}: {}", relative_str, error_msg);
-            return Ok(());
-        }
-
-        // Create file manager for symlink resolution
-        let file_manager = crate::file_manager::FileManager::new()?;
-
-        // Validate symlink can be created before deleting original file
-        let home_dir = crate::utils::get_home_dir();
-        let target_path = home_dir.join(&dotfile.relative_path);
-        let profile_path = repo_path.join(&profile_name);
-        let repo_file_path = profile_path.join(&dotfile.relative_path);
-
-        // Handle symlinks: resolve to original file for validation
-        let original_source = if file_manager.is_symlink(&dotfile.original_path) {
-            file_manager.resolve_symlink(&dotfile.original_path)?
-        } else {
-            dotfile.original_path.clone()
-        };
-
-        let symlink_validation = sync_validation::validate_symlink_creation(
-            &original_source,
-            &repo_file_path,
-            &target_path,
-        )
-        .context("Failed to validate symlink creation")?;
-        if !symlink_validation.is_safe {
-            let error_msg = symlink_validation
-                .error_message
-                .unwrap_or_else(|| "Cannot create symlink".to_string());
-            state.status_message = Some(format!("Error: {}", error_msg));
-            warn!(
-                "Symlink validation failed for {}: {}",
-                relative_str, error_msg
-            );
-            return Ok(());
-        }
-
-        info!(
-            "TUI: Adding file to sync: {} (profile: {})",
-            relative_str, profile_name
-        );
-        debug!("TUI: Source path: {:?}", dotfile.original_path);
-        debug!("TUI: Repo destination: {:?}", repo_file_path);
-        debug!("TUI: Symlink target: {:?}", target_path);
-
-        // Copy file to repo
-        let file_manager = crate::file_manager::FileManager::new()?;
-
-        // Create parent directories
-        if let Some(parent) = repo_file_path.parent() {
-            if !parent.exists() {
-                debug!("TUI: Creating repo directory: {:?}", parent);
-            }
-            std::fs::create_dir_all(parent).context("Failed to create repo directory")?;
-        }
-
-        // Handle symlinks: resolve to original file
-        let source_path = if file_manager.is_symlink(&dotfile.original_path) {
-            debug!("TUI: Resolving symlink: {:?}", dotfile.original_path);
-            let resolved = file_manager.resolve_symlink(&dotfile.original_path)?;
-            debug!("TUI: Resolved symlink to: {:?}", resolved);
-            resolved
-        } else {
-            dotfile.original_path.clone()
-        };
-
-        // Copy to repo FIRST (before deleting original)
-        // This ensures we have a backup before any destructive operations
-        info!("TUI: Copying file to repository...");
-        file_manager
-            .copy_to_repo(&source_path, &repo_file_path)
-            .context("Failed to copy file to repo")?;
-        info!("TUI: Successfully copied file to repository");
-
-        // Create symlink using SymlinkManager
-        info!("TUI: Creating symlink...");
+        let full_path = dotfile.original_path.clone();
         let backup_enabled = state.backup_enabled;
-        let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.clone(), backup_enabled)?;
-        symlink_mgr
-            .activate_profile(&profile_name, std::slice::from_ref(&relative_str))
-            .context("Failed to create symlink")?;
-        info!("TUI: Successfully created symlink");
 
-        // Update manifest
-        let relative_str_clone = relative_str.clone();
-        info!("TUI: Updating profile manifest...");
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-        let current_files = manifest
-            .profiles
-            .iter()
-            .find(|p| p.name == profile_name)
-            .map(|p| p.synced_files.clone())
-            .unwrap_or_default();
-        if !current_files.contains(&relative_str) {
-            debug!(
-                "TUI: Adding {} to manifest for profile {}",
-                relative_str, profile_name
-            );
-            let mut new_files = current_files;
-            new_files.push(relative_str);
-            manifest.update_synced_files(&profile_name, new_files)?;
-            manifest.save(&repo_path)?;
-            info!(
-                "TUI: Updated manifest with new file: {}",
-                relative_str_clone
-            );
-        } else {
-            debug!("TUI: File already in manifest, skipping update");
+        // Use service to add file to sync
+        match SyncService::add_file_to_sync(&self.config, &full_path, &relative_str, backup_enabled)? {
+            crate::services::sync_service::AddFileResult::Success => {
+                let state = &mut self.ui_state.dotfile_selection;
+                state.selected_for_sync.insert(file_index);
+                state.dotfiles[file_index].synced = true;
+                info!("Successfully added file to sync: {}", relative_str);
+            }
+            crate::services::sync_service::AddFileResult::AlreadySynced => {
+                let state = &mut self.ui_state.dotfile_selection;
+                state.selected_for_sync.insert(file_index);
+                debug!("File already synced: {}", relative_str);
+            }
+            crate::services::sync_service::AddFileResult::ValidationFailed(error_msg) => {
+                let state = &mut self.ui_state.dotfile_selection;
+                state.status_message = Some(format!("Error: {}", error_msg));
+                warn!("Validation failed for {}: {}", relative_str, error_msg);
+            }
         }
 
-        // Mark as selected and synced
-        state.selected_for_sync.insert(file_index);
-        state.dotfiles[file_index].synced = true;
-
-        info!("Successfully added file to sync: {}", relative_str_clone);
         Ok(())
     }
 
     /// Add a custom file directly to sync (bypasses scan_dotfiles since custom files aren't in default list)
     fn add_custom_file_to_sync(&mut self, full_path: &Path, relative_path: &str) -> Result<()> {
-        use crate::utils::{sync_validation, SymlinkManager};
+        use crate::services::SyncService;
 
-        // Get profile info before borrowing state
-        let profile_name = self.config.active_profile.clone();
-        let repo_path = self.config.repo_path.clone();
-        let previously_synced: std::collections::HashSet<String> = self
-            .get_active_profile_info()
-            .ok()
-            .flatten()
-            .map(|p| p.synced_files.iter().cloned().collect())
-            .unwrap_or_default();
-
-        if previously_synced.contains(relative_path) {
-            debug!("Custom file already synced: {}", relative_path);
-            // Already synced, nothing to do
-            return Ok(());
-        }
-
-        // VALIDATE BEFORE ANY OPERATIONS - prevent data loss
-        let validation = sync_validation::validate_before_sync(
-            relative_path,
-            full_path,
-            &previously_synced,
-            &repo_path,
-        );
-        if !validation.is_safe {
-            let error_msg = validation
-                .error_message
-                .unwrap_or_else(|| "Cannot add this file or directory".to_string());
-            let state = &mut self.ui_state.dotfile_selection;
-            state.status_message = Some(format!("Error: {}", error_msg));
-            warn!(
-                "Validation failed for custom file {}: {}",
-                relative_path, error_msg
-            );
-            return Ok(());
-        }
-
-        // Create file manager for symlink resolution
-        let file_manager = crate::file_manager::FileManager::new()?;
-
-        // Validate symlink can be created before deleting original file
-        let home_dir = crate::utils::get_home_dir();
-        let target_path = home_dir.join(relative_path);
-        let profile_path = repo_path.join(&profile_name);
-        let relative_path_buf = PathBuf::from(relative_path);
-        let repo_file_path = profile_path.join(&relative_path_buf);
-
-        // Handle symlinks: resolve to original file for validation
-        let original_source = if file_manager.is_symlink(full_path) {
-            file_manager.resolve_symlink(full_path)?
-        } else {
-            full_path.to_path_buf()
-        };
-
-        let symlink_validation = sync_validation::validate_symlink_creation(
-            &original_source,
-            &repo_file_path,
-            &target_path,
-        )
-        .context("Failed to validate symlink creation")?;
-        if !symlink_validation.is_safe {
-            let error_msg = symlink_validation
-                .error_message
-                .unwrap_or_else(|| "Cannot create symlink".to_string());
-            let state = &mut self.ui_state.dotfile_selection;
-            state.status_message = Some(format!("Error: {}", error_msg));
-            warn!(
-                "Symlink validation failed for custom file {}: {}",
-                relative_path, error_msg
-            );
-            return Ok(());
-        }
-
-        info!(
-            "TUI: Adding custom file to sync: {} -> {} (profile: {})",
-            full_path.display(),
-            relative_path,
-            profile_name
-        );
-        debug!("TUI: Source path: {:?}", full_path);
-        debug!("TUI: Repo destination: {:?}", repo_file_path);
-        debug!("TUI: Symlink target: {:?}", target_path);
-
-        // Copy file to repo (file_manager already created above for validation)
-
-        // Create parent directories
-        if let Some(parent) = repo_file_path.parent() {
-            if !parent.exists() {
-                debug!("TUI: Creating repo directory: {:?}", parent);
-            }
-            std::fs::create_dir_all(parent).context("Failed to create repo directory")?;
-        }
-
-        // Handle symlinks: resolve to original file
-        let source_path = if file_manager.is_symlink(full_path) {
-            debug!("TUI: Resolving symlink: {:?}", full_path);
-            let resolved = file_manager.resolve_symlink(full_path)?;
-            debug!("TUI: Resolved symlink to: {:?}", resolved);
-            resolved
-        } else {
-            full_path.to_path_buf()
-        };
-
-        // Copy to repo FIRST (before deleting original)
-        // This ensures we have a backup before any destructive operations
-        info!("TUI: Copying custom file to repository...");
-        file_manager
-            .copy_to_repo(&source_path, &repo_file_path)
-            .context("Failed to copy file to repo")?;
-        info!("TUI: Successfully copied custom file to repository");
-
-        // Create symlink using SymlinkManager
-        info!("TUI: Creating symlink for custom file...");
         let backup_enabled = self.ui_state.dotfile_selection.backup_enabled;
-        let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.clone(), backup_enabled)?;
-        symlink_mgr
-            .activate_profile(&profile_name, &[relative_path.to_string()])
-            .context("Failed to create symlink")?;
-        info!("TUI: Successfully created symlink for custom file");
 
-        // Update manifest
-        info!("TUI: Updating profile manifest for custom file...");
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-        let current_files = manifest
-            .profiles
-            .iter()
-            .find(|p| p.name == profile_name)
-            .map(|p| p.synced_files.clone())
-            .unwrap_or_default();
-        if !current_files.contains(&relative_path.to_string()) {
-            debug!(
-                "TUI: Adding custom file {} to manifest for profile {}",
-                relative_path, profile_name
-            );
-            let mut new_files = current_files;
-            new_files.push(relative_path.to_string());
-            manifest.update_synced_files(&profile_name, new_files)?;
-            manifest.save(&repo_path)?;
-        }
-
-        // Check if this is a custom file (not in default dotfile candidates)
-        use crate::dotfile_candidates::get_default_dotfile_paths;
-        let default_paths = get_default_dotfile_paths();
-        let is_custom = !default_paths.iter().any(|p| p == relative_path);
-
-        if is_custom {
-            // Add to config.custom_files if not already there
-            if !self
-                .config
-                .custom_files
-                .contains(&relative_path.to_string())
-            {
-                self.config.custom_files.push(relative_path.to_string());
-                self.config.save(&self.config_path)?;
+        // Use service to add file to sync
+        match SyncService::add_file_to_sync(&self.config, full_path, relative_path, backup_enabled)? {
+            crate::services::sync_service::AddFileResult::Success => {
+                // Check if this is a custom file (not in default dotfile candidates)
+                if SyncService::is_custom_file(relative_path) {
+                    // Add to config.custom_files if not already there
+                    if !self.config.custom_files.contains(&relative_path.to_string()) {
+                        self.config.custom_files.push(relative_path.to_string());
+                        self.config.save(&self.config_path)?;
+                    }
+                }
+                info!("Successfully added custom file to sync: {}", relative_path);
+            }
+            crate::services::sync_service::AddFileResult::AlreadySynced => {
+                debug!("Custom file already synced: {}", relative_path);
+            }
+            crate::services::sync_service::AddFileResult::ValidationFailed(error_msg) => {
+                let state = &mut self.ui_state.dotfile_selection;
+                state.status_message = Some(format!("Error: {}", error_msg));
+                warn!("Validation failed for custom file {}: {}", relative_path, error_msg);
             }
         }
 
-        // Don't add to dotfiles list here - it will be added after scan_dotfiles() is called
-        // This function only handles the actual syncing (copy, symlink, manifest update)
-        info!("Successfully added custom file to sync: {}", relative_path);
         Ok(())
     }
 
     /// Remove a single file from sync (restore from repo, remove symlink, update manifest)
     fn remove_file_from_sync(&mut self, file_index: usize) -> Result<()> {
-        use crate::utils::SymlinkManager;
-
-        // Get profile info before borrowing state
-        let profile_name = self.config.active_profile.clone();
-        let repo_path = self.config.repo_path.clone();
-        let home_dir = crate::utils::get_home_dir();
-        let previously_synced: std::collections::HashSet<String> = self
-            .get_active_profile_info()
-            .ok()
-            .flatten()
-            .map(|p| p.synced_files.iter().cloned().collect())
-            .unwrap_or_default();
+        use crate::services::SyncService;
 
         let state = &mut self.ui_state.dotfile_selection;
         if file_index >= state.dotfiles.len() {
@@ -5702,178 +4710,46 @@ impl App {
             return Ok(());
         }
 
-        let dotfile = &state.dotfiles[file_index];
-        let relative_str = dotfile.relative_path.to_string_lossy().to_string();
+        let relative_str = state.dotfiles[file_index].relative_path.to_string_lossy().to_string();
 
-        if !previously_synced.contains(&relative_str) {
-            debug!("File not synced, skipping removal: {}", relative_str);
-            // Not synced, just unmark as selected
-            state.selected_for_sync.remove(&file_index);
-            return Ok(());
-        }
-
-        info!(
-            "Removing file from sync: {} (profile: {})",
-            relative_str, profile_name
-        );
-
-        let target_path = home_dir.join(&dotfile.relative_path);
-        let repo_file_path = repo_path.join(&profile_name).join(&dotfile.relative_path);
-
-        // Restore file from repo if symlink exists
-        if target_path.symlink_metadata().is_ok() {
-            let metadata = target_path.symlink_metadata().unwrap();
-            if metadata.is_symlink() {
-                // Remove symlink
-                std::fs::remove_file(&target_path).context("Failed to remove symlink")?;
-
-                // Copy file from repo back to home
-                if repo_file_path.exists() {
-                    if repo_file_path.is_dir() {
-                        crate::file_manager::copy_dir_all(&repo_file_path, &target_path)
-                            .context("Failed to restore directory from repo")?;
-                    } else {
-                        std::fs::copy(&repo_file_path, &target_path)
-                            .context("Failed to restore file from repo")?;
-                    }
-                }
+        // Use service to remove file from sync
+        match SyncService::remove_file_from_sync(&self.config, &relative_str)? {
+            crate::services::sync_service::RemoveFileResult::Success => {
+                // Unmark as selected and synced
+                state.selected_for_sync.remove(&file_index);
+                state.dotfiles[file_index].synced = false;
+                info!("Successfully removed file from sync: {}", relative_str);
+            }
+            crate::services::sync_service::RemoveFileResult::NotSynced => {
+                debug!("File not synced, skipping removal: {}", relative_str);
+                state.selected_for_sync.remove(&file_index);
             }
         }
 
-        // Update symlink tracking
-        let mut symlink_mgr = SymlinkManager::new(repo_path.clone())?;
-        let remaining_files: Vec<String> = {
-            let manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-            manifest
-                .profiles
-                .iter()
-                .find(|p| p.name == profile_name)
-                .map(|p| {
-                    p.synced_files
-                        .iter()
-                        .filter(|f| f != &&relative_str)
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-
-        // Deactivate and reactivate with remaining files
-        let _ = symlink_mgr.deactivate_profile(&profile_name);
-        if !remaining_files.is_empty() {
-            let _ = symlink_mgr.activate_profile(&profile_name, &remaining_files);
-        }
-
-        // Remove from repo
-        if repo_file_path.exists() {
-            if repo_file_path.is_dir() {
-                std::fs::remove_dir_all(&repo_file_path)
-                    .context("Failed to remove directory from repo")?;
-            } else {
-                std::fs::remove_file(&repo_file_path).context("Failed to remove file from repo")?;
-            }
-        }
-
-        // Update manifest
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-        manifest.update_synced_files(&profile_name, remaining_files)?;
-        manifest.save(&repo_path)?;
-
-        // Note: Don't remove from config.custom_files - custom files persist even if removed from sync
-        // This allows users to re-add them easily later
-
-        // Unmark as selected and synced
-        state.selected_for_sync.remove(&file_index);
-        state.dotfiles[file_index].synced = false;
-
-        info!("Successfully removed file from sync: {}", relative_str);
         Ok(())
     }
 
     /// Scan for dotfiles and populate the selection state
     fn scan_dotfiles(&mut self) -> Result<()> {
-        use crate::dotfile_candidates::get_default_dotfile_paths;
+        use crate::services::SyncService;
 
-        let file_manager = crate::file_manager::FileManager::new()?;
-        let dotfile_names = get_default_dotfile_paths();
-        let mut found = file_manager.scan_dotfiles(&dotfile_names);
+        // Use service to scan dotfiles
+        let found = SyncService::scan_dotfiles(&self.config)?;
 
-        // Mark files that are already synced - use active profile's synced_files from manifest
-        let synced_set: std::collections::HashSet<String> = self
-            .get_active_profile_info()
-            .ok()
-            .flatten()
-            .map(|p| p.synced_files.iter().cloned().collect())
-            .unwrap_or_default();
-
-        let mut selected_indices = std::collections::HashSet::new();
-        for (i, dotfile) in found.iter_mut().enumerate() {
-            let relative_str = dotfile.relative_path.to_string_lossy().to_string();
-            dotfile.synced = synced_set.contains(&relative_str);
-
-            // If already synced, add to selected set
-            if dotfile.synced {
-                selected_indices.insert(i);
-            }
-        }
-
-        // Add any synced files that aren't in the default list (custom files)
-        let synced_files_not_found: Vec<String> = synced_set
+        // Build selected indices for synced files
+        let selected_indices: std::collections::HashSet<usize> = found
             .iter()
-            .filter(|s| {
-                !found
-                    .iter()
-                    .any(|d| d.relative_path.to_string_lossy() == **s)
-            })
-            .cloned()
+            .enumerate()
+            .filter(|(_, d)| d.synced)
+            .map(|(i, _)| i)
             .collect();
 
-        let home_dir = crate::utils::get_home_dir();
-        for synced_file in synced_files_not_found {
-            let full_path = home_dir.join(&synced_file);
-            if full_path.exists() {
-                let relative_path_buf = PathBuf::from(&synced_file);
-                let index = found.len();
-                found.push(crate::file_manager::Dotfile {
-                    original_path: full_path,
-                    relative_path: relative_path_buf,
-                    synced: true,
-                    description: None,
-                });
-                selected_indices.insert(index);
-            }
-        }
-
-        // Add custom files from config (even if not synced) - these are known files
-        for custom_file in &self.config.custom_files {
-            if !found
-                .iter()
-                .any(|d| d.relative_path.to_string_lossy() == *custom_file)
-            {
-                let full_path = home_dir.join(custom_file);
-                if full_path.exists() {
-                    let relative_path_buf = PathBuf::from(custom_file);
-                    let index = found.len();
-                    let is_synced = synced_set.contains(custom_file);
-                    found.push(crate::file_manager::Dotfile {
-                        original_path: full_path,
-                        relative_path: relative_path_buf,
-                        synced: is_synced,
-                        description: None,
-                    });
-                    if is_synced {
-                        selected_indices.insert(index);
-                    }
-                }
-            }
-        }
-
+        // Update UI state
         self.ui_state.dotfile_selection.dotfiles = found;
-        self.ui_state.dotfile_selection.selected_index = 0;
         self.ui_state.dotfile_selection.preview_index = None;
-        self.ui_state.dotfile_selection.scroll_offset = 0;
         self.ui_state.dotfile_selection.preview_scroll = 0;
         self.ui_state.dotfile_selection.selected_for_sync = selected_indices;
+
         // Initialize ListState with first item selected if available
         if !self.ui_state.dotfile_selection.dotfiles.is_empty() {
             self.ui_state
@@ -5890,337 +4766,26 @@ impl App {
         Ok(())
     }
 
-    /// Sync selected files to repository using SymlinkManager
-    /// NOTE: This function is deprecated. Files are now synced immediately when selected/unselected.
-    /// Kept for reference but should not be used.
-    #[allow(dead_code)]
-    fn sync_selected_files(&mut self) -> Result<()> {
-        use crate::utils::SymlinkManager;
-
-        // Get profile info before borrowing state
-        let profile_name = self.config.active_profile.clone();
-        let repo_path = self.config.repo_path.clone();
-        let previously_synced: std::collections::HashSet<String> = self
-            .get_active_profile_info()
-            .ok()
-            .flatten()
-            .map(|p| p.synced_files.iter().cloned().collect())
-            .unwrap_or_default();
-
-        let state = &mut self.ui_state.dotfile_selection;
-        let file_manager = crate::file_manager::FileManager::new()?;
-
-        let mut synced_count = 0;
-        let mut unsynced_count = 0;
-        let mut errors = Vec::new();
-
-        // Get list of currently selected indices
-        let currently_selected: std::collections::HashSet<usize> =
-            state.selected_for_sync.iter().cloned().collect();
-
-        // Files to sync
-        let mut files_to_sync: Vec<String> = Vec::new();
-
-        // Step 1: Copy files to repo for newly selected files
-        for &index in &currently_selected {
-            if index >= state.dotfiles.len() {
-                continue;
-            }
-
-            let dotfile = &state.dotfiles[index];
-            let relative_str = dotfile.relative_path.to_string_lossy().to_string();
-
-            // If not already synced, copy to repo
-            if !previously_synced.contains(&relative_str) {
-                let profile_path = repo_path.join(&profile_name);
-                let repo_file_path = profile_path.join(&dotfile.relative_path);
-
-                // Create parent directories in repo
-                if let Some(parent) = repo_file_path.parent() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        errors.push(format!(
-                            "Failed to create repo directory for {}: {}",
-                            relative_str, e
-                        ));
-                        continue;
-                    }
-                }
-
-                // Handle symlinks: resolve to original file
-                let source_path = if file_manager.is_symlink(&dotfile.original_path) {
-                    match file_manager.resolve_symlink(&dotfile.original_path) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            errors.push(format!(
-                                "Failed to resolve symlink for {}: {}",
-                                relative_str, e
-                            ));
-                            continue;
-                        }
-                    }
-                } else {
-                    dotfile.original_path.clone()
-                };
-
-                // Copy original file/directory to repo
-                match file_manager.copy_to_repo(&source_path, &repo_file_path) {
-                    Ok(_) => {
-                        files_to_sync.push(relative_str.clone());
-                        state.dotfiles[index].synced = true;
-                    }
-                    Err(e) => {
-                        errors.push(format!("Failed to copy {} to repo: {}", relative_str, e));
-                    }
-                }
-            } else {
-                files_to_sync.push(relative_str);
-            }
-        }
-
-        // Step 2: Use SymlinkManager to activate with all selected files
-        if !files_to_sync.is_empty() {
-            // Use backup_enabled from UI state (which may have been toggled)
-            let backup_enabled = state.backup_enabled;
-            let mut symlink_mgr =
-                SymlinkManager::new_with_backup(repo_path.clone(), backup_enabled)?;
-
-            match symlink_mgr.activate_profile(&profile_name, &files_to_sync) {
-                Ok(operations) => {
-                    for op in operations {
-                        if matches!(
-                            op.status,
-                            crate::utils::symlink_manager::OperationStatus::Success
-                        ) {
-                            synced_count += 1;
-                        }
-                    }
-                }
-                Err(e) => {
-                    errors.push(format!("Failed to activate symlinks: {}", e));
-                }
-            }
-        }
-
-        // Step 3: Handle unsyncing (deselected files)
-        let dotfiles_to_unsync: Vec<(usize, String)> = state
-            .dotfiles
-            .iter()
-            .enumerate()
-            .filter(|(index, dotfile)| {
-                let relative_str = dotfile.relative_path.to_string_lossy().to_string();
-                previously_synced.contains(&relative_str) && !currently_selected.contains(index)
-            })
-            .map(|(index, dotfile)| (index, dotfile.relative_path.to_string_lossy().to_string()))
-            .collect();
-
-        if !dotfiles_to_unsync.is_empty() {
-            let mut symlink_mgr = SymlinkManager::new(repo_path.clone())?;
-            let home_dir = crate::utils::get_home_dir();
-
-            for (index, relative_str) in dotfiles_to_unsync {
-                let dotfile = &state.dotfiles[index];
-                let target_path = home_dir.join(&dotfile.relative_path);
-                let repo_file_path = repo_path.join(&profile_name).join(&dotfile.relative_path);
-
-                // Step 1: If target is a symlink, restore the original file from repo BEFORE deleting from repo
-                if target_path.symlink_metadata().is_ok() {
-                    let metadata = target_path.symlink_metadata().unwrap();
-                    if metadata.is_symlink() {
-                        // It's a symlink, restore the actual file from repo
-                        if repo_file_path.exists() {
-                            // Remove the symlink first
-                            if let Err(e) = std::fs::remove_file(&target_path) {
-                                errors.push(format!(
-                                    "Failed to remove symlink for {}: {}",
-                                    relative_str, e
-                                ));
-                                continue;
-                            }
-
-                            // Copy the file from repo back to home directory
-                            let copy_result = if repo_file_path.is_dir() {
-                                crate::file_manager::copy_dir_all(&repo_file_path, &target_path)
-                            } else {
-                                std::fs::copy(&repo_file_path, &target_path)
-                                    .map(|_| ())
-                                    .context("Failed to copy file")
-                            };
-
-                            if let Err(e) = copy_result {
-                                errors.push(format!(
-                                    "Failed to restore {} from repo: {}",
-                                    relative_str, e
-                                ));
-                                continue;
-                            }
-
-                            info!("Restored {} from repo before unsyncing", relative_str);
-                        } else {
-                            // Repo file doesn't exist, just remove the orphaned symlink
-                            if let Err(e) = std::fs::remove_file(&target_path) {
-                                errors.push(format!(
-                                    "Failed to remove orphaned symlink for {}: {}",
-                                    relative_str, e
-                                ));
-                            }
-                            info!("Removed orphaned symlink for {}", relative_str);
-                        }
-                    }
-                }
-
-                // Step 2: Now remove from SymlinkManager tracking
-                // Get remaining files before deactivating (need to get from manifest)
-                let remaining_files: Vec<String> = {
-                    // Clone what we need from state before the borrow
-                    let relative_str_clone = relative_str.clone();
-                    // Get from manifest (state is still borrowed, but we can work around it)
-                    // Actually, we need to get this before the loop or restructure
-                    // For now, just get it from the manifest directly
-                    crate::utils::ProfileManifest::load_or_backfill(&repo_path)
-                        .ok()
-                        .and_then(|manifest| {
-                            manifest
-                                .profiles
-                                .iter()
-                                .find(|p| p.name == profile_name)
-                                .map(|p| {
-                                    p.synced_files
-                                        .iter()
-                                        .filter(|f| f != &&relative_str_clone)
-                                        .cloned()
-                                        .collect()
-                                })
-                        })
-                        .unwrap_or_default()
-                };
-
-                match symlink_mgr.deactivate_profile(&profile_name) {
-                    Ok(_) => {
-                        // Re-activate with remaining files
-
-                        if !remaining_files.is_empty() {
-                            let _ = symlink_mgr.activate_profile(&profile_name, &remaining_files);
-                        }
-                    }
-                    Err(e) => {
-                        info!("Note: Could not update symlink tracking: {}", e);
-                    }
-                }
-
-                // Step 3: Finally, remove from repo
-                if repo_file_path.exists() {
-                    let remove_result = if repo_file_path.is_dir() {
-                        std::fs::remove_dir_all(&repo_file_path)
-                    } else {
-                        std::fs::remove_file(&repo_file_path)
-                    };
-
-                    if let Err(e) = remove_result {
-                        errors.push(format!(
-                            "Failed to remove {} from repo: {}",
-                            relative_str, e
-                        ));
-                        continue;
-                    }
-                }
-
-                unsynced_count += 1;
-                state.dotfiles[index].synced = false;
-            }
-        }
-
-        // Step 4: Update manifest with new synced files
-        let new_synced_files: Vec<String> = state
-            .dotfiles
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| currently_selected.contains(i))
-            .map(|(_, d)| d.relative_path.to_string_lossy().to_string())
-            .collect();
-
-        // Update manifest (profile_name already cloned above)
-        // Clone what we need from state before loading manifest
-        let new_synced_files_clone = new_synced_files.clone();
-        let profile_name_clone = profile_name.clone();
-        let repo_path_clone = repo_path.clone();
-        let synced_count_clone = synced_count;
-        let unsynced_count_clone = unsynced_count;
-        let errors_clone = errors.clone();
-
-        // Release state borrow by ending its scope (using a block)
-        {
-            let _ = state;
-        }
-
-        // Now we can load manifest
-        let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path_clone)?;
-        manifest.update_synced_files(&profile_name_clone, new_synced_files_clone)?;
-        manifest.save(&repo_path_clone)?;
-
-        // Show summary
-        let summary = if errors_clone.is_empty() {
-            format!(
-                "Sync Complete!\n\n✓ Synced: {} files\n✓ Unsynced: {} files\n\nAll operations completed successfully.",
-                synced_count_clone, unsynced_count_clone
-            )
-        } else {
-            format!(
-                "Sync Completed with Errors\n\n✓ Synced: {} files\n✓ Unsynced: {} files\n\nErrors:\n{}\n\nSome operations failed. Please review the errors above.",
-                synced_count_clone,
-                unsynced_count_clone,
-                errors_clone.join("\n")
-            )
-        };
-
-        // Re-borrow state to set status message
-        self.ui_state.dotfile_selection.status_message = Some(summary);
-        Ok(())
-    }
-
     /// Load changed files from git repository
     fn load_changed_files(&mut self) {
-        let repo_path = &self.config.repo_path;
-
-        // Check if repo exists
-        if !repo_path.exists() {
-            self.ui_state.sync_with_remote.changed_files = vec![];
-            return;
-        }
-
-        // Open git repository
-        let git_mgr = match GitManager::open_or_init(repo_path) {
-            Ok(mgr) => mgr,
-            Err(_) => {
-                self.ui_state.sync_with_remote.changed_files = vec![];
-                return;
-            }
-        };
-
-        // Get changed files
-        match git_mgr.get_changed_files() {
-            Ok(files) => {
-                self.ui_state.sync_with_remote.changed_files = files;
-                // Select first item if list is not empty
-                if !self.ui_state.sync_with_remote.changed_files.is_empty() {
-                    self.ui_state.sync_with_remote.list_state.select(Some(0));
-                    self.update_diff_preview();
-                }
-            }
-            Err(_) => {
-                self.ui_state.sync_with_remote.changed_files = vec![];
-            }
+        use crate::services::GitService;
+        self.ui_state.sync_with_remote.changed_files =
+            GitService::load_changed_files(&self.config.repo_path);
+        // Select first item if list is not empty
+        if !self.ui_state.sync_with_remote.changed_files.is_empty() {
+            self.ui_state.sync_with_remote.list_state.select(Some(0));
+            self.update_diff_preview();
         }
     }
 
     /// Update the diff preview based on the selected file
     fn update_diff_preview(&mut self) {
-        // Clear existing diff content
+        use crate::services::GitService;
         self.ui_state.sync_with_remote.diff_content = None;
 
-        let selected_idx = if let Some(idx) = self.ui_state.sync_with_remote.list_state.selected() {
-            idx
-        } else {
-            return;
+        let selected_idx = match self.ui_state.sync_with_remote.list_state.selected() {
+            Some(idx) => idx,
+            None => return,
         };
 
         if selected_idx >= self.ui_state.sync_with_remote.changed_files.len() {
@@ -6228,247 +4793,30 @@ impl App {
         }
 
         let file_info = &self.ui_state.sync_with_remote.changed_files[selected_idx];
-        // Format is "X filename"
-        let parts: Vec<&str> = file_info.splitn(2, ' ').collect();
-        if parts.len() != 2 {
-            return;
-        }
-        let path_str = parts[1].trim();
-
-        // Use repo_path from config
-        let repo_path = &self.config.repo_path;
-
-        if let Ok(git_mgr) = GitManager::open_or_init(repo_path) {
-            if let Ok(Some(diff)) = git_mgr.get_diff_for_file(path_str) {
-                self.ui_state.sync_with_remote.diff_content = Some(diff);
-                self.ui_state.sync_with_remote.preview_scroll = 0;
-            }
+        if let Some(diff) = GitService::get_diff_for_file(&self.config.repo_path, file_info) {
+            self.ui_state.sync_with_remote.diff_content = Some(diff);
+            self.ui_state.sync_with_remote.preview_scroll = 0;
         }
     }
 
     /// Start pushing changes (async operation with progress updates)
     fn start_sync(&mut self) -> Result<()> {
+        use crate::services::GitService;
         info!("Starting sync operation");
-
-        // Check if repository is configured (GitHub or Local mode)
-        if !self.config.is_repo_configured() {
-            warn!("Sync attempted but repository not configured");
-            self.ui_state.sync_with_remote.sync_result = Some(
-                "Error: Repository not configured.\n\nPlease set up your repository first from the main menu.".to_string()
-            );
-            self.ui_state.sync_with_remote.show_result_popup = true;
-            return Ok(());
-        }
-
-        let repo_path = self.config.repo_path.clone();
-
-        // Check if repo exists
-        if !repo_path.exists() {
-            warn!("Sync attempted but repository not found: {:?}", repo_path);
-            self.ui_state.sync_with_remote.sync_result = Some(format!(
-                "Error: Repository not found at {:?}\n\nPlease sync some files first.",
-                repo_path
-            ));
-            self.ui_state.sync_with_remote.show_result_popup = true;
-            return Ok(());
-        }
 
         // Mark as syncing
         self.ui_state.sync_with_remote.is_syncing = true;
-        self.ui_state.sync_with_remote.sync_progress = Some("Committing changes...".to_string());
+        self.ui_state.sync_with_remote.sync_progress = Some("Syncing...".to_string());
 
-        // Don't call draw() here - let the main loop handle it
-        // The next draw cycle will show the progress
-
-        // Perform sync: commit -> pull with rebase -> push
-        let git_mgr = match GitManager::open_or_init(&repo_path) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                self.ui_state.sync_with_remote.is_syncing = false;
-                self.ui_state.sync_with_remote.sync_progress = None;
-                self.ui_state.sync_with_remote.sync_result =
-                    Some(format!("Error: Failed to open repository: {}", e));
-                self.ui_state.sync_with_remote.show_result_popup = true;
-                return Ok(());
-            }
-        };
-
-        let branch = git_mgr
-            .get_current_branch()
-            .unwrap_or_else(|| self.config.default_branch.clone());
-
-        // Get token based on repo mode
-        // In Local mode, we use system credentials (no token needed)
-        // In GitHub mode, we require a token
-        let token_string = match self.config.repo_mode {
-            crate::config::RepoMode::Local => None,
-            crate::config::RepoMode::GitHub => self.config.get_github_token(),
-        };
-        let token = token_string.as_deref();
-
-        // Only require token for GitHub mode
-        if matches!(self.config.repo_mode, crate::config::RepoMode::GitHub) && token.is_none() {
-            self.ui_state.sync_with_remote.is_syncing = false;
-            self.ui_state.sync_with_remote.sync_progress = None;
-            self.ui_state.sync_with_remote.sync_result = Some(
-                "Error: GitHub token not found.\n\n\
-                Please provide a GitHub token using one of these methods:\n\n\
-                1. Set the DOTSTATE_GITHUB_TOKEN environment variable:\n\
-                   export DOTSTATE_GITHUB_TOKEN=ghp_your_token_here\n\n\
-                2. Configure it in the TUI by going to the main menu\n\n\
-                Create a token at: https://github.com/settings/tokens\n\
-                Required scope: repo (full control of private repositories)"
-                    .to_string(),
-            );
-            self.ui_state.sync_with_remote.show_result_popup = true;
-            return Ok(());
-        }
-
-        // Step 1: Commit all changes
-        let commit_msg = git_mgr
-            .generate_commit_message()
-            .unwrap_or_else(|_| "Update dotfiles".to_string());
-        let result = match git_mgr.commit_all(&commit_msg) {
-            Ok(_) => {
-                // Step 2: Pull with rebase
-                self.ui_state.sync_with_remote.sync_progress =
-                    Some("Pulling changes from remote...".to_string());
-
-                match git_mgr.pull_with_rebase("origin", &branch, token) {
-                    Ok(pulled_count) => {
-                        self.ui_state.sync_with_remote.pulled_changes_count = Some(pulled_count);
-
-                        // Step 3: Push to remote
-                        self.ui_state.sync_with_remote.sync_progress =
-                            Some("Pushing to remote...".to_string());
-
-                        match git_mgr.push("origin", &branch, token) {
-                            Ok(_) => {
-                                let mut success_msg = format!("✓ Successfully synced with remote!\n\nBranch: {}\nRepository: {:?}", branch, repo_path);
-                                if pulled_count > 0 {
-                                    success_msg.push_str(&format!(
-                                        "\n\nPulled {} change(s) from remote.",
-                                        pulled_count
-                                    ));
-                                } else {
-                                    success_msg.push_str("\n\nNo changes pulled from remote.");
-                                }
-                                success_msg
-                            }
-                            Err(e) => {
-                                let mut error_msg =
-                                    format!("Error: Failed to push to remote: {}", e);
-                                let mut source = e.source();
-                                while let Some(err) = source {
-                                    error_msg.push_str(&format!("\n  Caused by: {}", err));
-                                    source = err.source();
-                                }
-                                error_msg
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let mut error_msg = format!("Error: Failed to pull from remote: {}", e);
-                        let mut source = e.source();
-                        while let Some(err) = source {
-                            error_msg.push_str(&format!("\n  Caused by: {}", err));
-                            source = err.source();
-                        }
-                        error_msg
-                    }
-                }
-            }
-            Err(e) => {
-                // Include the full error chain for debugging
-                let mut error_msg = format!("Error: Failed to commit changes: {}", e);
-                let mut source = e.source();
-                while let Some(err) = source {
-                    error_msg.push_str(&format!("\n  Caused by: {}", err));
-                    source = err.source();
-                }
-                error_msg
-            }
-        };
+        // Perform sync using service
+        let result = GitService::sync(&self.config);
 
         // Update state with result
         self.ui_state.sync_with_remote.is_syncing = false;
         self.ui_state.sync_with_remote.sync_progress = None;
-        self.ui_state.sync_with_remote.sync_result = Some(result);
+        self.ui_state.sync_with_remote.sync_result = Some(result.message);
+        self.ui_state.sync_with_remote.pulled_changes_count = result.pulled_count;
         self.ui_state.sync_with_remote.show_result_popup = true;
-
-        Ok(())
-    }
-
-    /// Pull changes from remote repository (deprecated - use sync instead)
-    #[allow(dead_code)]
-    fn pull_changes(&mut self) -> Result<()> {
-        // Check if repository is configured (GitHub or Local mode)
-        if !self.config.is_repo_configured() {
-            self.ui_state.dotfile_selection.status_message = Some(
-                "Error: Repository not configured.\n\nPlease set up your repository first from the main menu.".to_string()
-            );
-            return Ok(());
-        }
-
-        let repo_path = &self.config.repo_path;
-
-        // Check if repo exists
-        if !repo_path.exists() {
-            self.ui_state.dotfile_selection.status_message = Some(format!(
-                "Error: Repository not found at {:?}\n\nPlease sync some files first.",
-                repo_path
-            ));
-            return Ok(());
-        }
-
-        // Open git repository
-        let git_mgr = match GitManager::open_or_init(repo_path) {
-            Ok(mgr) => mgr,
-            Err(e) => {
-                self.ui_state.dotfile_selection.status_message =
-                    Some(format!("Error: Failed to open repository: {}", e));
-                return Ok(());
-            }
-        };
-
-        // Get current branch
-        let branch = git_mgr
-            .get_current_branch()
-            .unwrap_or_else(|| self.config.default_branch.clone());
-
-        // Get token based on repo mode (None for Local mode)
-        let token_string = match self.config.repo_mode {
-            crate::config::RepoMode::Local => None,
-            crate::config::RepoMode::GitHub => self.config.get_github_token(),
-        };
-        let token = token_string.as_deref();
-
-        // Only require token for GitHub mode
-        if matches!(self.config.repo_mode, crate::config::RepoMode::GitHub) && token.is_none() {
-            self.ui_state.dotfile_selection.status_message = Some(
-                "Error: GitHub token not found.\n\n\
-                Please provide a GitHub token using one of these methods:\n\n\
-                1. Set the DOTSTATE_GITHUB_TOKEN environment variable:\n\
-                   export DOTSTATE_GITHUB_TOKEN=ghp_your_token_here\n\n\
-                2. Configure it in the TUI by going to the main menu\n\n\
-                Create a token at: https://github.com/settings/tokens\n\
-                Required scope: repo (full control of private repositories)"
-                    .to_string(),
-            );
-            return Ok(());
-        }
-
-        match git_mgr.pull("origin", &branch, token) {
-            Ok(_) => {
-                self.ui_state.dotfile_selection.status_message = Some(
-                    format!("✓ Successfully pulled changes from remote!\n\nBranch: {}\nRepository: {:?}\n\nNote: You may need to re-sync files if the repository structure changed.", branch, repo_path)
-                );
-            }
-            Err(e) => {
-                self.ui_state.dotfile_selection.status_message =
-                    Some(format!("Error: Failed to pull from remote: {}", e));
-            }
-        }
 
         Ok(())
     }
@@ -6680,26 +5028,17 @@ impl App {
 
     /// Helper: Load manifest from repo
     fn load_manifest(&self) -> Result<crate::utils::ProfileManifest> {
-        crate::utils::ProfileManifest::load_or_backfill(&self.config.repo_path)
-    }
-
-    /// Helper: Save manifest to repo
-    fn save_manifest(&self, manifest: &crate::utils::ProfileManifest) -> Result<()> {
-        manifest.save(&self.config.repo_path)
+        crate::services::ProfileService::load_manifest(&self.config.repo_path)
     }
 
     /// Helper: Get profiles from manifest
     fn get_profiles(&self) -> Result<Vec<crate::utils::ProfileInfo>> {
-        Ok(self.load_manifest()?.profiles)
+        crate::services::ProfileService::get_profiles(&self.config.repo_path)
     }
 
     /// Helper: Get active profile info from manifest
     fn get_active_profile_info(&self) -> Result<Option<crate::utils::ProfileInfo>> {
-        let manifest = self.load_manifest()?;
-        Ok(manifest
-            .profiles
-            .into_iter()
-            .find(|p| p.name == self.config.active_profile))
+        crate::services::ProfileService::get_profile_info(&self.config.repo_path, &self.config.active_profile)
     }
 
     /// Create a new profile
@@ -6709,99 +5048,14 @@ impl App {
         description: Option<String>,
         copy_from: Option<usize>,
     ) -> Result<()> {
-        use crate::utils::{sanitize_profile_name, validate_profile_name};
-
-        // Validate and sanitize profile name
-        let sanitized_name = sanitize_profile_name(name);
-        if sanitized_name.is_empty() {
-            return Err(anyhow::anyhow!("Profile name cannot be empty"));
-        }
-
-        // Get existing profile names from manifest
-        let mut manifest = self.load_manifest()?;
-        let existing_names: Vec<String> =
-            manifest.profiles.iter().map(|p| p.name.clone()).collect();
-        if let Err(e) = validate_profile_name(&sanitized_name, &existing_names) {
-            return Err(anyhow::anyhow!("Invalid profile name: {}", e));
-        }
-
-        // Check if profile folder exists but is not in manifest
-        let profile_path = self.config.repo_path.join(&sanitized_name);
-        let folder_exists = profile_path.exists();
-        let profile_in_manifest = existing_names.contains(&sanitized_name);
-
-        if folder_exists && !profile_in_manifest {
-            // Folder exists but profile not in manifest - this is a warning case
-            // We'll handle this by asking user (but for now, we'll allow override)
-            // In the future, this could be a confirmation dialog
-            warn!("Profile folder '{}' already exists but is not in manifest. Will use existing folder.", sanitized_name);
-        } else if folder_exists && profile_in_manifest {
-            // Both exist - this is a duplicate name error
-            return Err(anyhow::anyhow!(
-                "Profile '{}' already exists in manifest",
-                sanitized_name
-            ));
-        }
-
-        // Create folder if it doesn't exist
-        if !folder_exists {
-            std::fs::create_dir_all(&profile_path).context("Failed to create profile directory")?;
-        }
-
-        // Copy files from source profile if specified
-        let synced_files = if let Some(source_idx) = copy_from {
-            if let Some(source_profile) = manifest.profiles.get(source_idx) {
-                let source_profile_path = self.config.repo_path.join(&source_profile.name);
-
-                // Copy all files from source profile
-                for file in &source_profile.synced_files {
-                    let source_file = source_profile_path.join(file);
-                    let dest_file = profile_path.join(file);
-
-                    if source_file.exists() {
-                        // Create parent directories
-                        if let Some(parent) = dest_file.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-
-                        // Copy file or directory
-                        if source_file.is_dir() {
-                            crate::file_manager::copy_dir_all(&source_file, &dest_file)?;
-                        } else {
-                            std::fs::copy(&source_file, &dest_file)?;
-                        }
-                    }
-                }
-
-                source_profile.synced_files.clone()
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        // Add profile to manifest with synced_files
-        manifest.add_profile(sanitized_name.clone(), description);
-        // Update synced_files for the newly added profile
-        manifest.update_synced_files(&sanitized_name, synced_files)?;
-        self.save_manifest(&manifest)?;
-
-        info!("Created profile: {}", sanitized_name);
+        use crate::services::ProfileService;
+        ProfileService::create_profile(&self.config.repo_path, name, description, copy_from)?;
         Ok(())
     }
 
     /// Switch to a different profile
     fn switch_profile(&mut self, target_profile_name: &str) -> Result<()> {
-        use crate::utils::SymlinkManager;
-
-        // Get target profile from manifest
-        let manifest = self.load_manifest()?;
-        let target_profile = manifest
-            .profiles
-            .iter()
-            .find(|p| p.name == target_profile_name)
-            .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", target_profile_name))?;
+        use crate::services::ProfileService;
 
         // Don't switch if already active
         if self.config.active_profile == target_profile_name {
@@ -6809,42 +5063,29 @@ impl App {
         }
 
         let old_profile_name = self.config.active_profile.clone();
-        let repo_path = self.config.repo_path.clone();
 
-        // Use SymlinkManager to switch profiles
-        let mut symlink_mgr =
-            SymlinkManager::new_with_backup(repo_path.clone(), self.config.backup_enabled)?;
-
-        let switch_result = symlink_mgr.switch_profile(
+        // Use service to switch profiles
+        let switch_result = ProfileService::switch_profile(
+            &self.config.repo_path,
             &old_profile_name,
             target_profile_name,
-            &target_profile.synced_files,
+            self.config.backup_enabled,
         )?;
 
         // Update active profile in config
         self.config.active_profile = target_profile_name.to_string();
         self.config.save(&self.config_path)?;
 
-        info!(
-            "Switched from '{}' to '{}'",
-            old_profile_name, target_profile_name
-        );
-        info!(
-            "Removed {} symlinks, created {} symlinks",
-            switch_result.removed.len(),
-            switch_result.created.len()
-        );
-
-        // Phase 6: Check packages after profile switch
-        if !target_profile.packages.is_empty() {
+        // Check packages after profile switch if the new profile has packages
+        if !switch_result.packages.is_empty() {
             info!(
                 "Profile '{}' has {} packages, checking installation status",
                 target_profile_name,
-                target_profile.packages.len()
+                switch_result.packages.len()
             );
             // Initialize package checking state
             let state = &mut self.ui_state.package_manager;
-            state.packages = target_profile.packages.clone();
+            state.packages = switch_result.packages;
             state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
             state.is_checking = true;
             state.checking_index = None;
@@ -6857,113 +5098,38 @@ impl App {
 
     /// Rename a profile
     fn rename_profile(&mut self, old_name: &str, new_name: &str) -> Result<()> {
-        use crate::utils::{sanitize_profile_name, validate_profile_name};
+        use crate::services::ProfileService;
 
-        // Validate new name
-        let sanitized_name = sanitize_profile_name(new_name);
-        if sanitized_name.is_empty() {
-            return Err(anyhow::anyhow!("Profile name cannot be empty"));
-        }
-
-        // Get existing profile names from manifest
-        let mut manifest = self.load_manifest()?;
-        let existing_names: Vec<String> = manifest
-            .profiles
-            .iter()
-            .filter(|p| p.name != old_name)
-            .map(|p| p.name.clone())
-            .collect();
-        if let Err(e) = validate_profile_name(&sanitized_name, &existing_names) {
-            return Err(anyhow::anyhow!("Invalid profile name: {}", e));
-        }
-
-        // Check if profile exists in manifest
-        if !manifest.has_profile(old_name) {
-            return Err(anyhow::anyhow!("Profile '{}' not found", old_name));
-        }
-
-        // Clone values we need before borrowing
-        let repo_path = self.config.repo_path.clone();
         let was_active = self.config.active_profile == old_name;
+        let is_activated = self.config.profile_activated && was_active;
 
-        // Rename profile folder in repo
-        let old_path = repo_path.join(old_name);
-        let new_path = repo_path.join(&sanitized_name);
-
-        if old_path.exists() {
-            std::fs::rename(&old_path, &new_path).context("Failed to rename profile directory")?;
-        }
+        // Use service to rename profile
+        let sanitized_name = ProfileService::rename_profile(
+            &self.config.repo_path,
+            old_name,
+            new_name,
+            is_activated,
+            self.config.backup_enabled,
+        )?;
 
         // Update active profile name if this was the active profile
         if was_active {
-            self.config.active_profile = sanitized_name.clone();
+            self.config.active_profile = sanitized_name;
             self.config.save(&self.config_path)?;
         }
 
-        // Update profile manifest
-        manifest.rename_profile(old_name, &sanitized_name)?;
-        self.save_manifest(&manifest)?;
-
-        // Update symlinks if profile is active (has symlinks)
-        if self.config.profile_activated && was_active {
-            use crate::utils::SymlinkManager;
-            let mut symlink_mgr =
-                SymlinkManager::new_with_backup(repo_path.clone(), self.config.backup_enabled)?;
-
-            match symlink_mgr.rename_profile(old_name, &sanitized_name) {
-                Ok(ops) => {
-                    let success_count = ops
-                        .iter()
-                        .filter(|op| {
-                            op.status == crate::utils::symlink_manager::OperationStatus::Success
-                        })
-                        .count();
-                    info!("Updated {} symlinks for renamed profile", success_count);
-                }
-                Err(e) => {
-                    error!("Failed to update symlinks after rename: {}", e);
-                    // Don't fail the rename, but log the error
-                }
-            }
-        }
-
-        info!(
-            "Renamed profile from '{}' to '{}'",
-            old_name, sanitized_name
-        );
         Ok(())
     }
 
     /// Delete a profile
     fn delete_profile(&mut self, profile_name: &str) -> Result<()> {
-        // Cannot delete active profile
-        if self.config.active_profile == profile_name {
-            return Err(anyhow::anyhow!(
-                "Cannot delete active profile '{}'. Please switch to another profile first.",
-                profile_name
-            ));
-        }
-
-        // Remove profile folder from repo
-        let profile_path = self.config.repo_path.join(profile_name);
-        if profile_path.exists() {
-            std::fs::remove_dir_all(&profile_path).context("Failed to remove profile directory")?;
-        }
-
-        // Remove from manifest
-        let mut manifest = self.load_manifest()?;
-        if !manifest.remove_profile(profile_name) {
-            return Err(anyhow::anyhow!("Profile '{}' not found", profile_name));
-        }
-        self.save_manifest(&manifest)?;
-
-        info!("Deleted profile: {}", profile_name);
-        Ok(())
+        use crate::services::ProfileService;
+        ProfileService::delete_profile(&self.config.repo_path, profile_name, &self.config.active_profile)
     }
 
     /// Activate a profile after GitHub setup (includes syncing files from repo)
     fn activate_profile_after_setup(&mut self, profile_name: &str) -> Result<()> {
-        use crate::utils::SymlinkManager;
+        use crate::services::ProfileService;
 
         info!("Activating profile '{}' after setup", profile_name);
 
@@ -6971,82 +5137,43 @@ impl App {
         self.config.active_profile = profile_name.to_string();
         self.config.save(&self.config_path)?;
 
-        // Get profile to activate from manifest
-        let profile = self
-            .get_profiles()?
-            .into_iter()
-            .find(|p| p.name == profile_name)
-            .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
-
-        // Get files to sync from the profile
-        let files_to_sync = profile.synced_files.clone();
-
-        if files_to_sync.is_empty() {
-            info!("Profile '{}' has no files to sync", profile_name);
-            // Still mark as activated even if no files
-            self.config.profile_activated = true;
-            self.config.save(&self.config_path)?;
-            return Ok(());
-        }
-
-        // Create SymlinkManager with backup enabled (from config)
-        let mut symlink_mgr = SymlinkManager::new_with_backup(
-            self.config.repo_path.clone(),
+        // Use service to activate profile
+        let activation_result = ProfileService::activate_profile(
+            &self.config.repo_path,
+            profile_name,
             self.config.backup_enabled,
         )?;
 
-        // Activate profile (this will create symlinks and sync files)
-        match symlink_mgr.activate_profile(profile_name, &files_to_sync) {
-            Ok(operations) => {
-                let success_count = operations
-                    .iter()
-                    .filter(|op| {
-                        matches!(
-                            op.status,
-                            crate::utils::symlink_manager::OperationStatus::Success
-                        )
-                    })
-                    .count();
-                info!(
-                    "Activated profile '{}' with {} files",
-                    profile_name, success_count
-                );
+        // Mark as activated
+        self.config.profile_activated = true;
+        self.config.save(&self.config_path)?;
 
-                // Mark as activated
-                self.config.profile_activated = true;
-                self.config.save(&self.config_path)?;
-
-                // Phase 6: Check packages after activation
-                if !profile.packages.is_empty() {
-                    info!(
-                        "Profile '{}' has {} packages, checking installation status",
-                        profile_name,
-                        profile.packages.len()
-                    );
-                    // Initialize package checking state
-                    let state = &mut self.ui_state.package_manager;
-                    state.packages = profile.packages.clone();
-                    state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
-                    state.is_checking = true;
-                    state.checking_index = None;
-                    state.checking_delay_until =
-                        Some(std::time::Instant::now() + Duration::from_millis(100));
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to activate profile '{}': {}", profile_name, e);
-                Err(anyhow::anyhow!("Failed to activate profile: {}", e))
-            }
+        // Check packages after activation if the profile has packages
+        if !activation_result.packages.is_empty() {
+            info!(
+                "Profile '{}' has {} packages, checking installation status",
+                profile_name,
+                activation_result.packages.len()
+            );
+            // Initialize package checking state
+            let state = &mut self.ui_state.package_manager;
+            state.packages = activation_result.packages;
+            state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+            state.is_checking = true;
+            state.checking_index = None;
+            state.checking_delay_until =
+                Some(std::time::Instant::now() + Duration::from_millis(100));
         }
+
+        Ok(())
     }
 
     /// Start adding a new package
     fn start_add_package(&mut self) -> Result<()> {
+        use crate::services::PackageService;
+
         info!("Starting add package dialog");
         let state = &mut self.ui_state.package_manager;
-        use crate::utils::package_manager::PackageManagerImpl;
 
         state.popup_type = PackagePopupType::Add;
         state.add_editing_index = None;
@@ -7067,18 +5194,14 @@ impl App {
         state.add_focused_field = AddPackageField::Name;
         state.add_is_custom = false;
 
-        // Initialize available managers
-        state.available_managers = PackageManagerImpl::get_available_managers();
+        // Initialize available managers using service
+        state.available_managers = PackageService::get_available_managers();
         info!("Available package managers: {:?}", state.available_managers);
         if !state.available_managers.is_empty() {
             state.add_manager = Some(state.available_managers[0].clone());
             state.add_manager_selected = 0;
             state.manager_list_state.select(Some(0));
             state.add_is_custom = matches!(state.available_managers[0], PackageManager::Custom);
-            debug!(
-                "Default manager selected: {:?}",
-                state.available_managers[0]
-            );
         } else {
             warn!("No package managers available");
         }
@@ -7088,15 +5211,13 @@ impl App {
 
     /// Start editing an existing package
     fn start_edit_package(&mut self, index: usize) -> Result<()> {
+        use crate::services::PackageService;
+
         info!("Starting edit package dialog for index: {}", index);
         let state = &mut self.ui_state.package_manager;
-        use crate::utils::package_manager::PackageManagerImpl;
 
         if let Some(package) = state.packages.get(index) {
-            debug!(
-                "Editing package: {} (manager: {:?})",
-                package.name, package.manager
-            );
+            debug!("Editing package: {} (manager: {:?})", package.name, package.manager);
             state.popup_type = PackagePopupType::Edit;
             state.add_editing_index = Some(index);
             state.add_name_input = package.name.clone();
@@ -7117,14 +5238,10 @@ impl App {
             state.add_is_custom = matches!(package.manager, PackageManager::Custom);
             state.add_focused_field = AddPackageField::Name;
 
-            // Initialize available managers
-            state.available_managers = PackageManagerImpl::get_available_managers();
+            // Initialize available managers using service
+            state.available_managers = PackageService::get_available_managers();
             // Find current manager in list
-            if let Some(pos) = state
-                .available_managers
-                .iter()
-                .position(|m| *m == package.manager)
-            {
+            if let Some(pos) = state.available_managers.iter().position(|m| *m == package.manager) {
                 state.add_manager_selected = pos;
                 state.manager_list_state.select(Some(pos));
             } else {
@@ -7665,20 +5782,10 @@ impl App {
 
     /// Validate and save package
     fn validate_and_save_package(&mut self) -> Result<bool> {
-        // Clone data from state before calling methods that need immutable access
-        let (
-            name,
-            description,
-            package_name,
-            binary_name,
-            install_command,
-            existence_check,
-            manager_check,
-            manager,
-            is_custom,
-            edit_idx,
-            active_profile_name,
-        ) = {
+        use crate::services::PackageService;
+
+        // Clone data from state before calling service methods
+        let (name, description, package_name, binary_name, install_command, existence_check, manager_check, manager, is_custom, edit_idx) = {
             let state = &self.ui_state.package_manager;
             (
                 state.add_name_input.clone(),
@@ -7691,210 +5798,77 @@ impl App {
                 state.add_manager.clone(),
                 state.add_is_custom,
                 state.add_editing_index,
-                self.config.active_profile.clone(),
             )
         };
 
-        if let Some(idx) = edit_idx {
-            info!(
-                "Validating and saving edited package: {} (index: {})",
-                name, idx
-            );
-        } else {
-            info!(
-                "Validating and saving new package: {} (manager: {:?}, custom: {})",
-                name, manager, is_custom
-            );
+        // Validate using service
+        let validation = PackageService::validate_package(
+            &name,
+            &binary_name,
+            is_custom,
+            &package_name,
+            &install_command,
+            manager.as_ref(),
+        );
+
+        if !validation.is_valid {
+            warn!("Package validation failed: {:?}", validation.error_message);
+            return Ok(false);
         }
 
-        // Validate required fields
-        if name.trim().is_empty() {
-            warn!("Package validation failed: name is empty");
-            return Ok(false); // Name is required
-        }
-
-        if binary_name.trim().is_empty() {
-            warn!("Package validation failed: binary_name is empty");
-            return Ok(false); // Binary name is required
-        }
-
-        // Validate based on package type
-        if is_custom {
-            // Custom packages require install_command
-            // existence_check is optional - if empty, we use binary name check
-            if install_command.trim().is_empty() {
-                warn!("Package validation failed: install_command is empty for custom package");
-                return Ok(false);
-            }
-        } else {
-            // Managed packages require package_name
-            if package_name.trim().is_empty() {
-                warn!("Package validation failed: package_name is empty for managed package");
-                return Ok(false);
-            }
-        }
-
-        // Get manager
+        // Create package using service
         let manager = manager.ok_or_else(|| anyhow::anyhow!("Package manager not selected"))?;
+        let package = PackageService::create_package(
+            &name,
+            &description,
+            manager,
+            is_custom,
+            &package_name,
+            &binary_name,
+            &install_command,
+            &existence_check,
+            &manager_check,
+        );
 
-        // Create package
-        let package = Package {
-            name: name.trim().to_string(),
-            description: if description.trim().is_empty() {
-                None
-            } else {
-                Some(description.trim().to_string())
-            },
-            manager: manager.clone(),
-            package_name: if is_custom {
-                None
-            } else {
-                Some(package_name.trim().to_string())
-            },
-            binary_name: binary_name.trim().to_string(),
-            install_command: if is_custom {
-                Some(install_command.trim().to_string())
-            } else {
-                None
-            },
-            existence_check: if is_custom {
-                let trimmed = existence_check.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(trimmed.to_string())
-                }
-            } else {
-                None
-            },
-            manager_check: if manager_check.trim().is_empty() {
-                None
-            } else {
-                Some(manager_check.trim().to_string())
-            },
+        // Save to manifest using service
+        let packages = if let Some(edit_idx) = edit_idx {
+            PackageService::update_package(&self.config.repo_path, &self.config.active_profile, edit_idx, package)?
+        } else {
+            PackageService::add_package(&self.config.repo_path, &self.config.active_profile, package)?
         };
 
-        // Save to manifest
-        let manifest = self.load_manifest()?;
-
-        if let Some(profile) = manifest
-            .profiles
-            .iter()
-            .find(|p| p.name == active_profile_name)
-        {
-            let mut packages = profile.packages.clone();
-
-            if let Some(edit_idx) = edit_idx {
-                // Edit existing package
-                if edit_idx < packages.len() {
-                    let old_name = packages[edit_idx].name.clone();
-                    info!(
-                        "Updating package: {} -> {} (profile: {})",
-                        old_name, package.name, active_profile_name
-                    );
-                    packages[edit_idx] = package;
-                } else {
-                    warn!(
-                        "Edit index {} out of bounds ({} packages)",
-                        edit_idx,
-                        packages.len()
-                    );
-                }
+        // Update state
+        let state = &mut self.ui_state.package_manager;
+        state.packages = packages;
+        state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+        if !state.packages.is_empty() {
+            let select_idx = if let Some(edit_idx) = edit_idx {
+                edit_idx.min(state.packages.len().saturating_sub(1))
             } else {
-                // Add new package
-                info!(
-                    "Adding new package: {} (profile: {})",
-                    package.name, active_profile_name
-                );
-                packages.push(package);
-            }
-
-            // Update manifest
-            let mut updated_manifest = manifest;
-            if let Some(profile) = updated_manifest
-                .profiles
-                .iter_mut()
-                .find(|p| p.name == active_profile_name)
-            {
-                profile.packages = packages;
-            }
-            self.save_manifest(&updated_manifest)?;
-
-            // Update state
-            if let Ok(Some(active_profile)) = self.get_active_profile_info() {
-                let state = &mut self.ui_state.package_manager;
-                state.packages = active_profile.packages.clone();
-                state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
-                if !state.packages.is_empty() {
-                    // Select the newly added/edited package
-                    let select_idx = if let Some(edit_idx) = edit_idx {
-                        edit_idx.min(state.packages.len().saturating_sub(1))
-                    } else {
-                        state.packages.len().saturating_sub(1)
-                    };
-                    state.list_state.select(Some(select_idx));
-                }
-            }
-
-            Ok(true)
-        } else {
-            Err(anyhow::anyhow!(
-                "Active profile '{}' not found",
-                active_profile_name
-            ))
+                state.packages.len().saturating_sub(1)
+            };
+            state.list_state.select(Some(select_idx));
         }
+
+        Ok(true)
     }
 
     /// Delete a package
     fn delete_package(&mut self, index: usize) -> Result<()> {
-        let active_profile_name = self.config.active_profile.clone();
-        let manifest = self.load_manifest()?;
+        use crate::services::PackageService;
 
-        if let Some(profile) = manifest
-            .profiles
-            .iter()
-            .find(|p| p.name == *active_profile_name)
-        {
-            let mut packages = profile.packages.clone();
+        // Delete using service
+        let packages = PackageService::delete_package(&self.config.repo_path, &self.config.active_profile, index)?;
 
-            if index < packages.len() {
-                let package_name = packages[index].name.clone();
-                info!(
-                    "Deleting package: {} (index: {}, profile: {})",
-                    package_name, index, active_profile_name
-                );
-                packages.remove(index);
-            } else {
-                warn!(
-                    "Delete package: Index {} out of bounds ({} packages)",
-                    index,
-                    packages.len()
-                );
-            }
-
-            // Update manifest
-            let mut updated_manifest = manifest;
-            if let Some(profile) = updated_manifest
-                .profiles
-                .iter_mut()
-                .find(|p| p.name == *active_profile_name)
-            {
-                profile.packages = packages;
-            }
-            self.save_manifest(&updated_manifest)?;
-
-            // Update state
-            if let Ok(Some(active_profile)) = self.get_active_profile_info() {
-                let state = &mut self.ui_state.package_manager;
-                state.packages = active_profile.packages.clone();
-                state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
-                if !state.packages.is_empty() {
-                    let new_idx = index.min(state.packages.len().saturating_sub(1));
-                    state.list_state.select(Some(new_idx));
-                } else {
-                    state.list_state.select(None);
-                }
-            }
+        // Update state
+        let state = &mut self.ui_state.package_manager;
+        state.packages = packages;
+        state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+        if !state.packages.is_empty() {
+            let new_idx = index.min(state.packages.len().saturating_sub(1));
+            state.list_state.select(Some(new_idx));
+        } else {
+            state.list_state.select(None);
         }
 
         Ok(())
