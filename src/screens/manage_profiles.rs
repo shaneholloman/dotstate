@@ -32,6 +32,13 @@ impl ManageProfilesScreen {
         }
     }
 
+    /// Refresh the cached profiles from disk
+    pub fn refresh_profiles(&mut self, repo_path: &std::path::Path) -> Result<()> {
+        let profiles = crate::services::ProfileService::get_profiles(repo_path)?;
+        self.state.profiles = profiles;
+        Ok(())
+    }
+
     fn get_action(&self, key: KeyCode, modifiers: KeyModifiers, keymap: &Keymap) -> Option<Action> {
         keymap.get_action(key, modifiers)
     }
@@ -130,11 +137,8 @@ impl Screen for ManageProfilesScreen {
         // Maybe not.
         // Best approach: Add `profiles` to `ProfileManagerState` and update it on entry/refresh.
 
-        let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)
-            .unwrap_or_default();
-
         self.component
-            .render_with_config(frame, area, ctx.config, &profiles, &mut self.state)
+            .render_with_config(frame, area, ctx.config, &mut self.state)
     }
 
     fn handle_event(&mut self, event: Event, ctx: &ScreenContext) -> Result<ScreenAction> {
@@ -237,11 +241,8 @@ impl Screen for ManageProfilesScreen {
                                 Some(Action::MoveDown) => {
                                     if self.state.create_focused_field == CreateField::CopyFrom {
                                         // We need profile count to limit.
-                                        let profiles =
-                                            crate::services::ProfileService::get_profiles(
-                                                &ctx.config.repo_path,
-                                            )
-                                            .unwrap_or_default();
+                                        // We need profile count to limit.
+                                        let profiles = &self.state.profiles;
                                         let total = profiles.len() + 1; // +1 for "Blank"
                                         let current =
                                             self.state.create_copy_from.map(|i| i + 1).unwrap_or(0);
@@ -360,10 +361,7 @@ impl Screen for ManageProfilesScreen {
                                     Action::Confirm => {
                                         if !self.state.rename_input.is_empty() {
                                             if let Some(idx) = self.state.list_state.selected() {
-                                                let profiles =
-                                                    crate::services::ProfileService::get_profiles(
-                                                        &ctx.config.repo_path,
-                                                    )?;
+                                                let profiles = &self.state.profiles;
                                                 if let Some(profile) = profiles.get(idx) {
                                                     let old_name = profile.name.clone();
                                                     let new_name = self.state.rename_input.clone();
@@ -437,10 +435,7 @@ impl Screen for ManageProfilesScreen {
                                     }
                                     Action::Confirm => {
                                         if let Some(idx) = self.state.list_state.selected() {
-                                            let profiles =
-                                                crate::services::ProfileService::get_profiles(
-                                                    &ctx.config.repo_path,
-                                                )?;
+                                            let profiles = &self.state.profiles;
                                             if let Some(profile) = profiles.get(idx) {
                                                 if self.state.delete_confirm_input == profile.name {
                                                     let name = profile.name.clone();
@@ -513,10 +508,7 @@ impl Screen for ManageProfilesScreen {
                                     }
                                     Action::Confirm => {
                                         if let Some(idx) = self.state.list_state.selected() {
-                                            let profiles =
-                                                crate::services::ProfileService::get_profiles(
-                                                    &ctx.config.repo_path,
-                                                )?;
+                                            let profiles = &self.state.profiles;
                                             if let Some(profile) = profiles.get(idx) {
                                                 let name = profile.name.clone();
                                                 self.state.popup_type = ProfilePopupType::None;
@@ -551,9 +543,7 @@ impl Screen for ManageProfilesScreen {
                             return Ok(ScreenAction::Refresh);
                         }
                         Action::MoveDown => {
-                            let profiles = crate::services::ProfileService::get_profiles(
-                                &ctx.config.repo_path,
-                            )?;
+                            let profiles = &self.state.profiles;
                             let selected = self.state.list_state.selected().unwrap_or(0);
                             let new_selected =
                                 if !profiles.is_empty() && selected < profiles.len() - 1 {
@@ -575,9 +565,7 @@ impl Screen for ManageProfilesScreen {
                         Action::Edit => {
                             // Rename
                             if let Some(idx) = self.state.list_state.selected() {
-                                let profiles = crate::services::ProfileService::get_profiles(
-                                    &ctx.config.repo_path,
-                                )?;
+                                let profiles = &self.state.profiles;
                                 if let Some(profile) = profiles.get(idx) {
                                     self.state.popup_type = ProfilePopupType::Rename;
                                     self.state.rename_input = profile.name.clone();
@@ -589,9 +577,7 @@ impl Screen for ManageProfilesScreen {
                         }
                         Action::Delete => {
                             if let Some(idx) = self.state.list_state.selected() {
-                                let profiles = crate::services::ProfileService::get_profiles(
-                                    &ctx.config.repo_path,
-                                )?;
+                                let profiles = &self.state.profiles;
                                 if profiles.get(idx).is_some() {
                                     self.state.popup_type = ProfilePopupType::Delete;
                                     self.state.delete_confirm_input.clear();

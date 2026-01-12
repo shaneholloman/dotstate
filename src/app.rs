@@ -341,6 +341,16 @@ impl App {
                 // We just left ManagePackages - clear installation state to prevent it from showing elsewhere
                 self.manage_packages_screen.reset_state();
             }
+
+            // Handle ManageProfiles screen transitions - refresh cached profiles
+            if current_screen == Screen::ManageProfiles {
+                if let Err(e) = self
+                    .manage_profiles_screen
+                    .refresh_profiles(&self.config.repo_path)
+                {
+                    error!("Failed to refresh profiles: {}", e);
+                }
+            }
             self.last_screen = Some(current_screen);
         }
 
@@ -1101,6 +1111,13 @@ impl App {
                     Ok(_) => {
                         // Reload config - but create_profile doesn't affect config.toml
                         self.config = crate::config::Config::load_or_create(&self.config_path)?;
+                        // Refresh profiles in screen
+                        if let Err(e) = self
+                            .manage_profiles_screen
+                            .refresh_profiles(&self.config.repo_path)
+                        {
+                            error!("Failed to refresh profiles after creation: {}", e);
+                        }
                     }
                     Err(e) => {
                         error!("Failed to create profile: {}", e);
@@ -1130,6 +1147,14 @@ impl App {
                         format!("Failed to rename profile '{}':\n{}", old_name, e),
                         Screen::ManageProfiles,
                     ));
+                } else {
+                    // Refresh profiles in screen
+                    if let Err(e) = self
+                        .manage_profiles_screen
+                        .refresh_profiles(&self.config.repo_path)
+                    {
+                        error!("Failed to refresh profiles after rename: {}", e);
+                    }
                 }
             }
             ScreenAction::DeleteProfile { name } => {
@@ -1144,6 +1169,13 @@ impl App {
                         match crate::config::Config::load_or_create(&self.config_path) {
                             Ok(config) => self.config = config,
                             Err(e) => error!("Failed to reload config: {}", e),
+                        }
+                        // Refresh profiles in screen
+                        if let Err(e) = self
+                            .manage_profiles_screen
+                            .refresh_profiles(&self.config.repo_path)
+                        {
+                            error!("Failed to refresh profiles after deletion: {}", e);
                         }
                     }
                     Err(e) => {

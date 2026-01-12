@@ -320,8 +320,7 @@ impl DotfileSelectionScreen {
                                 let (is_safe, reason) =
                                     crate::utils::is_safe_to_add(&current_folder, repo_path);
                                 if !is_safe {
-                                    self.state.status_message =
-                                        Some(format!(
+                                    self.state.status_message = Some(format!(
                                             "Error: {}. Path: {}",
                                             reason.unwrap_or_else(
                                                 || "Cannot add this folder".to_string()

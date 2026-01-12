@@ -55,6 +55,8 @@ pub struct ProfileManagerState {
     // Clickable areas for form fields (for mouse support)
     pub create_name_area: Option<Rect>,
     pub create_description_area: Option<Rect>,
+    // Cached profiles to reduce disk I/O
+    pub profiles: Vec<crate::utils::ProfileInfo>,
 }
 
 impl Default for ProfileManagerState {
@@ -75,6 +77,7 @@ impl Default for ProfileManagerState {
             delete_confirm_cursor: 0,
             create_name_area: None,
             create_description_area: None,
+            profiles: Vec::new(),
         }
     }
 }
@@ -143,7 +146,6 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &mut ProfileManagerState,
     ) -> Result<()> {
         // Clear the entire area first
@@ -174,13 +176,13 @@ impl ProfileManagerComponent {
 
         // Check if popup is active
         if state.popup_type != ProfilePopupType::None {
-            self.render_popup(frame, area, config, profiles, &mut *state)?;
+            self.render_popup(frame, area, config, &mut *state)?;
         } else {
             // Left: Profiles list
-            self.render_profiles_list(frame, left_chunk, config, profiles, state)?;
+            self.render_profiles_list(frame, left_chunk, config, state)?;
 
             // Right: Profile details
-            self.render_profile_details(frame, right_chunk, config, profiles, state)?;
+            self.render_profile_details(frame, right_chunk, config, state)?;
         }
 
         // Footer
@@ -240,13 +242,13 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &mut ProfileManagerState,
     ) -> Result<()> {
         let t = theme();
         let active_profile = &config.active_profile;
 
-        let items: Vec<ListItem> = profiles
+        let items: Vec<ListItem> = state
+            .profiles
             .iter()
             .map(|profile| {
                 let is_active = profile.name == *active_profile;
@@ -284,7 +286,7 @@ impl ProfileManagerComponent {
         // Store clickable areas for mouse support
         // Each list item is clickable
         state.clickable_areas.clear();
-        for (idx, _) in profiles.iter().enumerate() {
+        for (idx, _) in state.profiles.iter().enumerate() {
             // Calculate the rect for each item (approximate, since List widget handles rendering)
             // We'll use the full width and estimate height per item
             let item_height = 1; // Each list item is typically 1 row
@@ -315,7 +317,6 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &ProfileManagerState,
     ) -> Result<()> {
         let active_profile = &config.active_profile;
@@ -324,9 +325,9 @@ impl ProfileManagerComponent {
         let profile = state
             .list_state
             .selected()
-            .and_then(|idx| profiles.get(idx))
-            .or_else(|| profiles.iter().find(|p| p.name == *active_profile))
-            .or_else(|| profiles.first());
+            .and_then(|idx| state.profiles.get(idx))
+            .or_else(|| state.profiles.iter().find(|p| p.name == *active_profile))
+            .or_else(|| state.profiles.first());
 
         let t = theme();
         if let Some(profile) = profile {
@@ -445,22 +446,13 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &mut ProfileManagerState,
     ) -> Result<()> {
         match state.popup_type {
-            ProfilePopupType::Create => {
-                self.render_create_popup(frame, area, config, profiles, state)
-            }
-            ProfilePopupType::Switch => {
-                self.render_switch_popup(frame, area, config, profiles, state)
-            }
-            ProfilePopupType::Rename => {
-                self.render_rename_popup(frame, area, config, profiles, state)
-            }
-            ProfilePopupType::Delete => {
-                self.render_delete_popup(frame, area, config, profiles, state)
-            }
+            ProfilePopupType::Create => self.render_create_popup(frame, area, config, state),
+            ProfilePopupType::Switch => self.render_switch_popup(frame, area, config, state),
+            ProfilePopupType::Rename => self.render_rename_popup(frame, area, config, state),
+            ProfilePopupType::Delete => self.render_delete_popup(frame, area, config, state),
             ProfilePopupType::None => Ok(()),
         }
     }
@@ -471,7 +463,6 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         _config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &mut ProfileManagerState,
     ) -> Result<()> {
         let popup_area = center_popup(area, 60, 50);
@@ -533,7 +524,7 @@ impl ProfileManagerComponent {
             unfocused_border_style()
         };
 
-        if profiles.is_empty() {
+        if state.profiles.is_empty() {
             let copy_para = Paragraph::new("No profiles available to copy from")
                 .block(
                     Block::default()
@@ -565,7 +556,7 @@ impl ProfileManagerComponent {
             );
 
             // Add profiles (offset by 1 because "Start Blank" is at index 0)
-            for (idx, profile) in profiles.iter().enumerate() {
+            for (idx, profile) in state.profiles.iter().enumerate() {
                 let is_selected = state.create_copy_from == Some(idx);
                 let prefix = if is_selected { "✓ " } else { "  " };
                 let style = if is_selected {
@@ -607,7 +598,7 @@ impl ProfileManagerComponent {
 
             // Calculate if we need a scrollbar (if items exceed visible area)
             let visible_height = chunks[3].height.saturating_sub(2); // Subtract borders
-            let total_items = (profiles.len() + 1) as u16; // +1 for "Start Blank"
+            let total_items = (state.profiles.len() + 1) as u16; // +1 for "Start Blank"
             let needs_scrollbar = total_items > visible_height;
 
             // Render the list
@@ -638,15 +629,17 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &ProfileManagerState,
     ) -> Result<()> {
         let popup_area = center_popup(area, 70, 40);
         frame.render_widget(Clear, popup_area);
 
         let selected_idx = state.list_state.selected();
-        let current_profile = profiles.iter().find(|p| p.name == config.active_profile);
-        let target_profile = selected_idx.and_then(|idx| profiles.get(idx));
+        let current_profile = state
+            .profiles
+            .iter()
+            .find(|p| p.name == config.active_profile);
+        let target_profile = selected_idx.and_then(|idx| state.profiles.get(idx));
 
         let content = if let (Some(current), Some(target)) = (current_profile, target_profile) {
             format!(
@@ -682,7 +675,6 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         _config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &ProfileManagerState,
     ) -> Result<()> {
         let t = theme();
@@ -701,7 +693,7 @@ impl ProfileManagerComponent {
         // Title (no border, just text)
         let selected_idx = state.list_state.selected();
         let profile_name = selected_idx
-            .and_then(|idx| profiles.get(idx))
+            .and_then(|idx| state.profiles.get(idx))
             .map(|p| p.name.as_str())
             .unwrap_or("Profile");
 
@@ -732,14 +724,13 @@ impl ProfileManagerComponent {
         frame: &mut Frame,
         area: Rect,
         config: &Config,
-        profiles: &[crate::utils::ProfileInfo],
         state: &ProfileManagerState,
     ) -> Result<()> {
         let popup_area = center_popup(area, 70, 40);
         frame.render_widget(Clear, popup_area);
 
         let selected_idx = state.list_state.selected();
-        let profile = selected_idx.and_then(|idx| profiles.get(idx));
+        let profile = selected_idx.and_then(|idx| state.profiles.get(idx));
         let active_profile = &config.active_profile;
         let is_active = profile.map(|p| p.name == *active_profile).unwrap_or(false);
 
