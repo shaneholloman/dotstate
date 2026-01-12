@@ -420,7 +420,6 @@ pub struct UiState {
     pub current_screen: Screen,
     pub selected_index: usize,
     pub github_auth: GitHubAuthState,
-    pub sync_with_remote: SyncWithRemoteState,
     pub has_changes_to_push: bool, // Whether there are uncommitted or unpushed changes
     /// State for profile selection after GitHub setup
     pub profile_selection: ProfileSelectionState,
@@ -443,7 +442,6 @@ impl UiState {
             current_screen: Screen::MainMenu,
             selected_index: 0,
             github_auth: GitHubAuthState::default(),
-            sync_with_remote: SyncWithRemoteState::default(),
             has_changes_to_push: false,
             profile_selection: ProfileSelectionState::default(),
             input_mode_active: false,

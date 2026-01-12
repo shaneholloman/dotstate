@@ -360,7 +360,7 @@ impl App {
                 .set_has_changes_to_push(self.ui_state.has_changes_to_push);
             // Update changed files for status display
             self.main_menu_screen
-                .update_changed_files(self.ui_state.sync_with_remote.changed_files.clone());
+                .update_changed_files(self.sync_with_remote_screen.get_state().changed_files.clone());
         }
 
         // Update GitHub auth component state
@@ -390,8 +390,6 @@ impl App {
                 use crate::screens::ScreenContext;
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 self.sync_with_remote_screen.load_changed_files(&ctx);
-                // Sync state back
-                self.ui_state.sync_with_remote = self.sync_with_remote_screen.get_state().clone();
             }
         }
 
@@ -435,19 +433,17 @@ impl App {
                     let _ = self.view_synced_files_screen.render_frame(frame, area);
                 }
                 Screen::SyncWithRemote => {
-                    // Sync state with screen (transitional - will be removed when state moves to screen)
-                    *self.sync_with_remote_screen.get_state_mut() =
-                        self.ui_state.sync_with_remote.clone();
-
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
-                    if let Err(e) = self.sync_with_remote_screen.render_with_context(
-                        frame,
-                        area,
+                    let ctx = RenderContext::new(
                         &config_clone,
                         &self.syntax_set,
+                        &self.theme_set,
                         syntax_theme,
-                    ) {
-                        eprintln!("Error rendering sync with remote: {}", e);
+                    );
+                    if let Err(e) = self.sync_with_remote_screen.render(frame, area, &ctx) {
+                        error!("Failed to render sync with remote screen: {}", e);
                     }
                 }
                 Screen::ManageProfiles => {
@@ -713,13 +709,10 @@ impl App {
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 let action = self.sync_with_remote_screen.handle_event(event, &ctx)?;
 
-                // Sync state from screen back to ui_state
-                self.ui_state.sync_with_remote = self.sync_with_remote_screen.get_state().clone();
-
                 // Handle navigation actions that require app-level logic
                 if let crate::screens::ScreenAction::Navigate(Screen::MainMenu) = &action {
-                    // Reset sync state and check for changes after sync
-                    self.ui_state.sync_with_remote = crate::ui::SyncWithRemoteState::default();
+                    // Reset screen state and check for changes after sync
+                    self.sync_with_remote_screen.reset_state();
                     self.check_changes_to_push();
                 }
 
@@ -764,7 +757,8 @@ impl App {
         use crate::services::GitService;
         let result = GitService::check_changes_to_push(&self.config);
         self.ui_state.has_changes_to_push = result.has_changes;
-        self.ui_state.sync_with_remote.changed_files = result.changed_files;
+        // Store changed files in the screen's state
+        self.sync_with_remote_screen.get_state_mut().changed_files = result.changed_files;
     }
 
     /// Handle navigation-specific logic when navigating from MainMenu
@@ -808,8 +802,8 @@ impl App {
                 }
             }
             Screen::SyncWithRemote => {
-                // Reset sync state
-                self.ui_state.sync_with_remote = crate::ui::SyncWithRemoteState::default();
+                // Reset sync screen state
+                self.sync_with_remote_screen.reset_state();
             }
 
             Screen::ManagePackages => {

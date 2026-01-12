@@ -1,28 +1,31 @@
 //! Sync with remote screen controller.
 //!
 //! This screen handles syncing changes with the remote repository (push/pull).
-//! Note: Event handling is still partially in app.rs.
 
-use crate::components::PushChangesComponent;
-use crate::config::Config;
+use crate::components::file_preview::FilePreview;
+use crate::components::footer::Footer;
+use crate::components::header::Header;
+use crate::components::message_box::MessageBox;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
+use crate::styles::{theme as ui_theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::{Screen as ScreenId, SyncWithRemoteState};
+use crate::utils::{center_popup, create_split_layout, create_standard_layout, focused_border_style};
 use anyhow::Result;
 use crossterm::event::Event;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
+use ratatui::prelude::*;
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+    StatefulWidget, Wrap,
+};
 use ratatui::Frame;
-use syntect::highlighting::Theme;
-use syntect::parsing::SyntaxSet;
 
 /// Sync with remote screen controller.
 ///
-/// # Migration Status
-///
-/// Event handling is still in app.rs (lines ~942-1000).
-/// The screen is mostly presentation - the sync logic is in GitService.
+/// This screen handles reviewing and syncing changes with the remote repository.
+/// It owns its state and handles both rendering and event handling.
 pub struct SyncWithRemoteScreen {
-    component: PushChangesComponent,
-    /// State is owned here but synced with ui_state during transition
+    /// Screen state
     pub state: SyncWithRemoteState,
 }
 
@@ -30,22 +33,8 @@ impl SyncWithRemoteScreen {
     /// Create a new sync with remote screen.
     pub fn new() -> Self {
         Self {
-            component: PushChangesComponent::new(),
             state: SyncWithRemoteState::default(),
         }
-    }
-
-    /// Render with all required context.
-    pub fn render_with_context(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        config: &Config,
-        syntax_set: &SyntaxSet,
-        theme: &Theme,
-    ) -> Result<()> {
-        self.component
-            .render_with_state(frame, area, &mut self.state, config, syntax_set, theme)
     }
 
     /// Get a reference to the state.
@@ -118,6 +107,163 @@ impl SyncWithRemoteScreen {
 
         Ok(())
     }
+
+    /// Render the result popup
+    fn render_result_popup(&self, frame: &mut Frame, area: Rect) -> Result<()> {
+        let popup_area = center_popup(area, 80, 50);
+        frame.render_widget(Clear, popup_area);
+
+        let result_text = self
+            .state
+            .sync_result
+            .as_deref()
+            .unwrap_or("Unknown result")
+            .to_string();
+
+        let is_error = result_text.to_lowercase().contains("error")
+            || result_text.to_lowercase().contains("failed");
+
+        let t = ui_theme();
+        MessageBox::render(
+            frame,
+            popup_area,
+            &result_text,
+            None,
+            if is_error {
+                Some(t.error)
+            } else {
+                Some(t.success)
+            },
+        )?;
+
+        Ok(())
+    }
+
+    /// Render the syncing progress indicator
+    fn render_progress(&self, frame: &mut Frame, content_chunk: Rect) {
+        let t = ui_theme();
+        let progress_text = self.state.sync_progress.as_deref().unwrap_or("Processing...");
+        let progress_para = Paragraph::new(progress_text)
+            .style(Style::default().fg(t.warning))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Progress")
+                    .title_alignment(Alignment::Center)
+                    .border_style(focused_border_style())
+                    .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
+            );
+        frame.render_widget(progress_para, content_chunk);
+    }
+
+    /// Render the changed files list and diff preview
+    fn render_changes_list(&mut self, frame: &mut Frame, content_chunk: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = ui_theme();
+
+        if self.state.changed_files.is_empty() {
+            let empty_message = Paragraph::new(
+                "No changes to sync.\n\nAll files are up to date with the remote repository.",
+            )
+            .style(t.muted_style())
+            .wrap(Wrap { trim: true })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("No Changes")
+                    .title_alignment(Alignment::Center)
+                    .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
+            );
+            frame.render_widget(empty_message, content_chunk);
+            return Ok(());
+        }
+
+        // Split content into List (Left) and Preview (Right)
+        let chunks = create_split_layout(content_chunk, &[50, 50]);
+        let list_area = chunks[0];
+        let preview_area = chunks[1];
+
+        // Update scrollbar state
+        let total_items = self.state.changed_files.len();
+        let selected_index = self.state.list_state.selected().unwrap_or(0);
+        self.state.scrollbar_state = self.state
+            .scrollbar_state
+            .content_length(total_items)
+            .position(selected_index);
+
+        let items: Vec<ListItem> = self.state
+            .changed_files
+            .iter()
+            .map(|file| {
+                let style = if file.starts_with("A ") {
+                    Style::default().fg(t.success) // Added
+                } else if file.starts_with("M ") {
+                    Style::default().fg(t.warning) // Modified
+                } else if file.starts_with("D ") {
+                    Style::default().fg(t.error) // Deleted
+                } else {
+                    t.text_style()
+                };
+                ListItem::new(file.as_str()).style(style)
+            })
+            .collect();
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(focused_border_style())
+                    .title(format!("Changed Files ({})", self.state.changed_files.len()))
+                    .title_alignment(Alignment::Center)
+                    .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)),
+            )
+            .highlight_style(t.highlight_style())
+            .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
+
+        StatefulWidget::render(list, list_area, frame.buffer_mut(), &mut self.state.list_state);
+
+        // Render scrollbar
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            list_area,
+            &mut self.state.scrollbar_state,
+        );
+
+        // Render Preview
+        if let Some(selected_idx) = self.state.list_state.selected() {
+            if selected_idx < self.state.changed_files.len() {
+                let file_info = &self.state.changed_files[selected_idx];
+                // format is "X filename"
+                let parts: Vec<&str> = file_info.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    let path_str = parts[1].trim();
+                    let path = std::path::PathBuf::from(path_str);
+                    let preview_title = format!("Diff: {}", path_str);
+
+                    FilePreview::render(
+                        frame,
+                        preview_area,
+                        &path,
+                        self.state.preview_scroll,
+                        false, // Not focused for now
+                        Some(&preview_title),
+                        self.state.diff_content.as_deref(),
+                        ctx.syntax_set,
+                        ctx.syntax_theme,
+                    )?;
+                }
+            }
+        } else {
+            let empty_preview = Paragraph::new("Select a file to view changes")
+                .block(Block::default().borders(Borders::ALL).title("Preview"));
+            frame.render_widget(empty_preview, preview_area);
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for SyncWithRemoteScreen {
@@ -127,8 +273,56 @@ impl Default for SyncWithRemoteScreen {
 }
 
 impl Screen for SyncWithRemoteScreen {
-    fn render(&mut self, _frame: &mut Frame, _area: Rect, _ctx: &RenderContext) -> Result<()> {
-        // Note: Use render_with_context instead as this screen needs syntax highlighting
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        // Clear the entire area first
+        frame.render_widget(Clear, area);
+
+        // Background - use Reset to inherit terminal's native background
+        let background = Block::default().style(Style::default().bg(Color::Reset));
+        frame.render_widget(background, area);
+
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+
+        // Header
+        let description = if self.state.is_syncing {
+            "Syncing with remote repository..."
+        } else {
+            "Review changes before syncing with remote"
+        };
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "DotState - Sync with Remote",
+            description,
+        )?;
+
+        // Render content based on state
+        if self.state.show_result_popup {
+            self.render_result_popup(frame, area)?;
+        } else if self.state.is_syncing {
+            self.render_progress(frame, content_chunk);
+        } else {
+            self.render_changes_list(frame, content_chunk, ctx)?;
+        }
+
+        // Footer
+        let k = |a| ctx.config.keymap.get_key_display_for_action(a);
+        let footer_text = if self.state.show_result_popup {
+            "Press any key or click to close".to_string()
+        } else if self.state.is_syncing {
+            "Syncing with remote...".to_string()
+        } else if self.state.changed_files.is_empty() {
+            format!("{}: Back to Main Menu", k(crate::keymap::Action::Cancel))
+        } else {
+            format!(
+                "{}: Sync with Remote | {}: Navigate | {}: Back",
+                k(crate::keymap::Action::Confirm),
+                ctx.config.keymap.navigation_display(),
+                k(crate::keymap::Action::Cancel)
+            )
+        };
+        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
+
         Ok(())
     }
 
