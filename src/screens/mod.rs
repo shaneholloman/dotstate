@@ -51,6 +51,7 @@
 pub mod dotfile_selection;
 pub mod github_auth;
 pub mod main_menu;
+pub mod manage_packages;
 pub mod manage_profiles;
 pub mod profile_selection;
 pub mod screen_trait;
@@ -60,6 +61,7 @@ pub mod view_synced_files;
 pub use dotfile_selection::DotfileSelectionScreen;
 pub use github_auth::GitHubAuthScreen;
 pub use main_menu::MainMenuScreen;
+pub use manage_packages::ManagePackagesScreen;
 pub use manage_profiles::ManageProfilesScreen;
 pub use profile_selection::ProfileSelectionScreen;
 pub use screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};

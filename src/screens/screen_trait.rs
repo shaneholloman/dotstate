@@ -194,6 +194,9 @@ pub enum ScreenAction {
         /// Name of the profile to delete.
         name: String,
     },
+    // Package management actions
+    /// Trigger installation of all missing packages.
+    InstallMissingPackages,
 }
 
 impl Default for ScreenAction {
