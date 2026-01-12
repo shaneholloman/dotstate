@@ -36,6 +36,10 @@ impl ManageProfilesScreen {
     pub fn refresh_profiles(&mut self, repo_path: &std::path::Path) -> Result<()> {
         let profiles = crate::services::ProfileService::get_profiles(repo_path)?;
         self.state.profiles = profiles;
+        // Initialize list selection to first item if profiles exist
+        if !self.state.profiles.is_empty() {
+            self.state.list_state.select(Some(0));
+        }
         Ok(())
     }
 
