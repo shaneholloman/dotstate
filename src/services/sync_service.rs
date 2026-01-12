@@ -116,9 +116,12 @@ impl SyncService {
             full_path.to_path_buf()
         };
 
-        let symlink_validation =
-            sync_validation::validate_symlink_creation(&original_source, &repo_file_path, &target_path)
-                .context("Failed to validate symlink creation")?;
+        let symlink_validation = sync_validation::validate_symlink_creation(
+            &original_source,
+            &repo_file_path,
+            &target_path,
+        )
+        .context("Failed to validate symlink creation")?;
         if !symlink_validation.is_safe {
             let error_msg = symlink_validation
                 .error_message
@@ -168,7 +171,10 @@ impl SyncService {
         info!("Creating symlink...");
         let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.clone(), backup_enabled)?;
         symlink_mgr
-            .activate_profile(profile_name, std::slice::from_ref(&relative_path.to_string()))
+            .activate_profile(
+                profile_name,
+                std::slice::from_ref(&relative_path.to_string()),
+            )
             .context("Failed to create symlink")?;
         info!("Successfully created symlink");
 
@@ -337,8 +343,8 @@ impl SyncService {
         let mut found = file_manager.scan_dotfiles(&dotfile_names);
 
         // Mark files that are already synced
-        let synced_set = Self::get_synced_files(&config.repo_path, &config.active_profile)
-            .unwrap_or_default();
+        let synced_set =
+            Self::get_synced_files(&config.repo_path, &config.active_profile).unwrap_or_default();
 
         for dotfile in &mut found {
             let rel = dotfile.relative_path.to_string_lossy().to_string();

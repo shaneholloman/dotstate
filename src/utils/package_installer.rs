@@ -22,29 +22,42 @@ use crate::ui::InstallationStatus;
 impl PackageInstaller {
     /// Synchronous install that streams status to a sender
     pub fn install(package: &Package, tx: mpsc::Sender<InstallationStatus>) {
-         match Self::start_install(package) {
-             Ok(handle) => {
-                 let InstallationHandle { mut child, output_rx } = handle;
-                 // Stream output
-                 for line in output_rx {
-                      let _ = tx.send(InstallationStatus::Output(line));
-                 }
-                 // Wait for process to finish
-                 match child.wait() {
-                     Ok(status) => {
-                         let success = status.success();
-                         let error = if success { None } else { Some("Installation failed".to_string()) };
-                         let _ = tx.send(InstallationStatus::Complete { success, error });
-                     }
-                     Err(e) => {
-                         let _ = tx.send(InstallationStatus::Complete { success: false, error: Some(e.to_string()) });
-                     }
-                 }
-             }
-             Err(e) => {
-                 let _ = tx.send(InstallationStatus::Complete { success: false, error: Some(e.to_string()) });
-             }
-         }
+        match Self::start_install(package) {
+            Ok(handle) => {
+                let InstallationHandle {
+                    mut child,
+                    output_rx,
+                } = handle;
+                // Stream output
+                for line in output_rx {
+                    let _ = tx.send(InstallationStatus::Output(line));
+                }
+                // Wait for process to finish
+                match child.wait() {
+                    Ok(status) => {
+                        let success = status.success();
+                        let error = if success {
+                            None
+                        } else {
+                            Some("Installation failed".to_string())
+                        };
+                        let _ = tx.send(InstallationStatus::Complete { success, error });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(InstallationStatus::Complete {
+                            success: false,
+                            error: Some(e.to_string()),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(InstallationStatus::Complete {
+                    success: false,
+                    error: Some(e.to_string()),
+                });
+            }
+        }
     }
 
     /// Start installation process (non-blocking)

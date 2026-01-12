@@ -44,14 +44,8 @@ impl SyncWithRemoteScreen {
         syntax_set: &SyntaxSet,
         theme: &Theme,
     ) -> Result<()> {
-        self.component.render_with_state(
-            frame,
-            area,
-            &mut self.state,
-            config,
-            syntax_set,
-            theme,
-        )
+        self.component
+            .render_with_state(frame, area, &mut self.state, config, syntax_set, theme)
     }
 
     /// Get a reference to the state.
@@ -113,7 +107,7 @@ impl SyncWithRemoteScreen {
         self.state.sync_progress = Some("Syncing...".to_string());
 
         // Perform sync using service
-        let result = GitService::sync(&ctx.config);
+        let result = GitService::sync(ctx.config);
 
         // Update state with result
         self.state.is_syncing = false;

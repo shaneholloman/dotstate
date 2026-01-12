@@ -18,6 +18,12 @@ pub struct ManageProfilesScreen {
     pub state: ProfileManagerState,
 }
 
+impl Default for ManageProfilesScreen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ManageProfilesScreen {
     pub fn new() -> Self {
         Self {
@@ -42,7 +48,10 @@ impl ManageProfilesScreen {
 
                 // Handle clicks in list
                 for (area, idx) in &self.state.clickable_areas {
-                    if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
+                    if x >= area.x
+                        && x < area.x + area.width
+                        && y >= area.y
+                        && y < area.y + area.height
                     {
                         self.state.list_state.select(Some(*idx));
                         return ScreenAction::Refresh;
@@ -124,19 +133,14 @@ impl Screen for ManageProfilesScreen {
         let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)
             .unwrap_or_default();
 
-        self.component.render_with_config(
-            frame,
-            area,
-            ctx.config,
-            &profiles,
-            &mut self.state,
-        )
+        self.component
+            .render_with_config(frame, area, ctx.config, &profiles, &mut self.state)
     }
 
     fn handle_event(&mut self, event: Event, ctx: &ScreenContext) -> Result<ScreenAction> {
         // Handle popup events first
         if self.state.popup_type != ProfilePopupType::None {
-             match event {
+            match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let action = self.get_action(key.code, key.modifiers, &ctx.config.keymap);
 
@@ -150,24 +154,27 @@ impl Screen for ManageProfilesScreen {
                                         return Ok(ScreenAction::Refresh);
                                     }
                                     Action::NextTab => {
-                                        self.state.create_focused_field = match self.state.create_focused_field {
-                                            CreateField::Name => CreateField::Description,
-                                            CreateField::Description => CreateField::CopyFrom,
-                                            CreateField::CopyFrom => CreateField::Name,
-                                        };
+                                        self.state.create_focused_field =
+                                            match self.state.create_focused_field {
+                                                CreateField::Name => CreateField::Description,
+                                                CreateField::Description => CreateField::CopyFrom,
+                                                CreateField::CopyFrom => CreateField::Name,
+                                            };
                                         return Ok(ScreenAction::Refresh);
                                     }
                                     Action::PrevTab => {
-                                        self.state.create_focused_field = match self.state.create_focused_field {
-                                            CreateField::Name => CreateField::CopyFrom,
-                                            CreateField::Description => CreateField::Name,
-                                            CreateField::CopyFrom => CreateField::Description,
-                                        };
+                                        self.state.create_focused_field =
+                                            match self.state.create_focused_field {
+                                                CreateField::Name => CreateField::CopyFrom,
+                                                CreateField::Description => CreateField::Name,
+                                                CreateField::CopyFrom => CreateField::Description,
+                                            };
                                         return Ok(ScreenAction::Refresh);
                                     }
                                     Action::Confirm => {
                                         // Logic for CopyFrom selection vs Creation
-                                        if self.state.create_focused_field == CreateField::CopyFrom {
+                                        if self.state.create_focused_field == CreateField::CopyFrom
+                                        {
 
                                             // This logic depends on us knowing how many profiles there are to wrap/clamp.
                                             // We probably need to fetch profiles here too to do accurate selection logic?
@@ -182,11 +189,14 @@ impl Screen for ManageProfilesScreen {
 
                                         if !self.state.create_name_input.is_empty() {
                                             let name = self.state.create_name_input.clone();
-                                            let description = if self.state.create_description_input.is_empty() {
-                                                None
-                                            } else {
-                                                Some(self.state.create_description_input.clone())
-                                            };
+                                            let description =
+                                                if self.state.create_description_input.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(
+                                                        self.state.create_description_input.clone(),
+                                                    )
+                                                };
                                             let copy_from = self.state.create_copy_from;
 
                                             // Reset state
@@ -211,10 +221,15 @@ impl Screen for ManageProfilesScreen {
                             match action {
                                 Some(Action::MoveUp) => {
                                     if self.state.create_focused_field == CreateField::CopyFrom {
-                                        let current = self.state.create_copy_from.map(|i| i + 1).unwrap_or(0);
+                                        let current =
+                                            self.state.create_copy_from.map(|i| i + 1).unwrap_or(0);
                                         if current > 0 {
                                             let new_val = current - 1;
-                                            self.state.create_copy_from = if new_val == 0 { None } else { Some(new_val - 1) };
+                                            self.state.create_copy_from = if new_val == 0 {
+                                                None
+                                            } else {
+                                                Some(new_val - 1)
+                                            };
                                             return Ok(ScreenAction::Refresh);
                                         }
                                     }
@@ -222,9 +237,14 @@ impl Screen for ManageProfilesScreen {
                                 Some(Action::MoveDown) => {
                                     if self.state.create_focused_field == CreateField::CopyFrom {
                                         // We need profile count to limit.
-                                        let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path).unwrap_or_default();
+                                        let profiles =
+                                            crate::services::ProfileService::get_profiles(
+                                                &ctx.config.repo_path,
+                                            )
+                                            .unwrap_or_default();
                                         let total = profiles.len() + 1; // +1 for "Blank"
-                                        let current = self.state.create_copy_from.map(|i| i + 1).unwrap_or(0);
+                                        let current =
+                                            self.state.create_copy_from.map(|i| i + 1).unwrap_or(0);
                                         if current < total - 1 {
                                             let new_val = current + 1;
                                             self.state.create_copy_from = Some(new_val - 1);
@@ -245,16 +265,54 @@ impl Screen for ManageProfilesScreen {
                                         };
 
                                         if key_code != KeyCode::Null {
-                                             match self.state.create_focused_field {
+                                            match self.state.create_focused_field {
                                                 CreateField::Name => {
-                                                    if act == Action::Backspace { handle_backspace(&mut self.state.create_name_input, &mut self.state.create_name_cursor); }
-                                                    else if act == Action::DeleteChar { handle_delete(&mut self.state.create_name_input, &mut self.state.create_name_cursor); }
-                                                    else { handle_cursor_movement(&self.state.create_name_input, &mut self.state.create_name_cursor, key_code); }
+                                                    if act == Action::Backspace {
+                                                        handle_backspace(
+                                                            &mut self.state.create_name_input,
+                                                            &mut self.state.create_name_cursor,
+                                                        );
+                                                    } else if act == Action::DeleteChar {
+                                                        handle_delete(
+                                                            &mut self.state.create_name_input,
+                                                            &mut self.state.create_name_cursor,
+                                                        );
+                                                    } else {
+                                                        handle_cursor_movement(
+                                                            &self.state.create_name_input,
+                                                            &mut self.state.create_name_cursor,
+                                                            key_code,
+                                                        );
+                                                    }
                                                 }
                                                 CreateField::Description => {
-                                                    if act == Action::Backspace { handle_backspace(&mut self.state.create_description_input, &mut self.state.create_description_cursor); }
-                                                    else if act == Action::DeleteChar { handle_delete(&mut self.state.create_description_input, &mut self.state.create_description_cursor); }
-                                                    else { handle_cursor_movement(&self.state.create_description_input, &mut self.state.create_description_cursor, key_code); }
+                                                    if act == Action::Backspace {
+                                                        handle_backspace(
+                                                            &mut self
+                                                                .state
+                                                                .create_description_input,
+                                                            &mut self
+                                                                .state
+                                                                .create_description_cursor,
+                                                        );
+                                                    } else if act == Action::DeleteChar {
+                                                        handle_delete(
+                                                            &mut self
+                                                                .state
+                                                                .create_description_input,
+                                                            &mut self
+                                                                .state
+                                                                .create_description_cursor,
+                                                        );
+                                                    } else {
+                                                        handle_cursor_movement(
+                                                            &self.state.create_description_input,
+                                                            &mut self
+                                                                .state
+                                                                .create_description_cursor,
+                                                            key_code,
+                                                        );
+                                                    }
                                                 }
                                                 _ => {}
                                             }
@@ -264,18 +322,30 @@ impl Screen for ManageProfilesScreen {
 
                                     // Char input
                                     if let KeyCode::Char(c) = key.code {
-                                         if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+                                        if !key.modifiers.intersects(
+                                            KeyModifiers::CONTROL
+                                                | KeyModifiers::ALT
+                                                | KeyModifiers::SUPER,
+                                        ) {
                                             match self.state.create_focused_field {
                                                 CreateField::Name => {
-                                                    handle_char_insertion(&mut self.state.create_name_input, &mut self.state.create_name_cursor, c);
+                                                    handle_char_insertion(
+                                                        &mut self.state.create_name_input,
+                                                        &mut self.state.create_name_cursor,
+                                                        c,
+                                                    );
                                                 }
                                                 CreateField::Description => {
-                                                     handle_char_insertion(&mut self.state.create_description_input, &mut self.state.create_description_cursor, c);
+                                                    handle_char_insertion(
+                                                        &mut self.state.create_description_input,
+                                                        &mut self.state.create_description_cursor,
+                                                        c,
+                                                    );
                                                 }
                                                 _ => {}
                                             }
                                             return Ok(ScreenAction::Refresh);
-                                         }
+                                        }
                                     }
                                 }
                             }
@@ -290,35 +360,54 @@ impl Screen for ManageProfilesScreen {
                                     Action::Confirm => {
                                         if !self.state.rename_input.is_empty() {
                                             if let Some(idx) = self.state.list_state.selected() {
-                                                let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)?;
+                                                let profiles =
+                                                    crate::services::ProfileService::get_profiles(
+                                                        &ctx.config.repo_path,
+                                                    )?;
                                                 if let Some(profile) = profiles.get(idx) {
-                                                     let old_name = profile.name.clone();
-                                                     let new_name = self.state.rename_input.clone();
-                                                     self.state.popup_type = ProfilePopupType::None;
-                                                     self.state.rename_input.clear();
-                                                     return Ok(ScreenAction::RenameProfile { old_name, new_name });
+                                                    let old_name = profile.name.clone();
+                                                    let new_name = self.state.rename_input.clone();
+                                                    self.state.popup_type = ProfilePopupType::None;
+                                                    self.state.rename_input.clear();
+                                                    return Ok(ScreenAction::RenameProfile {
+                                                        old_name,
+                                                        new_name,
+                                                    });
                                                 }
                                             }
                                         }
                                         return Ok(ScreenAction::None);
                                     }
                                     Action::Backspace => {
-                                        handle_backspace(&mut self.state.rename_input, &mut self.state.rename_cursor);
+                                        handle_backspace(
+                                            &mut self.state.rename_input,
+                                            &mut self.state.rename_cursor,
+                                        );
                                         return Ok(ScreenAction::Refresh);
                                     }
                                     Action::DeleteChar => {
-                                        handle_delete(&mut self.state.rename_input, &mut self.state.rename_cursor);
+                                        handle_delete(
+                                            &mut self.state.rename_input,
+                                            &mut self.state.rename_cursor,
+                                        );
                                         return Ok(ScreenAction::Refresh);
                                     }
-                                    Action::MoveLeft | Action::MoveRight | Action::Home | Action::End => {
-                                         let key_code = match action {
+                                    Action::MoveLeft
+                                    | Action::MoveRight
+                                    | Action::Home
+                                    | Action::End => {
+                                        let key_code = match action {
                                             Action::MoveLeft => KeyCode::Left,
                                             Action::MoveRight => KeyCode::Right,
                                             Action::Home => KeyCode::Home,
                                             Action::End => KeyCode::End,
                                             _ => KeyCode::Null,
                                         };
-                                        handle_cursor_movement(&self.state.rename_input, &mut self.state.rename_cursor, key_code);
+                                        handle_cursor_movement(
+                                            &self.state.rename_input,
+                                            &mut self.state.rename_cursor,
+                                            key_code,
+                                        );
                                         return Ok(ScreenAction::Refresh);
                                     }
                                     _ => {}
@@ -327,14 +416,20 @@ impl Screen for ManageProfilesScreen {
 
                             // Char input
                             if let KeyCode::Char(c) = key.code {
-                                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
-                                    handle_char_insertion(&mut self.state.rename_input, &mut self.state.rename_cursor, c);
+                                if !key.modifiers.intersects(
+                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                                ) {
+                                    handle_char_insertion(
+                                        &mut self.state.rename_input,
+                                        &mut self.state.rename_cursor,
+                                        c,
+                                    );
                                     return Ok(ScreenAction::Refresh);
                                 }
                             }
                         }
                         ProfilePopupType::Delete => {
-                              if let Some(action) = action {
+                            if let Some(action) = action {
                                 match action {
                                     Action::Cancel => {
                                         self.state.popup_type = ProfilePopupType::None;
@@ -342,14 +437,19 @@ impl Screen for ManageProfilesScreen {
                                     }
                                     Action::Confirm => {
                                         if let Some(idx) = self.state.list_state.selected() {
-                                            let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)?;
+                                            let profiles =
+                                                crate::services::ProfileService::get_profiles(
+                                                    &ctx.config.repo_path,
+                                                )?;
                                             if let Some(profile) = profiles.get(idx) {
-                                                 if self.state.delete_confirm_input == profile.name {
-                                                     let name = profile.name.clone();
-                                                     self.state.popup_type = ProfilePopupType::None;
-                                                     self.state.delete_confirm_input.clear();
-                                                     return Ok(ScreenAction::DeleteProfile { name });
-                                                 }
+                                                if self.state.delete_confirm_input == profile.name {
+                                                    let name = profile.name.clone();
+                                                    self.state.popup_type = ProfilePopupType::None;
+                                                    self.state.delete_confirm_input.clear();
+                                                    return Ok(ScreenAction::DeleteProfile {
+                                                        name,
+                                                    });
+                                                }
                                             }
                                         }
                                         // If input doesn't match or whatever, maybe shake or just do nothing?
@@ -357,36 +457,55 @@ impl Screen for ManageProfilesScreen {
                                         return Ok(ScreenAction::None);
                                     }
                                     Action::Backspace => {
-                                        handle_backspace(&mut self.state.delete_confirm_input, &mut self.state.delete_confirm_cursor);
+                                        handle_backspace(
+                                            &mut self.state.delete_confirm_input,
+                                            &mut self.state.delete_confirm_cursor,
+                                        );
                                         return Ok(ScreenAction::Refresh);
                                     }
-                                     Action::DeleteChar => {
-                                        handle_delete(&mut self.state.delete_confirm_input, &mut self.state.delete_confirm_cursor);
+                                    Action::DeleteChar => {
+                                        handle_delete(
+                                            &mut self.state.delete_confirm_input,
+                                            &mut self.state.delete_confirm_cursor,
+                                        );
                                         return Ok(ScreenAction::Refresh);
                                     }
-                                    Action::MoveLeft | Action::MoveRight | Action::Home | Action::End => {
-                                         let key_code = match action {
+                                    Action::MoveLeft
+                                    | Action::MoveRight
+                                    | Action::Home
+                                    | Action::End => {
+                                        let key_code = match action {
                                             Action::MoveLeft => KeyCode::Left,
                                             Action::MoveRight => KeyCode::Right,
                                             Action::Home => KeyCode::Home,
                                             Action::End => KeyCode::End,
                                             _ => KeyCode::Null,
                                         };
-                                         handle_cursor_movement(&self.state.delete_confirm_input, &mut self.state.delete_confirm_cursor, key_code);
-                                         return Ok(ScreenAction::Refresh);
+                                        handle_cursor_movement(
+                                            &self.state.delete_confirm_input,
+                                            &mut self.state.delete_confirm_cursor,
+                                            key_code,
+                                        );
+                                        return Ok(ScreenAction::Refresh);
                                     }
                                     _ => {}
                                 }
                             }
-                             if let KeyCode::Char(c) = key.code {
-                                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
-                                    handle_char_insertion(&mut self.state.delete_confirm_input, &mut self.state.delete_confirm_cursor, c);
+                            if let KeyCode::Char(c) = key.code {
+                                if !key.modifiers.intersects(
+                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                                ) {
+                                    handle_char_insertion(
+                                        &mut self.state.delete_confirm_input,
+                                        &mut self.state.delete_confirm_cursor,
+                                        c,
+                                    );
                                     return Ok(ScreenAction::Refresh);
                                 }
                             }
                         }
                         ProfilePopupType::Switch => {
-                             if let Some(action) = action {
+                            if let Some(action) = action {
                                 match action {
                                     Action::Cancel => {
                                         self.state.popup_type = ProfilePopupType::None;
@@ -394,18 +513,21 @@ impl Screen for ManageProfilesScreen {
                                     }
                                     Action::Confirm => {
                                         if let Some(idx) = self.state.list_state.selected() {
-                                             let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)?;
-                                             if let Some(profile) = profiles.get(idx) {
+                                            let profiles =
+                                                crate::services::ProfileService::get_profiles(
+                                                    &ctx.config.repo_path,
+                                                )?;
+                                            if let Some(profile) = profiles.get(idx) {
                                                 let name = profile.name.clone();
                                                 self.state.popup_type = ProfilePopupType::None;
                                                 return Ok(ScreenAction::SwitchProfile { name });
-                                             }
+                                            }
                                         }
                                         return Ok(ScreenAction::None);
                                     }
                                     _ => {}
                                 }
-                             }
+                            }
                         }
                         ProfilePopupType::None => {} // Should not be reachable inside this match
                     }
@@ -429,13 +551,16 @@ impl Screen for ManageProfilesScreen {
                             return Ok(ScreenAction::Refresh);
                         }
                         Action::MoveDown => {
-                            let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)?;
+                            let profiles = crate::services::ProfileService::get_profiles(
+                                &ctx.config.repo_path,
+                            )?;
                             let selected = self.state.list_state.selected().unwrap_or(0);
-                            let new_selected = if !profiles.is_empty() && selected < profiles.len() - 1 {
-                                selected + 1
-                            } else {
-                                selected
-                            };
+                            let new_selected =
+                                if !profiles.is_empty() && selected < profiles.len() - 1 {
+                                    selected + 1
+                                } else {
+                                    selected
+                                };
                             self.state.list_state.select(Some(new_selected));
                             return Ok(ScreenAction::Refresh);
                         }
@@ -449,25 +574,30 @@ impl Screen for ManageProfilesScreen {
                         }
                         Action::Edit => {
                             // Rename
-                             if let Some(idx) = self.state.list_state.selected() {
-                                let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)?;
+                            if let Some(idx) = self.state.list_state.selected() {
+                                let profiles = crate::services::ProfileService::get_profiles(
+                                    &ctx.config.repo_path,
+                                )?;
                                 if let Some(profile) = profiles.get(idx) {
                                     self.state.popup_type = ProfilePopupType::Rename;
                                     self.state.rename_input = profile.name.clone();
-                                    self.state.rename_cursor = self.state.rename_input.chars().count();
+                                    self.state.rename_cursor =
+                                        self.state.rename_input.chars().count();
                                     return Ok(ScreenAction::Refresh);
                                 }
-                             }
+                            }
                         }
                         Action::Delete => {
-                             if let Some(idx) = self.state.list_state.selected() {
-                                let profiles = crate::services::ProfileService::get_profiles(&ctx.config.repo_path)?;
-                                if let Some(_) = profiles.get(idx) {
+                            if let Some(idx) = self.state.list_state.selected() {
+                                let profiles = crate::services::ProfileService::get_profiles(
+                                    &ctx.config.repo_path,
+                                )?;
+                                if profiles.get(idx).is_some() {
                                     self.state.popup_type = ProfilePopupType::Delete;
                                     self.state.delete_confirm_input.clear();
                                     return Ok(ScreenAction::Refresh);
                                 }
-                             }
+                            }
                         }
                         Action::Confirm => {
                             // Switch or just select?
@@ -483,7 +613,7 @@ impl Screen for ManageProfilesScreen {
                     }
                 }
             }
-             Event::Mouse(mouse) => {
+            Event::Mouse(mouse) => {
                 return Ok(self.handle_mouse_event(mouse, ctx.config));
             }
             _ => {}

@@ -44,12 +44,16 @@ impl MainMenuScreen {
 
     /// Get a reference to the component, panics if not initialized.
     fn component(&self) -> &MainMenuComponent {
-        self.component.as_ref().expect("MainMenuScreen not initialized")
+        self.component
+            .as_ref()
+            .expect("MainMenuScreen not initialized")
     }
 
     /// Get a mutable reference to the component, panics if not initialized.
     fn component_mut(&mut self) -> &mut MainMenuComponent {
-        self.component.as_mut().expect("MainMenuScreen not initialized")
+        self.component
+            .as_mut()
+            .expect("MainMenuScreen not initialized")
     }
 
     /// Render the main menu (simple wrapper for backward compatibility).
@@ -135,7 +139,12 @@ impl MainMenuScreen {
             Visit release page for details.",
             info.current_version,
             info.latest_version,
-            info.release_url.replace("/releases/tag/", "/releases/download/").replace(&info.latest_version, &format!("{}/install.sh", info.latest_version))
+            info.release_url
+                .replace("/releases/tag/", "/releases/download/")
+                .replace(
+                    &info.latest_version,
+                    &format!("{}/install.sh", info.latest_version)
+                )
         );
         (title, content)
     }

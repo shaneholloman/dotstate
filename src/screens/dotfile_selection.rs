@@ -43,7 +43,9 @@ impl DotfileSelectionScreen {
 
     /// Handle modal confirmation events.
     fn handle_modal_event(&mut self, key_code: KeyCode, config: &Config) -> Result<ScreenAction> {
-        let action = config.keymap.get_action(key_code, crossterm::event::KeyModifiers::NONE);
+        let action = config
+            .keymap
+            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
         use crate::keymap::Action;
 
         match action {
@@ -157,7 +159,11 @@ impl DotfileSelectionScreen {
     }
 
     /// Handle custom file input (legacy mode, less common).
-    fn handle_custom_file_input(&mut self, key_code: KeyCode, config: &Config) -> Result<ScreenAction> {
+    fn handle_custom_file_input(
+        &mut self,
+        key_code: KeyCode,
+        config: &Config,
+    ) -> Result<ScreenAction> {
         // When input is not focused, only allow Enter to focus or Esc to cancel
         if !self.state.custom_file_focused {
             match key_code {
@@ -210,7 +216,8 @@ impl DotfileSelectionScreen {
             KeyCode::Enter => {
                 let path_str = self.state.custom_file_input.trim();
                 if path_str.is_empty() {
-                    self.state.status_message = Some("Error: File path cannot be empty".to_string());
+                    self.state.status_message =
+                        Some("Error: File path cannot be empty".to_string());
                 } else {
                     let full_path = crate::utils::expand_path(path_str);
 
@@ -262,8 +269,14 @@ impl DotfileSelectionScreen {
     }
 
     /// Handle file browser list navigation and selection.
-    fn handle_file_browser_list(&mut self, key_code: KeyCode, config: &Config) -> Result<ScreenAction> {
-        let action = config.keymap.get_action(key_code, crossterm::event::KeyModifiers::NONE);
+    fn handle_file_browser_list(
+        &mut self,
+        key_code: KeyCode,
+        config: &Config,
+    ) -> Result<ScreenAction> {
+        let action = config
+            .keymap
+            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
         use crate::keymap::Action;
 
         if let Some(action) = action {
@@ -298,18 +311,23 @@ impl DotfileSelectionScreen {
                                 let relative_path = current_folder
                                     .strip_prefix(&home_dir)
                                     .map(|p| p.to_string_lossy().to_string())
-                                    .unwrap_or_else(|_| current_folder.to_string_lossy().to_string());
+                                    .unwrap_or_else(|_| {
+                                        current_folder.to_string_lossy().to_string()
+                                    });
 
                                 // Validate
                                 let repo_path = &config.repo_path;
                                 let (is_safe, reason) =
                                     crate::utils::is_safe_to_add(&current_folder, repo_path);
                                 if !is_safe {
-                                    self.state.status_message = Some(format!(
-                                        "Error: {}. Path: {}",
-                                        reason.unwrap_or_else(|| "Cannot add this folder".to_string()),
-                                        current_folder.display()
-                                    ));
+                                    self.state.status_message =
+                                        Some(format!(
+                                            "Error: {}. Path: {}",
+                                            reason.unwrap_or_else(
+                                                || "Cannot add this folder".to_string()
+                                            ),
+                                            current_folder.display()
+                                        ));
                                     return Ok(ScreenAction::None);
                                 }
 
@@ -354,7 +372,9 @@ impl DotfileSelectionScreen {
                                     let relative_path = full_path
                                         .strip_prefix(&home_dir)
                                         .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|_| full_path.to_string_lossy().to_string());
+                                        .unwrap_or_else(|_| {
+                                            full_path.to_string_lossy().to_string()
+                                        });
 
                                     // Close browser
                                     self.state.file_browser_mode = false;
@@ -406,8 +426,14 @@ impl DotfileSelectionScreen {
     }
 
     /// Handle file browser preview navigation.
-    fn handle_file_browser_preview(&mut self, key_code: KeyCode, config: &Config) -> Result<ScreenAction> {
-        let action = config.keymap.get_action(key_code, crossterm::event::KeyModifiers::NONE);
+    fn handle_file_browser_preview(
+        &mut self,
+        key_code: KeyCode,
+        config: &Config,
+    ) -> Result<ScreenAction> {
+        let action = config
+            .keymap
+            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
         use crate::keymap::Action;
 
         if let Some(action) = action {
@@ -452,7 +478,9 @@ impl DotfileSelectionScreen {
 
     /// Handle main dotfile list navigation and selection.
     fn handle_dotfile_list(&mut self, key_code: KeyCode, config: &Config) -> Result<ScreenAction> {
-        let action = config.keymap.get_action(key_code, crossterm::event::KeyModifiers::NONE);
+        let action = config
+            .keymap
+            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
         use crate::keymap::Action;
 
         if let Some(action) = action {
@@ -532,7 +560,9 @@ impl DotfileSelectionScreen {
 
     /// Handle preview pane navigation.
     fn handle_preview(&mut self, key_code: KeyCode, config: &Config) -> Result<ScreenAction> {
-        let action = config.keymap.get_action(key_code, crossterm::event::KeyModifiers::NONE);
+        let action = config
+            .keymap
+            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
         use crate::keymap::Action;
 
         if let Some(action) = action {

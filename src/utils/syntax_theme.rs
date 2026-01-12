@@ -25,7 +25,7 @@ use syntect::highlighting::{Theme, ThemeSet};
 ///
 /// Panics if no syntect themes are available at all (should never happen
 /// with default themes loaded).
-pub fn get_syntax_theme<'a>(theme_set: &'a ThemeSet, theme_type: ThemeType) -> &'a Theme {
+pub fn get_syntax_theme(theme_set: &ThemeSet, theme_type: ThemeType) -> &Theme {
     let preferred_names = match theme_type {
         ThemeType::Light => vec!["base16-ocean.light", "Solarized (light)", "GitHub"],
         ThemeType::Dark | ThemeType::NoColor => vec![

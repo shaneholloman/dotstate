@@ -1,16 +1,13 @@
-
-use crate::components::{
-    Component, ComponentAction, MessageComponent,
-};
+use crate::components::{Component, ComponentAction, MessageComponent};
 use crate::config::{Config, GitHubConfig};
-use crate::screens::{GitHubAuthScreen, MainMenuScreen, ManagePackagesScreen, ManageProfilesScreen, Screen as ScreenTrait, SyncWithRemoteScreen, ViewSyncedFilesScreen};
 use crate::git::GitManager;
 use crate::github::GitHubClient;
-use crate::tui::Tui;
-use crate::ui::{
-    GitHubAuthStep, GitHubSetupStep, Screen, UiState,
+use crate::screens::{
+    GitHubAuthScreen, MainMenuScreen, ManagePackagesScreen, ManageProfilesScreen,
+    Screen as ScreenTrait, SyncWithRemoteScreen, ViewSyncedFilesScreen,
 };
-
+use crate::tui::Tui;
+use crate::ui::{GitHubAuthStep, GitHubSetupStep, Screen, UiState};
 
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -237,14 +234,14 @@ impl App {
             // Process package checking and installation (managed by screen)
             // We call tick() on the manage_packages_screen to handle background tasks
             match self.manage_packages_screen.tick() {
-                 Ok(crate::screens::ScreenAction::Refresh) => {
-                     // Redraw requested by tick (e.g. progress update)
-                     // self.draw() happens next loop anyway if we don't block.
-                     // But poll_event blocks.
-                     // We rely on the poll timeout (250ms) to allow redraws.
-                 }
-                 Ok(action) => self.process_screen_action(action)?,
-                 Err(e) => error!("Error in package manager tick: {}", e),
+                Ok(crate::screens::ScreenAction::Refresh) => {
+                    // Redraw requested by tick (e.g. progress update)
+                    // self.draw() happens next loop anyway if we don't block.
+                    // But poll_event blocks.
+                    // We rely on the poll timeout (250ms) to allow redraws.
+                }
+                Ok(action) => self.process_screen_action(action)?,
+                Err(e) => error!("Error in package manager tick: {}", e),
             }
 
             // Poll for events with 250ms timeout
@@ -374,7 +371,12 @@ impl App {
             && !self.sync_with_remote_screen.get_state().is_syncing
         {
             // Only load if we don't have files yet
-            if self.sync_with_remote_screen.get_state().changed_files.is_empty() {
+            if self
+                .sync_with_remote_screen
+                .get_state()
+                .changed_files
+                .is_empty()
+            {
                 use crate::screens::ScreenContext;
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 self.sync_with_remote_screen.load_changed_files(&ctx);
@@ -407,13 +409,13 @@ impl App {
                 }
                 Screen::DotfileSelection => {
                     // Router pattern - delegate to screen's render method
-                    use crate::screens::{Screen as ScreenTrait, RenderContext};
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
                     let ctx = RenderContext::new(
                         &config_clone,
                         &self.syntax_set,
                         &self.theme_set,
-                        &syntax_theme,
+                        syntax_theme,
                     );
                     if let Err(e) = self.dotfile_selection_screen.render(frame, area, &ctx) {
                         error!("Failed to render dotfile selection screen: {}", e);
@@ -424,7 +426,8 @@ impl App {
                 }
                 Screen::SyncWithRemote => {
                     // Sync state with screen (transitional - will be removed when state moves to screen)
-                    *self.sync_with_remote_screen.get_state_mut() = self.ui_state.sync_with_remote.clone();
+                    *self.sync_with_remote_screen.get_state_mut() =
+                        self.ui_state.sync_with_remote.clone();
 
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
                     if let Err(e) = self.sync_with_remote_screen.render_with_context(
@@ -439,26 +442,26 @@ impl App {
                 }
                 Screen::ManageProfiles => {
                     // Router pattern - delegate to screen's render method
-                    use crate::screens::{Screen as ScreenTrait, RenderContext};
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
                     let ctx = RenderContext::new(
                         &config_clone,
                         &self.syntax_set,
                         &self.theme_set,
-                        &syntax_theme,
+                        syntax_theme,
                     );
                     if let Err(e) = self.manage_profiles_screen.render(frame, area, &ctx) {
                         error!("Failed to render manage profiles screen: {}", e);
                     }
                 }
                 Screen::ManagePackages => {
-                    use crate::screens::{Screen as ScreenTrait, RenderContext};
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
                     let ctx = RenderContext::new(
                         &config_clone,
                         &self.syntax_set,
                         &self.theme_set,
-                        &syntax_theme,
+                        syntax_theme,
                     );
                     if let Err(e) = self.manage_packages_screen.render(frame, area, &ctx) {
                         error!("Failed to render manage packages screen: {}", e);
@@ -466,13 +469,13 @@ impl App {
                 }
                 Screen::ProfileSelection => {
                     // Router pattern - delegate to screen's render method
-                    use crate::screens::{Screen as ScreenTrait, RenderContext};
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
                     let ctx = RenderContext::new(
                         &self.config,
                         &self.syntax_set,
                         &self.theme_set,
-                        &syntax_theme,
+                        syntax_theme,
                     );
                     if let Err(e) = self.profile_selection_screen.render(frame, area, &ctx) {
                         error!("Failed to render profile selection screen: {}", e);
@@ -672,7 +675,7 @@ impl App {
                 }
 
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::GitHubAuth => {
                 // Router pattern - delegate to screen's handle_event method
@@ -684,7 +687,7 @@ impl App {
                 self.ui_state.github_auth = self.github_auth_screen.get_auth_state().clone();
 
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::ViewSyncedFiles => {
                 // Router pattern - delegate to screen's handle_event method
@@ -692,7 +695,7 @@ impl App {
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 let action = self.view_synced_files_screen.handle_event(event, &ctx)?;
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::SyncWithRemote => {
                 // Router pattern - delegate to screen's handle_event method
@@ -711,7 +714,7 @@ impl App {
                 }
 
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::DotfileSelection => {
                 // Router pattern - delegate to screen's handle_event method
@@ -719,7 +722,7 @@ impl App {
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 let action = self.dotfile_selection_screen.handle_event(event, &ctx)?;
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::ProfileSelection => {
                 // Router pattern - delegate to screen's handle_event method
@@ -727,27 +730,24 @@ impl App {
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 let action = self.profile_selection_screen.handle_event(event, &ctx)?;
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::ManagePackages => {
                 use crate::screens::ScreenContext;
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 let action = self.manage_packages_screen.handle_event(event, &ctx)?;
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
             Screen::ManageProfiles => {
                 use crate::screens::ScreenContext;
                 let ctx = ScreenContext::new(&self.config, &self.config_path);
                 let action = self.manage_profiles_screen.handle_event(event, &ctx)?;
                 self.process_screen_action(action)?;
-                return Ok(());
+                Ok(())
             }
-
         }
     }
-
-    /// Show the update info popup when user selects the update notification
 
     /// Check for changes to push and update UI state
     fn check_changes_to_push(&mut self) {
@@ -789,7 +789,7 @@ impl App {
                     self.ui_state.github_auth.local_repo_path_input =
                         self.config.repo_path.to_string_lossy().to_string();
                     self.ui_state.github_auth.is_private = true; // Default to private
-                    // Set setup mode based on config
+                                                                 // Set setup mode based on config
                     self.ui_state.github_auth.setup_mode = match self.config.repo_mode {
                         crate::config::RepoMode::GitHub => crate::ui::SetupMode::GitHub,
                         crate::config::RepoMode::Local => crate::ui::SetupMode::Local,
@@ -811,11 +811,12 @@ impl App {
                 // reset state if needed?
                 // self.manage_packages_screen.reset_state();
                 // Load packages from active profile into screen state
-                 if let Ok(Some(active_profile)) = self.get_active_profile_info() {
-                     self.manage_packages_screen.update_packages(active_profile.packages);
-                 } else {
-                     self.manage_packages_screen.update_packages(Vec::new());
-                 }
+                if let Ok(Some(active_profile)) = self.get_active_profile_info() {
+                    self.manage_packages_screen
+                        .update_packages(active_profile.packages);
+                } else {
+                    self.manage_packages_screen.update_packages(Vec::new());
+                }
             }
             _ => {}
         }
@@ -832,7 +833,11 @@ impl App {
             ScreenAction::Navigate(target) => {
                 self.ui_state.current_screen = target;
             }
-            ScreenAction::NavigateWithMessage { screen, title: _, message: _ } => {
+            ScreenAction::NavigateWithMessage {
+                screen,
+                title: _,
+                message: _,
+            } => {
                 // TODO: Show message and navigate
                 self.ui_state.current_screen = screen;
             }
@@ -851,7 +856,8 @@ impl App {
                 // Trigger a redraw
             }
             ScreenAction::InstallMissingPackages => {
-                self.manage_packages_screen.start_installing_missing_packages();
+                self.manage_packages_screen
+                    .start_installing_missing_packages();
             }
             ScreenAction::SetHasChanges(has_changes) => {
                 self.ui_state.has_changes_to_push = has_changes;
@@ -862,7 +868,10 @@ impl App {
             ScreenAction::ShowHelp => {
                 self.ui_state.show_help_overlay = true;
             }
-            ScreenAction::SaveLocalRepoConfig { repo_path, profiles } => {
+            ScreenAction::SaveLocalRepoConfig {
+                repo_path,
+                profiles,
+            } => {
                 // Save local repo configuration
                 self.config.repo_mode = crate::config::RepoMode::Local;
                 self.config.repo_path = repo_path.clone();
@@ -930,7 +939,9 @@ impl App {
                     // Show success and reset
                     self.github_auth_screen.get_auth_state_mut().status_message =
                         Some("✅ Token updated successfully!".to_string());
-                    self.github_auth_screen.get_auth_state_mut().is_editing_token = false;
+                    self.github_auth_screen
+                        .get_auth_state_mut()
+                        .is_editing_token = false;
                 } else {
                     self.github_auth_screen.get_auth_state_mut().error_message =
                         Some("No GitHub configuration to update".to_string());
@@ -1009,7 +1020,10 @@ impl App {
                     self.dotfile_selection_screen.get_state_mut(),
                 );
             }
-            ScreenAction::ToggleFileSync { file_index, is_synced } => {
+            ScreenAction::ToggleFileSync {
+                file_index,
+                is_synced,
+            } => {
                 // Copy state from screen to ui_state first
                 std::mem::swap(
                     &mut self.ui_state.dotfile_selection,
@@ -1026,7 +1040,10 @@ impl App {
                     self.dotfile_selection_screen.get_state_mut(),
                 );
             }
-            ScreenAction::AddCustomFileToSync { full_path, relative_path } => {
+            ScreenAction::AddCustomFileToSync {
+                full_path,
+                relative_path,
+            } => {
                 // Copy state from screen to ui_state first
                 std::mem::swap(
                     &mut self.ui_state.dotfile_selection,
@@ -1041,11 +1058,21 @@ impl App {
                     self.scan_dotfiles()?;
 
                     // Find and select the file in the list
-                    if let Some(index) = self.ui_state.dotfile_selection.dotfiles.iter().position(|d| {
-                        d.relative_path.to_string_lossy() == relative_path
-                    }) {
-                        self.ui_state.dotfile_selection.dotfile_list_state.select(Some(index));
-                        self.ui_state.dotfile_selection.selected_for_sync.insert(index);
+                    if let Some(index) = self
+                        .ui_state
+                        .dotfile_selection
+                        .dotfiles
+                        .iter()
+                        .position(|d| d.relative_path.to_string_lossy() == relative_path)
+                    {
+                        self.ui_state
+                            .dotfile_selection
+                            .dotfile_list_state
+                            .select(Some(index));
+                        self.ui_state
+                            .dotfile_selection
+                            .selected_for_sync
+                            .insert(index);
                     }
                 }
 
@@ -1071,10 +1098,10 @@ impl App {
                     description,
                     copy_from,
                 ) {
-                     Ok(_) => {
+                    Ok(_) => {
                         // Reload config - but create_profile doesn't affect config.toml
-                         self.config = crate::config::Config::load_or_create(&self.config_path)?;
-                     }
+                        self.config = crate::config::Config::load_or_create(&self.config_path)?;
+                    }
                     Err(e) => {
                         error!("Failed to create profile: {}", e);
                         self.message_component = Some(MessageComponent::new(
@@ -1083,7 +1110,7 @@ impl App {
                             Screen::ManageProfiles,
                         ));
                     }
-                 }
+                }
             }
             ScreenAction::SwitchProfile { name } => {
                 if let Err(e) = self.switch_profile(&name) {
@@ -1096,7 +1123,7 @@ impl App {
                 }
             }
             ScreenAction::RenameProfile { old_name, new_name } => {
-                 if let Err(e) = self.rename_profile(&old_name, &new_name) {
+                if let Err(e) = self.rename_profile(&old_name, &new_name) {
                     error!("Failed to rename profile: {}", e);
                     self.message_component = Some(MessageComponent::new(
                         "Rename Failed".to_string(),
@@ -1607,7 +1634,12 @@ impl App {
         let backup_enabled = state.backup_enabled;
 
         // Use service to add file to sync
-        match SyncService::add_file_to_sync(&self.config, &full_path, &relative_str, backup_enabled)? {
+        match SyncService::add_file_to_sync(
+            &self.config,
+            &full_path,
+            &relative_str,
+            backup_enabled,
+        )? {
             crate::services::sync_service::AddFileResult::Success => {
                 let state = &mut self.ui_state.dotfile_selection;
                 state.selected_for_sync.insert(file_index);
@@ -1636,12 +1668,17 @@ impl App {
         let backup_enabled = self.ui_state.dotfile_selection.backup_enabled;
 
         // Use service to add file to sync
-        match SyncService::add_file_to_sync(&self.config, full_path, relative_path, backup_enabled)? {
+        match SyncService::add_file_to_sync(&self.config, full_path, relative_path, backup_enabled)?
+        {
             crate::services::sync_service::AddFileResult::Success => {
                 // Check if this is a custom file (not in default dotfile candidates)
                 if SyncService::is_custom_file(relative_path) {
                     // Add to config.custom_files if not already there
-                    if !self.config.custom_files.contains(&relative_path.to_string()) {
+                    if !self
+                        .config
+                        .custom_files
+                        .contains(&relative_path.to_string())
+                    {
                         self.config.custom_files.push(relative_path.to_string());
                         self.config.save(&self.config_path)?;
                     }
@@ -1654,7 +1691,10 @@ impl App {
             crate::services::sync_service::AddFileResult::ValidationFailed(error_msg) => {
                 let state = &mut self.ui_state.dotfile_selection;
                 state.status_message = Some(format!("Error: {}", error_msg));
-                warn!("Validation failed for custom file {}: {}", relative_path, error_msg);
+                warn!(
+                    "Validation failed for custom file {}: {}",
+                    relative_path, error_msg
+                );
             }
         }
 
@@ -1675,7 +1715,10 @@ impl App {
             return Ok(());
         }
 
-        let relative_str = state.dotfiles[file_index].relative_path.to_string_lossy().to_string();
+        let relative_str = state.dotfiles[file_index]
+            .relative_path
+            .to_string_lossy()
+            .to_string();
 
         // Use service to remove file from sync
         match SyncService::remove_file_from_sync(&self.config, &relative_str)? {
@@ -1730,7 +1773,6 @@ impl App {
 
         Ok(())
     }
-
 
     /// Refresh file browser entries for current directory
     fn refresh_file_browser(&mut self) -> Result<()> {
@@ -1823,10 +1865,11 @@ impl App {
 
     /// Helper: Get active profile info from manifest
     fn get_active_profile_info(&self) -> Result<Option<crate::utils::ProfileInfo>> {
-        crate::services::ProfileService::get_profile_info(&self.config.repo_path, &self.config.active_profile)
+        crate::services::ProfileService::get_profile_info(
+            &self.config.repo_path,
+            &self.config.active_profile,
+        )
     }
-
-
 
     /// Switch to a different profile
     fn switch_profile(&mut self, target_profile_name: &str) -> Result<()> {
@@ -1859,7 +1902,8 @@ impl App {
                 switch_result.packages.len()
             );
             // Initialize package checking state
-            self.manage_packages_screen.update_packages(switch_result.packages);
+            self.manage_packages_screen
+                .update_packages(switch_result.packages);
             self.manage_packages_screen.start_checking();
         }
 
@@ -1891,8 +1935,6 @@ impl App {
         Ok(())
     }
 
-
-
     /// Activate a profile after GitHub setup (includes syncing files from repo)
     fn activate_profile_after_setup(&mut self, profile_name: &str) -> Result<()> {
         use crate::services::ProfileService;
@@ -1922,11 +1964,11 @@ impl App {
                 activation_result.packages.len()
             );
             // Initialize package checking state
-            self.manage_packages_screen.update_packages(activation_result.packages);
+            self.manage_packages_screen
+                .update_packages(activation_result.packages);
             self.manage_packages_screen.start_checking();
         }
 
         Ok(())
     }
-
 }

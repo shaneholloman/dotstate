@@ -11,8 +11,8 @@ use crate::config::Config;
 use crate::ui::Screen as ScreenId;
 use anyhow::Result;
 use crossterm::event::Event;
-use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::Frame;
 use std::path::PathBuf;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
@@ -80,9 +80,10 @@ impl<'a> ScreenContext<'a> {
 ///
 /// This enum allows screens to signal navigation and state changes without
 /// directly mutating global state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ScreenAction {
     /// No action needed, stay on current screen.
+    #[default]
     None,
     /// Navigate to a different screen.
     Navigate(ScreenId),
@@ -93,10 +94,7 @@ pub enum ScreenAction {
         message: String,
     },
     /// Show a message popup.
-    ShowMessage {
-        title: String,
-        content: String,
-    },
+    ShowMessage { title: String, content: String },
     /// Request to quit the application.
     Quit,
     /// Trigger a data refresh (e.g., reload dotfiles).
@@ -197,12 +195,6 @@ pub enum ScreenAction {
     // Package management actions
     /// Trigger installation of all missing packages.
     InstallMissingPackages,
-}
-
-impl Default for ScreenAction {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Trait for screen controllers.

@@ -174,7 +174,11 @@ impl ProfileSelectionScreen {
                     .title(" Available Profiles ")
                     .borders(Borders::ALL),
             )
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan))
+            .highlight_style(
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .fg(Color::Cyan),
+            )
             .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
 
         frame.render_stateful_widget(list, content_area, &mut self.state.list_state);
@@ -242,10 +246,14 @@ impl Screen for ProfileSelectionScreen {
                                 self.state.list_state.select(Some(current - 1));
                             } else {
                                 // Wrap to bottom (including create option)
-                                self.state.list_state.select(Some(self.state.profiles.len()));
+                                self.state
+                                    .list_state
+                                    .select(Some(self.state.profiles.len()));
                             }
                         } else if !self.state.profiles.is_empty() {
-                            self.state.list_state.select(Some(self.state.profiles.len()));
+                            self.state
+                                .list_state
+                                .select(Some(self.state.profiles.len()));
                         }
                     }
                     Action::MoveDown => {

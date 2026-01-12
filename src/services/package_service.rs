@@ -47,6 +47,20 @@ pub struct PackageValidation {
 ///
 /// This service provides a clean interface for package operations without
 /// direct dependencies on UI state.
+/// Parameters for creating a package.
+#[derive(Debug)]
+pub struct PackageCreationParams<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub manager: PackageManager,
+    pub is_custom: bool,
+    pub package_name: &'a str,
+    pub binary_name: &'a str,
+    pub install_command: &'a str,
+    pub existence_check: &'a str,
+    pub manager_check: &'a str,
+}
+
 pub struct PackageService;
 
 impl PackageService {
@@ -181,7 +195,9 @@ impl PackageService {
                 warn!("Package validation failed: install_command is empty for custom package");
                 return PackageValidation {
                     is_valid: false,
-                    error_message: Some("Install command is required for custom packages".to_string()),
+                    error_message: Some(
+                        "Install command is required for custom packages".to_string(),
+                    ),
                 };
             }
         } else {
@@ -190,7 +206,9 @@ impl PackageService {
                 warn!("Package validation failed: package_name is empty for managed package");
                 return PackageValidation {
                     is_valid: false,
-                    error_message: Some("Package name is required for managed packages".to_string()),
+                    error_message: Some(
+                        "Package name is required for managed packages".to_string(),
+                    ),
                 };
             }
         }
@@ -212,45 +230,35 @@ impl PackageService {
     /// # Returns
     ///
     /// The created package.
-    pub fn create_package(
-        name: &str,
-        description: &str,
-        manager: PackageManager,
-        is_custom: bool,
-        package_name: &str,
-        binary_name: &str,
-        install_command: &str,
-        existence_check: &str,
-        manager_check: &str,
-    ) -> Package {
+    pub fn create_package(params: PackageCreationParams) -> Package {
         Package {
-            name: name.trim().to_string(),
-            description: if description.trim().is_empty() {
+            name: params.name.trim().to_string(),
+            description: if params.description.trim().is_empty() {
                 None
             } else {
-                Some(description.trim().to_string())
+                Some(params.description.trim().to_string())
             },
-            manager,
-            package_name: if is_custom {
+            manager: params.manager,
+            package_name: if params.is_custom {
                 None
             } else {
-                Some(package_name.trim().to_string())
+                Some(params.package_name.trim().to_string())
             },
-            binary_name: binary_name.trim().to_string(),
-            install_command: if is_custom {
-                Some(install_command.trim().to_string())
-            } else {
-                None
-            },
-            existence_check: if is_custom && !existence_check.trim().is_empty() {
-                Some(existence_check.trim().to_string())
+            binary_name: params.binary_name.trim().to_string(),
+            install_command: if params.is_custom {
+                Some(params.install_command.trim().to_string())
             } else {
                 None
             },
-            manager_check: if manager_check.trim().is_empty() {
+            existence_check: if params.is_custom && !params.existence_check.trim().is_empty() {
+                Some(params.existence_check.trim().to_string())
+            } else {
+                None
+            },
+            manager_check: if params.manager_check.trim().is_empty() {
                 None
             } else {
-                Some(manager_check.trim().to_string())
+                Some(params.manager_check.trim().to_string())
             },
         }
     }
@@ -271,11 +279,18 @@ impl PackageService {
         profile_name: &str,
         package: Package,
     ) -> Result<Vec<Package>> {
-        info!("Adding new package: {} (profile: {})", package.name, profile_name);
+        info!(
+            "Adding new package: {} (profile: {})",
+            package.name, profile_name
+        );
 
         let mut manifest = ProfileManifest::load_or_backfill(repo_path)?;
 
-        if let Some(profile) = manifest.profiles.iter_mut().find(|p| p.name == profile_name) {
+        if let Some(profile) = manifest
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == profile_name)
+        {
             profile.packages.push(package);
             let packages = profile.packages.clone();
             manifest.save(repo_path)?;
@@ -305,7 +320,11 @@ impl PackageService {
     ) -> Result<Vec<Package>> {
         let mut manifest = ProfileManifest::load_or_backfill(repo_path)?;
 
-        if let Some(profile) = manifest.profiles.iter_mut().find(|p| p.name == profile_name) {
+        if let Some(profile) = manifest
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == profile_name)
+        {
             if index < profile.packages.len() {
                 let old_name = profile.packages[index].name.clone();
                 info!(
@@ -346,7 +365,11 @@ impl PackageService {
     ) -> Result<Vec<Package>> {
         let mut manifest = ProfileManifest::load_or_backfill(repo_path)?;
 
-        if let Some(profile) = manifest.profiles.iter_mut().find(|p| p.name == profile_name) {
+        if let Some(profile) = manifest
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == profile_name)
+        {
             if index < profile.packages.len() {
                 let package_name = profile.packages[index].name.clone();
                 info!(
@@ -415,13 +438,16 @@ impl PackageService {
     /// # Returns
     ///
     /// Result with installation handle.
-    pub fn start_install(package: &Package) -> Result<crate::utils::package_installer::InstallationHandle> {
+    pub fn start_install(
+        package: &Package,
+    ) -> Result<crate::utils::package_installer::InstallationHandle> {
         PackageInstaller::start_install(package)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::PackageCreationParams;
     use super::*;
 
     #[test]
@@ -496,17 +522,17 @@ mod tests {
 
     #[test]
     fn test_create_package() {
-        let package = PackageService::create_package(
-            "Git",
-            "Version control",
-            PackageManager::Brew,
-            false,
-            "git",
-            "git",
-            "",
-            "",
-            "",
-        );
+        let package = PackageService::create_package(PackageCreationParams {
+            name: "Git",
+            description: "Version control",
+            manager: PackageManager::Brew,
+            is_custom: false,
+            package_name: "git",
+            binary_name: "git",
+            install_command: "",
+            existence_check: "",
+            manager_check: "",
+        });
         assert_eq!(package.name, "Git");
         assert_eq!(package.description, Some("Version control".to_string()));
         assert_eq!(package.binary_name, "git");

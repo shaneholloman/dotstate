@@ -38,6 +38,6 @@ pub mod sync_service;
 
 // Re-export common types
 pub use git_service::GitService;
-pub use package_service::PackageService;
+pub use package_service::{PackageCreationParams, PackageService};
 pub use profile_service::ProfileService;
 pub use sync_service::SyncService;

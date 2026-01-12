@@ -86,7 +86,10 @@ impl ProfileService {
     /// Profile info if found.
     pub fn get_profile_info(repo_path: &Path, profile_name: &str) -> Result<Option<ProfileInfo>> {
         let manifest = Self::load_manifest(repo_path)?;
-        Ok(manifest.profiles.into_iter().find(|p| p.name == profile_name))
+        Ok(manifest
+            .profiles
+            .into_iter()
+            .find(|p| p.name == profile_name))
     }
 
     /// Create a new profile.
@@ -115,7 +118,8 @@ impl ProfileService {
 
         // Get existing profile names from manifest
         let mut manifest = Self::load_manifest(repo_path)?;
-        let existing_names: Vec<String> = manifest.profiles.iter().map(|p| p.name.clone()).collect();
+        let existing_names: Vec<String> =
+            manifest.profiles.iter().map(|p| p.name.clone()).collect();
         if let Err(e) = validate_profile_name(&sanitized_name, &existing_names) {
             return Err(anyhow::anyhow!("Invalid profile name: {}", e));
         }
@@ -221,7 +225,8 @@ impl ProfileService {
         }
 
         // Use SymlinkManager to switch profiles
-        let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
+        let mut symlink_mgr =
+            SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
 
         let switch_result = symlink_mgr.switch_profile(
             old_profile_name,
@@ -303,11 +308,15 @@ impl ProfileService {
 
         // Update symlinks if profile is active
         if is_active {
-            let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
+            let mut symlink_mgr =
+                SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
 
             match symlink_mgr.rename_profile(old_name, &sanitized_name) {
                 Ok(ops) => {
-                    let success_count = ops.iter().filter(|op| op.status == OperationStatus::Success).count();
+                    let success_count = ops
+                        .iter()
+                        .filter(|op| op.status == OperationStatus::Success)
+                        .count();
                     info!("Updated {} symlinks for renamed profile", success_count);
                 }
                 Err(e) => {
@@ -317,7 +326,10 @@ impl ProfileService {
             }
         }
 
-        info!("Renamed profile from '{}' to '{}'", old_name, sanitized_name);
+        info!(
+            "Renamed profile from '{}' to '{}'",
+            old_name, sanitized_name
+        );
         Ok(sanitized_name)
     }
 
@@ -396,7 +408,8 @@ impl ProfileService {
         }
 
         // Create SymlinkManager with backup enabled
-        let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
+        let mut symlink_mgr =
+            SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
 
         // Activate profile (this will create symlinks and sync files)
         match symlink_mgr.activate_profile(profile_name, &files_to_sync) {
@@ -437,12 +450,11 @@ mod tests {
 
     #[test]
     fn test_delete_active_profile_fails() {
-        let result = ProfileService::delete_profile(
-            &PathBuf::from("/tmp"),
-            "active",
-            "active",
-        );
+        let result = ProfileService::delete_profile(&PathBuf::from("/tmp"), "active", "active");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cannot delete active profile"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot delete active profile"));
     }
 }

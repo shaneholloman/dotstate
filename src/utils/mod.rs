@@ -16,6 +16,7 @@ pub mod text_input;
 // Export utilities that are used
 pub use backup_manager::BackupManager;
 pub use layout::{center_popup, create_split_layout, create_standard_layout};
+pub use list_navigation::{ListStateExt, DEFAULT_PAGE_SIZE};
 pub use path::{
     expand_path, get_config_dir, get_config_path, get_home_dir, get_repository_path, is_git_repo,
     is_safe_to_add,
@@ -27,7 +28,6 @@ pub use style::{
     input_text_style, unfocused_border_style,
 };
 pub use symlink_manager::SymlinkManager;
-pub use list_navigation::{ListStateExt, DEFAULT_PAGE_SIZE};
 pub use syntax_theme::get_current_syntax_theme;
 pub use text_input::{
     handle_backspace, handle_char_insertion, handle_cursor_movement, handle_delete,

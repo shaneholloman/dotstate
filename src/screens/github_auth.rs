@@ -461,8 +461,7 @@ impl GitHubAuthScreen {
     }
 
     fn handle_char_input(&mut self, c: char) {
-        let can_edit_token =
-            !self.state.repo_already_configured || self.state.is_editing_token;
+        let can_edit_token = !self.state.repo_already_configured || self.state.is_editing_token;
 
         match self.state.focused_field {
             GitHubAuthField::Token if can_edit_token => {
