@@ -13,6 +13,7 @@ use anyhow::Result;
 use crossterm::event::Event;
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use std::path::PathBuf;
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 
@@ -106,6 +107,66 @@ pub enum ScreenAction {
     ConfigUpdated,
     /// Open help overlay.
     ShowHelp,
+    /// Save local repository configuration and navigate to profile selection or main menu.
+    SaveLocalRepoConfig {
+        /// Path to the local repository.
+        repo_path: PathBuf,
+        /// List of profiles found in the repository (empty if none).
+        profiles: Vec<String>,
+    },
+    /// Start the GitHub setup state machine.
+    StartGitHubSetup {
+        /// GitHub personal access token.
+        token: String,
+        /// Repository name.
+        repo_name: String,
+        /// Whether the repo should be private.
+        is_private: bool,
+    },
+    /// Update the GitHub token only (for already configured repos).
+    UpdateGitHubToken {
+        /// New token to save.
+        token: String,
+    },
+    /// Navigate to profile selection screen with profiles.
+    ShowProfileSelection {
+        /// List of profile names to choose from.
+        profiles: Vec<String>,
+    },
+    /// Create a new profile and activate it (used during initial setup).
+    CreateAndActivateProfile {
+        /// Name of the profile to create.
+        name: String,
+    },
+    /// Activate an existing profile (used during initial setup).
+    ActivateProfile {
+        /// Name of the profile to activate.
+        name: String,
+    },
+    // Dotfile selection actions
+    /// Scan for dotfiles and refresh the list.
+    ScanDotfiles,
+    /// Refresh the file browser entries.
+    RefreshFileBrowser,
+    /// Toggle file sync status (add or remove from sync).
+    ToggleFileSync {
+        /// Index of the file in the dotfiles list.
+        file_index: usize,
+        /// Whether the file is currently synced.
+        is_synced: bool,
+    },
+    /// Add a custom file to sync after confirmation.
+    AddCustomFileToSync {
+        /// Full path to the file.
+        full_path: PathBuf,
+        /// Relative path (from home directory).
+        relative_path: String,
+    },
+    /// Update backup enabled setting.
+    SetBackupEnabled {
+        /// Whether backups are enabled.
+        enabled: bool,
+    },
 }
 
 impl Default for ScreenAction {

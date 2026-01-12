@@ -140,10 +140,6 @@ pub const DEFAULT_DOTFILES: &[DotfileCandidate] = &[
         description: "WezTerm terminal emulator configuration.",
     },
     DotfileCandidate {
-        path: ".config/iterm2",
-        description: "iTerm2 configuration directory (partial export support).",
-    },
-    DotfileCandidate {
         path: ".config/foot",
         description: "Foot terminal emulator configuration.",
     },

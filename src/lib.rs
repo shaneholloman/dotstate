@@ -15,7 +15,6 @@ pub mod github;
 pub mod keymap;
 pub mod screens;
 pub mod services;
-pub mod state;
 pub mod styles;
 pub mod tui;
 pub mod ui;

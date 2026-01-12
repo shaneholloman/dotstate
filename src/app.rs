@@ -1,25 +1,21 @@
 use crate::components::package_manager::PackageManagerComponent;
 use crate::components::profile_manager::ProfilePopupType;
 use crate::components::{
-    Component, ComponentAction, DotfileSelectionComponent,
-    MessageComponent, ProfileManagerComponent,
+    Component, ComponentAction, MessageComponent, ProfileManagerComponent,
 };
 use crate::config::{Config, GitHubConfig};
 use crate::screens::{GitHubAuthScreen, MainMenuScreen, Screen as ScreenTrait, SyncWithRemoteScreen, ViewSyncedFilesScreen};
 use crate::git::GitManager;
 use crate::github::GitHubClient;
-use crate::styles::LIST_HIGHLIGHT_SYMBOL;
 use crate::tui::Tui;
 use crate::ui::{
-    AddPackageField, GitHubAuthField, GitHubAuthStep, GitHubSetupStep, InstallationStep,
-    PackagePopupType, PackageStatus, Screen, UiState,
+    AddPackageField, GitHubAuthStep, GitHubSetupStep, InstallationStep, PackagePopupType,
+    PackageStatus, Screen, UiState,
 };
 use crate::utils::list_navigation::ListStateExt;
 use crate::utils::profile_manifest::PackageManager;
 use anyhow::{Context, Result};
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -73,9 +69,10 @@ pub struct App {
     /// Screen controllers (new architecture)
     main_menu_screen: MainMenuScreen,
     github_auth_screen: GitHubAuthScreen,
-    dotfile_selection_component: DotfileSelectionComponent,
+    dotfile_selection_screen: crate::screens::DotfileSelectionScreen,
     view_synced_files_screen: ViewSyncedFilesScreen,
     sync_with_remote_screen: SyncWithRemoteScreen,
+    profile_selection_screen: crate::screens::ProfileSelectionScreen,
     profile_manager_component: ProfileManagerComponent,
     package_manager_component: PackageManagerComponent,
     message_component: Option<MessageComponent>,
@@ -124,9 +121,10 @@ impl App {
             last_screen: None,
             main_menu_screen,
             github_auth_screen: GitHubAuthScreen::new(),
-            dotfile_selection_component: DotfileSelectionComponent::new(),
+            dotfile_selection_screen: crate::screens::DotfileSelectionScreen::new(),
             view_synced_files_screen: ViewSyncedFilesScreen::new(config_clone),
             sync_with_remote_screen: SyncWithRemoteScreen::new(),
+            profile_selection_screen: crate::screens::ProfileSelectionScreen::new(),
             profile_manager_component: ProfileManagerComponent::new(),
             package_manager_component: PackageManagerComponent::new(),
 
@@ -234,7 +232,7 @@ impl App {
             }
 
             // Process GitHub setup state machine if active (before polling events)
-            if let GitHubAuthStep::SetupStep(_) = self.ui_state.github_auth.step {
+            if self.github_auth_screen.needs_tick() {
                 self.process_github_setup_step()?;
             }
 
@@ -419,14 +417,6 @@ impl App {
             }
         }
 
-        // Get profiles from manifest before the draw closure to avoid borrow issues
-        let profile_selection_profiles: Vec<crate::utils::ProfileInfo> =
-            if self.ui_state.current_screen == Screen::ProfileSelection {
-                self.get_profiles().unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
         // Clone config for main menu to avoid borrow issues in closure
         let config_clone = self.config.clone();
 
@@ -462,18 +452,17 @@ impl App {
                     self.ui_state.github_auth = self.github_auth_screen.get_auth_state().clone();
                 }
                 Screen::DotfileSelection => {
-                    // Component handles all rendering including Clear
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{Screen as ScreenTrait, RenderContext};
                     let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
-
-                    if let Err(e) = self.dotfile_selection_component.render_with_state(
-                        frame,
-                        area,
-                        &mut self.ui_state,
+                    let ctx = RenderContext::new(
                         &config_clone,
                         &self.syntax_set,
-                        syntax_theme,
-                    ) {
-                        eprintln!("Error rendering dotfile selection: {}", e);
+                        &self.theme_set,
+                        &syntax_theme,
+                    );
+                    if let Err(e) = self.dotfile_selection_screen.render(frame, area, &ctx) {
+                        error!("Failed to render dotfile selection screen: {}", e);
                     }
                 }
                 Screen::ViewSyncedFiles => {
@@ -516,156 +505,18 @@ impl App {
                     }
                 }
                 Screen::ProfileSelection => {
-                    // Render profile selection screen
-                    let state = &mut self.ui_state.profile_selection;
-
-                    // Check if warning popup should be shown
-                    if state.show_exit_warning {
-                        use crate::utils::center_popup;
-                        use crate::components::footer::Footer;
-                        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
-                        use ratatui::prelude::*;
-
-                        let popup_area = center_popup(area, 60, 35);
-                        frame.render_widget(Clear, popup_area);
-
-                        let chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([
-                                Constraint::Length(8), // Warning text
-                                Constraint::Min(0),    // Spacer
-                                Constraint::Length(2), // Footer
-                            ])
-                            .split(popup_area);
-
-                        let warning_text = "⚠️  Profile Selection Required\n\n\
-                            You MUST select a profile before continuing.\n\
-                            Activating a profile will replace your current dotfiles with symlinks.\n\
-                            This action cannot be undone without restoring from backups.\n\n\
-                            Please select a profile or create a new one.\n\
-                            Press Esc again to cancel and return to main menu.".to_string();
-
-                        let warning = Paragraph::new(warning_text)
-                            .block(Block::default()
-                                .borders(Borders::ALL)
-                                .title("Exit Profile Selection")
-                                .title_alignment(Alignment::Center)
-                                .border_style(Style::default().fg(Color::Yellow)))
-                            .wrap(ratatui::widgets::Wrap { trim: true })
-                            .alignment(Alignment::Center);
-                        frame.render_widget(warning, chunks[0]);
-
-                        // Footer with instructions
-                        let footer_text = "Esc: Cancel & Return to Main Menu";
-                        let _ = Footer::render(frame, chunks[2], footer_text);
-                        return;
-                    }
-
-                    // Check if create popup should be shown
-                    if state.show_create_popup {
-                        use crate::utils::center_popup;
-                        use crate::components::footer::Footer;
-                        use crate::components::input_field::InputField;
-                        use ratatui::widgets::{Block, Borders, Paragraph, Clear};
-                        use ratatui::prelude::*;
-
-                        let popup_area = center_popup(area, 60, 12);
-                        frame.render_widget(Clear, popup_area);
-
-                        let chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([
-                                Constraint::Length(3), // Title
-                                Constraint::Length(3), // Input field
-                                Constraint::Min(0),    // Spacer
-                                Constraint::Length(2), // Footer
-                            ])
-                            .split(popup_area);
-
-                        let title = Paragraph::new("Create New Profile")
-                            .block(Block::default()
-                                .borders(Borders::ALL)
-                                .title("New Profile")
-                                .title_alignment(Alignment::Center)
-                                .border_style(Style::default().fg(Color::Cyan)))
-                            .alignment(Alignment::Center);
-                        frame.render_widget(title, chunks[0]);
-
-                        if let Err(e) = InputField::render(
-                            frame,
-                            chunks[1],
-                            &state.create_name_input,
-                            state.create_name_cursor,
-                            true,
-                            "Profile Name:",
-                            Some("Enter profile name"),
-                            Alignment::Left,
-                            false,
-                        ) {
-                            error!("Failed to render input field: {}", e);
-                        }
-
-                        let footer_text = "Enter: Create  |  Esc: Cancel";
-                        let _ = Footer::render(frame, chunks[3], footer_text);
-                        return;
-                    }
-
-                    // Build items list (profile_selection_profiles already obtained before closure)
-                    // Add "Create New Profile" option at the end
-                    let mut items: Vec<ListItem> = state.profiles.iter()
-                        .map(|name| {
-                            let profile = profile_selection_profiles.iter().find(|p| p.name == *name);
-                            let description = profile.and_then(|p| p.description.as_ref())
-                                .map(|d| format!(" - {}", d))
-                                .unwrap_or_default();
-                            let file_count = profile.map(|p| p.synced_files.len()).unwrap_or(0);
-                            let file_text = if file_count == 1 {
-                                "1 file".to_string()
-                            } else {
-                                format!("{} files", file_count)
-                            };
-                            ListItem::new(format!("{} {}{}", name, file_text, description))
-                        })
-                        .collect();
-                    // Add "Create New Profile" option
-                    items.push(ListItem::new("➕ Create New Profile (blank)").style(Style::default().fg(Color::Green)));
-
-                    // Render the screen inline
-                    use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
-                    use crate::components::header::Header;
-                    use crate::components::footer::Footer;
-                    use crate::utils::create_standard_layout;
-                    use ratatui::style::{Style, Color, Modifier};
-
-                    frame.render_widget(Clear, area);
-
-                    let background = Block::default()
-                        .style(Style::default().bg(Color::Reset));
-                    frame.render_widget(background, area);
-
-                    let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
-
-                    let _ = Header::render(
-                        frame,
-                        header_chunk,
-                        "Select Profile to Activate",
-                        "Choose which profile to activate after cloning the repository"
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{Screen as ScreenTrait, RenderContext};
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                    let ctx = RenderContext::new(
+                        &self.config,
+                        &self.syntax_set,
+                        &self.theme_set,
+                        &syntax_theme,
                     );
-
-                    let list = List::new(items)
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .title("Available Profiles")
-                                .border_style(Style::default().fg(Color::Cyan))
-                        )
-                        .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                        .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
-
-                    frame.render_stateful_widget(list, content_chunk, &mut state.list_state);
-
-                    let footer_text = "↑↓: Navigate | Enter: Activate/Create | C: Create New | Esc: Cancel (requires confirmation)";
-                    let _ = Footer::render(frame, footer_chunk, footer_text);
+                    if let Err(e) = self.profile_selection_screen.render(frame, area, &ctx) {
+                        error!("Failed to render profile selection screen: {}", e);
+                    }
                 }
             }
 
@@ -686,7 +537,7 @@ impl App {
     /// Sync input_mode_active based on current focus states
     /// Called after event handling to keep input mode in sync with field focus
     fn sync_input_mode(&mut self) {
-        use crate::ui::{DotfileSelectionFocus, PackagePopupType, Screen};
+        use crate::ui::{PackagePopupType, Screen};
 
         let is_input_focused = match self.ui_state.current_screen {
             // GitHub Auth - check if editing text fields
@@ -702,14 +553,15 @@ impl App {
 
             // Dotfile Selection - file browser path input
             Screen::DotfileSelection => {
-                self.ui_state.dotfile_selection.adding_custom_file
-                    || (self.ui_state.dotfile_selection.file_browser_path_focused
-                        && self.ui_state.dotfile_selection.focus
-                            == DotfileSelectionFocus::FileBrowserInput)
+                use crate::screens::Screen as ScreenTrait;
+                self.dotfile_selection_screen.is_input_focused()
             }
 
             // Profile Selection - create popup name input
-            Screen::ProfileSelection => self.ui_state.profile_selection.show_create_popup,
+            Screen::ProfileSelection => {
+                use crate::screens::Screen as ScreenTrait;
+                self.profile_selection_screen.is_input_focused()
+            }
 
             // Manage Profiles - create/rename/delete popups
             Screen::ManageProfiles => {
@@ -868,26 +720,15 @@ impl App {
                 return Ok(());
             }
             Screen::GitHubAuth => {
-                // Let screen handle mouse events, but keyboard events go to app
-                if matches!(event, Event::Mouse(_)) {
-                    let action = self.github_auth_screen.handle_mouse_event(event)?;
-                    if action == ComponentAction::Update {
-                        // Sync state back
-                        self.ui_state.github_auth =
-                            self.github_auth_screen.get_auth_state().clone();
-                    }
-                    return Ok(());
-                }
-                // Keyboard events handled in app (complex logic)
-                // TODO: Move handle_github_auth_input into GitHubAuthScreen.handle_event
-                if let Event::Key(key) = event {
-                    if key.kind == KeyEventKind::Press {
-                        self.handle_github_auth_input(key)?;
-                        // Sync state to screen
-                        *self.github_auth_screen.get_auth_state_mut() =
-                            self.ui_state.github_auth.clone();
-                    }
-                }
+                // Router pattern - delegate to screen's handle_event method
+                use crate::screens::ScreenContext;
+                let ctx = ScreenContext::new(&self.config, &self.config_path);
+                let action = self.github_auth_screen.handle_event(event, &ctx)?;
+
+                // Sync state from screen back to ui_state (for legacy code that reads it)
+                self.ui_state.github_auth = self.github_auth_screen.get_auth_state().clone();
+
+                self.process_screen_action(action)?;
                 return Ok(());
             }
             Screen::ViewSyncedFiles => {
@@ -918,858 +759,19 @@ impl App {
                 return Ok(());
             }
             Screen::DotfileSelection => {
-                // 1. Modal
-                let is_modal = self.ui_state.dotfile_selection.show_custom_file_confirm;
-                if is_modal {
-                    if let Event::Key(key) = event {
-                        if key.kind == KeyEventKind::Press {
-                            // Get action before borrowing state
-                            let action = self.get_action(key.code, key.modifiers);
-                            use crate::keymap::Action;
-
-                            match action {
-                                Some(Action::Yes) | Some(Action::Confirm) => {
-                                    // YES logic - extract values and close modal in scope
-                                    let (full_path, relative_path) = {
-                                        let state = &mut self.ui_state.dotfile_selection;
-                                        let full_path =
-                                            state.custom_file_confirm_path.clone().unwrap();
-                                        let relative_path =
-                                            state.custom_file_confirm_relative.clone().unwrap();
-                                        state.show_custom_file_confirm = false;
-                                        state.custom_file_confirm_path = None;
-                                        state.custom_file_confirm_relative = None;
-                                        (full_path, relative_path)
-                                    };
-
-                                    // Sync the file
-                                    if let Err(e) =
-                                        self.add_custom_file_to_sync(&full_path, &relative_path)
-                                    {
-                                        let state = &mut self.ui_state.dotfile_selection;
-                                        state.status_message =
-                                            Some(format!("Error: Failed to sync file: {}", e));
-                                        return Ok(());
-                                    }
-
-                                    // Re-scan to refresh the list
-                                    self.scan_dotfiles()?;
-
-                                    // Find and select the file in the list
-                                    let state = &mut self.ui_state.dotfile_selection;
-                                    if let Some(index) = state.dotfiles.iter().position(|d| {
-                                        d.relative_path.to_string_lossy() == relative_path
-                                    }) {
-                                        state.dotfile_list_state.select(Some(index));
-                                        state.selected_for_sync.insert(index);
-                                    }
-                                    return Ok(());
-                                }
-                                Some(Action::No) | Some(Action::Cancel) => {
-                                    // NO logic
-                                    let state = &mut self.ui_state.dotfile_selection;
-                                    state.show_custom_file_confirm = false;
-                                    state.custom_file_confirm_path = None;
-                                    state.custom_file_confirm_relative = None;
-                                    return Ok(());
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-
-                // 2. Input Mode
-                // Check if we're actually in a text input field (not just file browser mode)
-                let is_actually_typing = if self.ui_state.input_mode_active {
-                    if self.ui_state.dotfile_selection.file_browser_mode {
-                        // In file browser, only block navigation if we're actually in the input field
-                        let state = &self.ui_state.dotfile_selection;
-                        state.file_browser_path_focused
-                            && state.focus == crate::ui::DotfileSelectionFocus::FileBrowserInput
-                    } else {
-                        // Other input modes - always block navigation
-                        true
-                    }
-                } else {
-                    false
-                };
-
-                if is_actually_typing {
-                    if let Event::Key(key) = event {
-                        if key.kind == KeyEventKind::Press {
-                            if self.ui_state.dotfile_selection.file_browser_mode {
-                                // Handle Tab/NextTab for focus switching
-                                if let Some(action) = self.get_action(key.code, key.modifiers) {
-                                    use crate::keymap::Action;
-                                    use crate::ui::DotfileSelectionFocus;
-                                    if matches!(action, Action::NextTab) {
-                                        let state = &mut self.ui_state.dotfile_selection;
-                                        state.focus = match state.focus {
-                                            DotfileSelectionFocus::FileBrowserList => {
-                                                state.file_browser_path_focused = false;
-                                                DotfileSelectionFocus::FileBrowserPreview
-                                            }
-                                            DotfileSelectionFocus::FileBrowserPreview => {
-                                                state.file_browser_path_focused = true;
-                                                DotfileSelectionFocus::FileBrowserInput
-                                            }
-                                            DotfileSelectionFocus::FileBrowserInput => {
-                                                state.file_browser_path_focused = false;
-                                                DotfileSelectionFocus::FileBrowserList
-                                            }
-                                            _ => {
-                                                state.file_browser_path_focused = false;
-                                                DotfileSelectionFocus::FileBrowserList
-                                            }
-                                        };
-                                        return Ok(());
-                                    }
-                                }
-                                // Handle text input for path field
-                                self.handle_file_browser_input(key.code)?;
-                            } else if self.ui_state.dotfile_selection.adding_custom_file {
-                                if key.code == KeyCode::Esc {
-                                    let state = &mut self.ui_state.dotfile_selection;
-                                    if !state.custom_file_focused {
-                                        state.adding_custom_file = false;
-                                        state.custom_file_input.clear();
-                                        return Ok(());
-                                    }
-                                }
-                                self.handle_custom_file_input(key.code)?;
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                // If not actually typing, fall through to normal keymap handler
-
-                // 3. Normal / Keymap
-                use crate::ui::DotfileSelectionFocus;
-                if let Event::Key(key) = event {
-                    if key.kind == KeyEventKind::Press {
-                        let action = self.get_action(key.code, key.modifiers);
-                        enum DotfileIntent {
-                            None,
-                            ToggleSelection(usize),
-                            ToggleBackup,
-                            CreateCustom,
-                        }
-                        let mut intent = DotfileIntent::None;
-
-                        if let Some(action) = action {
-                            use crate::keymap::Action;
-                            let state = &mut self.ui_state.dotfile_selection;
-                            match action {
-                                Action::MoveUp => {
-                                    if state.focus == DotfileSelectionFocus::FilesList {
-                                        state.dotfile_list_state.select_previous();
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::Preview
-                                        && state.preview_scroll > 0
-                                    {
-                                        state.preview_scroll =
-                                            state.preview_scroll.saturating_sub(1);
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserList
-                                    {
-                                        state.file_browser_list_state.select_previous();
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                        && state.file_browser_preview_scroll > 0
-                                    {
-                                        state.file_browser_preview_scroll =
-                                            state.file_browser_preview_scroll.saturating_sub(1);
-                                    }
-                                }
-                                Action::MoveDown => {
-                                    if state.focus == DotfileSelectionFocus::FilesList {
-                                        state.dotfile_list_state.select_next();
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::Preview {
-                                        state.preview_scroll =
-                                            state.preview_scroll.saturating_add(1);
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserList
-                                    {
-                                        state.file_browser_list_state.select_next();
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                    {
-                                        state.file_browser_preview_scroll =
-                                            state.file_browser_preview_scroll.saturating_add(1);
-                                    }
-                                }
-                                Action::Confirm => {
-                                    if state.file_browser_mode {
-                                        // File browser mode: Enter on list item
-                                        if state.focus == DotfileSelectionFocus::FileBrowserList {
-                                            if let Some(idx) =
-                                                state.file_browser_list_state.selected()
-                                            {
-                                                if idx < state.file_browser_entries.len() {
-                                                    let entry = &state.file_browser_entries[idx];
-
-                                                    // Handle special entries: ".." (parent) and "." (current folder)
-                                                    if entry == Path::new("..") {
-                                                        // Go to parent directory
-                                                        if let Some(parent) =
-                                                            state.file_browser_path.parent()
-                                                        {
-                                                            let parent_path = parent.to_path_buf();
-                                                            state.file_browser_path =
-                                                                parent_path.clone();
-                                                            state.file_browser_path_input = state
-                                                                .file_browser_path
-                                                                .to_string_lossy()
-                                                                .to_string();
-                                                            state.file_browser_path_cursor = state
-                                                                .file_browser_path_input
-                                                                .chars()
-                                                                .count();
-                                                            state
-                                                                .file_browser_list_state
-                                                                .select(Some(0));
-                                                            self.ui_state
-                                                                .dotfile_selection
-                                                                .file_browser_path =
-                                                                state.file_browser_path.clone();
-                                                            self.refresh_file_browser()?;
-                                                        }
-                                                        return Ok(());
-                                                    } else if entry == Path::new(".") {
-                                                        // Add current folder
-                                                        let current_folder =
-                                                            state.file_browser_path.clone();
-                                                        let home_dir = crate::utils::get_home_dir();
-                                                        let relative_path = current_folder
-                                                            .strip_prefix(&home_dir)
-                                                            .map(|p| {
-                                                                p.to_string_lossy().to_string()
-                                                            })
-                                                            .unwrap_or_else(|_| {
-                                                                current_folder
-                                                                    .to_string_lossy()
-                                                                    .to_string()
-                                                            });
-
-                                                        // Sanity checks
-                                                        let repo_path = &self.config.repo_path;
-                                                        let (is_safe, reason) =
-                                                            crate::utils::is_safe_to_add(
-                                                                &current_folder,
-                                                                repo_path,
-                                                            );
-                                                        if !is_safe {
-                                                            state.status_message = Some(format!(
-                                                                "Error: {}. Path: {}",
-                                                                reason.unwrap_or_else(|| {
-                                                                    "Cannot add this folder"
-                                                                        .to_string()
-                                                                }),
-                                                                current_folder.display()
-                                                            ));
-                                                            return Ok(());
-                                                        }
-
-                                                        // Check if it's a git repo
-                                                        if crate::utils::is_git_repo(
-                                                            &current_folder,
-                                                        ) {
-                                                            state.status_message = Some(format!(
-                                                                "Error: Cannot sync a git repository. Path contains a .git directory: {}",
-                                                                current_folder.display()
-                                                            ));
-                                                            return Ok(());
-                                                        }
-
-                                                        // Show confirmation modal
-                                                        state.show_custom_file_confirm = true;
-                                                        state.custom_file_confirm_path =
-                                                            Some(current_folder.clone());
-                                                        state.custom_file_confirm_relative =
-                                                            Some(relative_path.clone());
-                                                        state.file_browser_mode = false;
-                                                        state.adding_custom_file = false;
-                                                        state.file_browser_path_input.clear();
-                                                        state.file_browser_path_cursor = 0;
-                                                        state.focus =
-                                                            DotfileSelectionFocus::FilesList;
-                                                        return Ok(());
-                                                    }
-
-                                                    // Regular entry: file or directory
-                                                    let full_path = if entry.is_absolute() {
-                                                        entry.clone()
-                                                    } else {
-                                                        state.file_browser_path.join(entry)
-                                                    };
-
-                                                    if full_path.is_dir() {
-                                                        // Navigate into directory
-                                                        state.file_browser_path = full_path.clone();
-                                                        state.file_browser_path_input =
-                                                            full_path.to_string_lossy().to_string();
-                                                        state.file_browser_path_cursor = state
-                                                            .file_browser_path_input
-                                                            .chars()
-                                                            .count();
-                                                        state
-                                                            .file_browser_list_state
-                                                            .select(Some(0));
-                                                        self.ui_state
-                                                            .dotfile_selection
-                                                            .file_browser_path =
-                                                            state.file_browser_path.clone();
-                                                        self.refresh_file_browser()?;
-                                                    } else if full_path.is_file() {
-                                                        // It's a file - directly sync it
-                                                        let home_dir = crate::utils::get_home_dir();
-                                                        let relative_path = full_path
-                                                            .strip_prefix(&home_dir)
-                                                            .map(|p| {
-                                                                p.to_string_lossy().to_string()
-                                                            })
-                                                            .unwrap_or_else(|_| {
-                                                                full_path
-                                                                    .to_string_lossy()
-                                                                    .to_string()
-                                                            });
-
-                                                        // Close browser first
-                                                        let relative_path_clone =
-                                                            relative_path.clone();
-                                                        let full_path_clone = full_path.clone();
-                                                        state.file_browser_mode = false;
-                                                        state.adding_custom_file = false;
-                                                        state.file_browser_path_input.clear();
-                                                        state.file_browser_path_cursor = 0;
-                                                        state.focus =
-                                                            DotfileSelectionFocus::FilesList;
-                                                        let _ = state; // Release borrow
-
-                                                        // Add the file directly to the dotfiles list and sync it
-                                                        self.add_custom_file_to_sync(
-                                                            &full_path_clone,
-                                                            &relative_path_clone,
-                                                        )?;
-
-                                                        // Re-scan to refresh the list
-                                                        self.scan_dotfiles()?;
-
-                                                        // Find and select the file in the list
-                                                        let file_index_opt = {
-                                                            let state =
-                                                                &self.ui_state.dotfile_selection;
-                                                            state.dotfiles.iter().position(|d| {
-                                                                d.relative_path.to_string_lossy()
-                                                                    == relative_path_clone
-                                                            })
-                                                        };
-                                                        if let Some(index) = file_index_opt {
-                                                            let _ = self.add_file_to_sync(index);
-                                                            let state = &mut self
-                                                                .ui_state
-                                                                .dotfile_selection;
-                                                            state
-                                                                .dotfile_list_state
-                                                                .select(Some(index));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            return Ok(());
-                                        } else if state.focus
-                                            == DotfileSelectionFocus::FileBrowserInput
-                                        {
-                                            // Enter in input field - load path
-                                            let path_str = state.file_browser_path_input.trim();
-                                            if !path_str.is_empty() {
-                                                let full_path = crate::utils::expand_path(path_str);
-
-                                                if full_path.exists() {
-                                                    if full_path.is_dir() {
-                                                        state.file_browser_path = full_path.clone();
-                                                        state.file_browser_path_input = state
-                                                            .file_browser_path
-                                                            .to_string_lossy()
-                                                            .to_string();
-                                                        state.file_browser_path_cursor = state
-                                                            .file_browser_path_input
-                                                            .chars()
-                                                            .count();
-                                                        state
-                                                            .file_browser_list_state
-                                                            .select(Some(0));
-                                                        state.focus =
-                                                            DotfileSelectionFocus::FileBrowserList;
-                                                        self.ui_state
-                                                            .dotfile_selection
-                                                            .file_browser_path =
-                                                            state.file_browser_path.clone();
-                                                        self.refresh_file_browser()?;
-                                                    } else {
-                                                        // It's a file - directly sync it
-                                                        let home_dir = crate::utils::get_home_dir();
-                                                        let relative_path = full_path
-                                                            .strip_prefix(&home_dir)
-                                                            .map(|p| {
-                                                                p.to_string_lossy().to_string()
-                                                            })
-                                                            .unwrap_or_else(|_| {
-                                                                full_path
-                                                                    .to_string_lossy()
-                                                                    .to_string()
-                                                            });
-
-                                                        state.file_browser_mode = false;
-                                                        state.adding_custom_file = false;
-                                                        state.file_browser_path_input.clear();
-                                                        state.file_browser_path_cursor = 0;
-                                                        state.focus =
-                                                            DotfileSelectionFocus::FilesList;
-
-                                                        self.scan_dotfiles()?;
-
-                                                        let file_index = {
-                                                            let state =
-                                                                &self.ui_state.dotfile_selection;
-                                                            state.dotfiles.iter().position(|d| {
-                                                                d.relative_path.to_string_lossy()
-                                                                    == relative_path
-                                                            })
-                                                        };
-
-                                                        if let Some(index) = file_index {
-                                                            let _ = self.add_file_to_sync(index);
-                                                            let state = &mut self
-                                                                .ui_state
-                                                                .dotfile_selection;
-                                                            state
-                                                                .dotfile_list_state
-                                                                .select(Some(index));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else if state.status_message.is_some() {
-                                        state.status_message = None;
-                                    } else if let Some(idx) = state.dotfile_list_state.selected() {
-                                        intent = DotfileIntent::ToggleSelection(idx);
-                                    }
-                                }
-                                Action::NextTab => {
-                                    if state.file_browser_mode {
-                                        // In file browser mode: cycle through List -> Preview -> Input -> List
-                                        state.focus = match state.focus {
-                                            DotfileSelectionFocus::FileBrowserList => {
-                                                state.file_browser_path_focused = false;
-                                                DotfileSelectionFocus::FileBrowserPreview
-                                            }
-                                            DotfileSelectionFocus::FileBrowserPreview => {
-                                                state.file_browser_path_focused = true;
-                                                DotfileSelectionFocus::FileBrowserInput
-                                            }
-                                            DotfileSelectionFocus::FileBrowserInput => {
-                                                state.file_browser_path_focused = false;
-                                                DotfileSelectionFocus::FileBrowserList
-                                            }
-                                            _ => {
-                                                state.file_browser_path_focused = false;
-                                                DotfileSelectionFocus::FileBrowserList
-                                            }
-                                        };
-                                    } else {
-                                        // Normal mode: switch between FilesList and Preview
-                                        state.focus = match state.focus {
-                                            DotfileSelectionFocus::FilesList => {
-                                                DotfileSelectionFocus::Preview
-                                            }
-                                            DotfileSelectionFocus::Preview => {
-                                                DotfileSelectionFocus::FilesList
-                                            }
-                                            _ => DotfileSelectionFocus::FilesList,
-                                        };
-                                    }
-                                }
-                                Action::PageUp => {
-                                    if state.focus == DotfileSelectionFocus::FilesList {
-                                        state.dotfile_list_state.page_up(10, state.dotfiles.len());
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::Preview
-                                        && state.preview_scroll > 0
-                                    {
-                                        state.preview_scroll =
-                                            state.preview_scroll.saturating_sub(20);
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserList
-                                    {
-                                        state.file_browser_list_state.page_up(10, state.file_browser_entries.len());
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                        && state.file_browser_preview_scroll > 0
-                                    {
-                                        state.file_browser_preview_scroll =
-                                            state.file_browser_preview_scroll.saturating_sub(20);
-                                    }
-                                }
-                                Action::PageDown => {
-                                    if state.focus == DotfileSelectionFocus::FilesList {
-                                        state.dotfile_list_state.page_down(10, state.dotfiles.len());
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::Preview {
-                                        state.preview_scroll =
-                                            state.preview_scroll.saturating_add(20);
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserList
-                                    {
-                                        state.file_browser_list_state.page_down(10, state.file_browser_entries.len());
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                    {
-                                        state.file_browser_preview_scroll =
-                                            state.file_browser_preview_scroll.saturating_add(20);
-                                    }
-                                }
-                                Action::ScrollUp => {
-                                    if state.focus == DotfileSelectionFocus::Preview
-                                        && state.preview_scroll > 0
-                                    {
-                                        state.preview_scroll =
-                                            state.preview_scroll.saturating_sub(10);
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                        && state.file_browser_preview_scroll > 0
-                                    {
-                                        state.file_browser_preview_scroll =
-                                            state.file_browser_preview_scroll.saturating_sub(10);
-                                    }
-                                    return Ok(());
-                                }
-                                Action::ScrollDown => {
-                                    if state.focus == DotfileSelectionFocus::Preview {
-                                        state.preview_scroll =
-                                            state.preview_scroll.saturating_add(10);
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                    {
-                                        state.file_browser_preview_scroll =
-                                            state.file_browser_preview_scroll.saturating_add(10);
-                                    }
-                                    return Ok(());
-                                }
-                                Action::GoToTop => {
-                                    if state.focus == DotfileSelectionFocus::FilesList {
-                                        state.dotfile_list_state.select_first();
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::Preview {
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserList
-                                    {
-                                        state.file_browser_list_state.select_first();
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                    {
-                                        state.file_browser_preview_scroll = 0;
-                                    }
-                                }
-                                Action::GoToEnd => {
-                                    if state.focus == DotfileSelectionFocus::FilesList {
-                                        state.dotfile_list_state.select_last();
-                                        state.preview_scroll = 0;
-                                    } else if state.focus == DotfileSelectionFocus::Preview {
-                                        // Scroll preview to end
-                                        if let Some(selected_index) =
-                                            state.dotfile_list_state.selected()
-                                        {
-                                            if selected_index < state.dotfiles.len() {
-                                                let dotfile = &state.dotfiles[selected_index];
-                                                // Calculate max scroll: read file and get line count
-                                                if let Ok(content) =
-                                                    std::fs::read_to_string(&dotfile.original_path)
-                                                {
-                                                    let total_lines = content.lines().count();
-                                                    // Estimate visible height (will be clamped during render)
-                                                    // Use a reasonable estimate: terminal height minus header/footer/borders
-                                                    let estimated_visible = 20; // Conservative estimate
-                                                    let max_scroll = total_lines
-                                                        .saturating_sub(estimated_visible)
-                                                        .max(0);
-                                                    state.preview_scroll = max_scroll;
-                                                } else {
-                                                    // If file can't be read, set to large number
-                                                    state.preview_scroll = 10000;
-                                                }
-                                            }
-                                        }
-                                    } else if state.focus == DotfileSelectionFocus::FileBrowserList
-                                    {
-                                        state.file_browser_list_state.select_last();
-                                    } else if state.focus
-                                        == DotfileSelectionFocus::FileBrowserPreview
-                                    {
-                                        // Scroll file browser preview to end
-                                        if let Some(selected) =
-                                            state.file_browser_list_state.selected()
-                                        {
-                                            if selected < state.file_browser_entries.len() {
-                                                let entry = &state.file_browser_entries[selected];
-                                                let full_path = if entry.is_absolute() {
-                                                    entry.clone()
-                                                } else {
-                                                    state.file_browser_path.join(entry)
-                                                };
-                                                if full_path.is_file() {
-                                                    if let Ok(content) =
-                                                        std::fs::read_to_string(&full_path)
-                                                    {
-                                                        let total_lines = content.lines().count();
-                                                        let estimated_visible = 20;
-                                                        let max_scroll = total_lines
-                                                            .saturating_sub(estimated_visible)
-                                                            .max(0);
-                                                        state.file_browser_preview_scroll =
-                                                            max_scroll;
-                                                    } else {
-                                                        state.file_browser_preview_scroll = 10000;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Action::Create => {
-                                    intent = DotfileIntent::CreateCustom;
-                                }
-                                Action::ToggleBackup => {
-                                    intent = DotfileIntent::ToggleBackup;
-                                }
-                                Action::Cancel | Action::Quit => {
-                                    self.ui_state.current_screen = Screen::MainMenu;
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        // Execute Intent
-                        match intent {
-                            DotfileIntent::ToggleSelection(idx) => {
-                                // Need to release state borrow?
-                                // state was borrowed in the loop.
-                                // Wait, intent lets us drop state.
-                                let was_selected = self
-                                    .ui_state
-                                    .dotfile_selection
-                                    .selected_for_sync
-                                    .contains(&idx);
-                                if was_selected {
-                                    self.remove_file_from_sync(idx)?;
-                                } else {
-                                    self.add_file_to_sync(idx)?;
-                                }
-                            }
-                            DotfileIntent::CreateCustom => {
-                                let state = &mut self.ui_state.dotfile_selection;
-                                state.adding_custom_file = true;
-                                state.file_browser_mode = true;
-                                state.file_browser_path = crate::utils::get_home_dir();
-                                state.file_browser_selected = 0;
-                                state.file_browser_path_input =
-                                    state.file_browser_path.to_string_lossy().to_string();
-                                state.file_browser_path_cursor =
-                                    state.file_browser_path_input.chars().count();
-                                state.file_browser_path_focused = false;
-                                state.file_browser_preview_scroll = 0;
-                                state.focus = DotfileSelectionFocus::FileBrowserList;
-                                self.refresh_file_browser()?;
-                            }
-                            DotfileIntent::ToggleBackup => {
-                                let state = &mut self.ui_state.dotfile_selection;
-                                state.backup_enabled = !state.backup_enabled;
-                                self.config.backup_enabled = state.backup_enabled;
-                                self.config.save(&self.config_path)?;
-                            }
-                            DotfileIntent::None => {}
-                        }
-                    }
-                }
+                // Router pattern - delegate to screen's handle_event method
+                use crate::screens::ScreenContext;
+                let ctx = ScreenContext::new(&self.config, &self.config_path);
+                let action = self.dotfile_selection_screen.handle_event(event, &ctx)?;
+                self.process_screen_action(action)?;
                 return Ok(());
             }
             Screen::ProfileSelection => {
-                // Check warning status (using separate scope or simple check)
-                let show_exit_warning = self.ui_state.profile_selection.show_exit_warning;
-
-                if show_exit_warning {
-                    if let Event::Key(key) = event {
-                        if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
-                            self.ui_state.profile_selection.show_exit_warning = false;
-                            self.ui_state.current_screen = Screen::MainMenu;
-                            self.ui_state.profile_selection = Default::default();
-                        }
-                    }
-                    return Ok(());
-                }
-
-                if let Event::Key(key) = event {
-                    if key.kind == KeyEventKind::Press {
-                        // Check for keymap action first, WITHOUT borrowing state
-                        let action = self.get_action(key.code, key.modifiers);
-
-                        // Define intent enum to separate decision from execution
-                        enum ConfirmIntent {
-                            None,
-                            Create(String),
-                            Activate(String),
-                        }
-
-                        let mut confirm_intent = ConfirmIntent::None;
-
-                        if let Some(action) = action {
-                            use crate::keymap::Action;
-                            match action {
-                                Action::MoveUp => {
-                                    let state = &mut self.ui_state.profile_selection;
-                                    if state.show_create_popup {
-                                        use crate::utils::text_input::handle_cursor_movement;
-                                        handle_cursor_movement(
-                                            &state.create_name_input,
-                                            &mut state.create_name_cursor,
-                                            key.code,
-                                        );
-                                    } else if let Some(current) = state.list_state.selected() {
-                                        if current > 0 {
-                                            state.list_state.select(Some(current - 1));
-                                        } else {
-                                            state.list_state.select(Some(state.profiles.len()));
-                                        }
-                                    } else if !state.profiles.is_empty() {
-                                        state.list_state.select(Some(state.profiles.len()));
-                                    }
-                                }
-                                Action::MoveDown => {
-                                    let state = &mut self.ui_state.profile_selection;
-                                    if state.show_create_popup {
-                                        use crate::utils::text_input::handle_cursor_movement;
-                                        handle_cursor_movement(
-                                            &state.create_name_input,
-                                            &mut state.create_name_cursor,
-                                            key.code,
-                                        );
-                                    } else if let Some(current) = state.list_state.selected() {
-                                        if current < state.profiles.len() {
-                                            state.list_state.select(Some(current + 1));
-                                        } else {
-                                            state.list_state.select(Some(0));
-                                        }
-                                    } else if !state.profiles.is_empty() {
-                                        state.list_state.select(Some(0));
-                                    }
-                                }
-                                Action::Confirm => {
-                                    // Collect intent using state
-                                    let state = &mut self.ui_state.profile_selection;
-                                    if state.show_create_popup {
-                                        let profile_name =
-                                            state.create_name_input.trim().to_string();
-                                        if !profile_name.is_empty() {
-                                            state.show_create_popup = false;
-                                            confirm_intent = ConfirmIntent::Create(profile_name);
-                                        }
-                                    } else if let Some(idx) = state.list_state.selected() {
-                                        if idx == state.profiles.len() {
-                                            // Create new profile selected
-                                            state.show_create_popup = true;
-                                            state.create_name_input.clear();
-                                            state.create_name_cursor = 0;
-                                        } else if let Some(name) = state.profiles.get(idx) {
-                                            confirm_intent = ConfirmIntent::Activate(name.clone());
-                                        }
-                                    }
-                                }
-                                Action::Quit | Action::Cancel => {
-                                    let state = &mut self.ui_state.profile_selection;
-                                    if state.show_create_popup {
-                                        state.show_create_popup = false;
-                                        state.create_name_input.clear();
-                                    } else {
-                                        state.show_exit_warning = true;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            // Raw input for popup
-                            let state = &mut self.ui_state.profile_selection;
-                            if state.show_create_popup {
-                                use crate::utils::text_input::handle_input;
-                                handle_input(
-                                    &mut state.create_name_input,
-                                    &mut state.create_name_cursor,
-                                    key.code,
-                                );
-                            }
-                        }
-
-                        // Execute intent (without state borrow)
-                        match confirm_intent {
-                            ConfirmIntent::Create(name) => {
-                                match self.create_profile(&name, None, None) {
-                                    Ok(_) => {
-                                        let manifest = self.load_manifest()?;
-                                        let state = &mut self.ui_state.profile_selection;
-                                        state.profiles = manifest
-                                            .profiles
-                                            .iter()
-                                            .map(|p| p.name.clone())
-                                            .collect();
-                                        if let Some(idx) =
-                                            state.profiles.iter().position(|n| n == &name)
-                                        {
-                                            state.list_state.select(Some(idx));
-                                        }
-
-                                        // Activate logic
-                                        if let Err(e) = self.activate_profile_after_setup(&name) {
-                                            error!("Failed to activate: {}", e);
-                                            self.message_component = Some(MessageComponent::new(
-                                                "Activation Failed".to_string(),
-                                                e.to_string(),
-                                                Screen::MainMenu,
-                                            ));
-                                        } else {
-                                            self.ui_state.current_screen = Screen::MainMenu;
-                                            self.ui_state.profile_selection = Default::default();
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to create profile: {}", e);
-                                        let state = &mut self.ui_state.profile_selection;
-                                        state.show_create_popup = true;
-                                        self.message_component = Some(MessageComponent::new(
-                                            "Creation Failed".to_string(),
-                                            format!("Failed to create profile: {}", e),
-                                            Screen::ProfileSelection,
-                                        ));
-                                        // return Ok(()); // Fall through
-                                    }
-                                }
-                            }
-                            ConfirmIntent::Activate(name) => {
-                                if let Err(e) = self.activate_profile_after_setup(&name) {
-                                    error!("Failed to activate: {}", e);
-                                    self.message_component = Some(MessageComponent::new(
-                                        "Activation Failed".to_string(),
-                                        e.to_string(),
-                                        Screen::MainMenu,
-                                    ));
-                                } else {
-                                    self.ui_state.current_screen = Screen::MainMenu;
-                                    self.ui_state.profile_selection = Default::default();
-                                }
-                            }
-                            ConfirmIntent::None => {}
-                        }
-                    }
-                }
+                // Router pattern - delegate to screen's handle_event method
+                use crate::screens::ScreenContext;
+                let ctx = ScreenContext::new(&self.config, &self.config_path);
+                let action = self.profile_selection_screen.handle_event(event, &ctx)?;
+                self.process_screen_action(action)?;
                 return Ok(());
             }
             Screen::ManagePackages => {
@@ -3184,6 +2186,11 @@ impl App {
                 self.ui_state.dotfile_selection.status_message = None;
                 // Sync backup_enabled from config
                 self.ui_state.dotfile_selection.backup_enabled = self.config.backup_enabled;
+                // Sync state with screen
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
             }
             Screen::GitHubAuth => {
                 // Setup git repository
@@ -3280,583 +2287,211 @@ impl App {
             ScreenAction::ShowHelp => {
                 self.ui_state.show_help_overlay = true;
             }
-        }
-        Ok(())
-    }
+            ScreenAction::SaveLocalRepoConfig { repo_path, profiles } => {
+                // Save local repo configuration
+                self.config.repo_mode = crate::config::RepoMode::Local;
+                self.config.repo_path = repo_path.clone();
+                self.config.github = None;
 
-    fn handle_github_auth_input(&mut self, key: KeyEvent) -> Result<()> {
-        use crate::keymap::Action;
-        use crate::ui::SetupMode;
-
-        // Common action lookup
-        let action = self.get_action(key.code, key.modifiers);
-
-        let auth_state = &mut self.ui_state.github_auth;
-        auth_state.error_message = None;
-
-        // Handle setup mode selection first (before step-based handling)
-        match auth_state.setup_mode {
-            SetupMode::Choosing => {
-                // Handle mode selection screen
-                // Use Keymap Actions first
-                if let Some(action) = action {
-                    match action {
-                        Action::MoveUp => {
-                            if auth_state.mode_selection_index > 0 {
-                                auth_state.mode_selection_index -= 1;
-                            }
-                            return Ok(());
-                        }
-                        Action::MoveDown => {
-                            if auth_state.mode_selection_index < 1 {
-                                auth_state.mode_selection_index += 1;
-                            }
-                            return Ok(());
-                        }
-                        Action::Confirm => {
-                            // Select mode and transition
-                            if auth_state.mode_selection_index == 0 {
-                                auth_state.setup_mode = SetupMode::GitHub;
-                            } else {
-                                auth_state.setup_mode = SetupMode::Local;
-                                auth_state.input_focused = true;
-                            }
-                            return Ok(());
-                        }
-                        Action::Cancel | Action::Quit => {
-                            self.ui_state.current_screen = Screen::MainMenu;
-                            *auth_state = Default::default();
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            SetupMode::Local => {
-                // Handle local setup screen
-                return self.handle_local_setup_input(key);
-            }
-            SetupMode::GitHub => {
-                // Continue to existing GitHub setup handling below
-            }
-        }
-
-        match auth_state.step {
-            GitHubAuthStep::Input => {
-                // Handle "Update Token" action if repo is configured
-                if auth_state.repo_already_configured && !auth_state.is_editing_token {
-                    // Check for 'u' (Update) or Action::Edit
-                    if let Some(Action::Edit) = action {
-                        // Enable token editing
-                        auth_state.is_editing_token = true;
-                        auth_state.token_input = String::new();
-                        auth_state.cursor_position = 0;
-                        auth_state.focused_field = GitHubAuthField::Token;
-                        return Ok(());
-                    }
-                    if let Some(Action::Cancel | Action::Quit) = action {
-                        self.ui_state.current_screen = Screen::MainMenu;
-                        *auth_state = Default::default();
-                        return Ok(());
-                    }
-                }
-
-                // Check for Save/Confirm action (Ctrl+S or Enter)
-                if matches!(action, Some(Action::Save) | Some(Action::Confirm)) {
-                    if auth_state.repo_already_configured && auth_state.is_editing_token {
-                        // Just update the token
-                        self.update_github_token()?;
-                    } else if !auth_state.repo_already_configured {
-                        // Full setup - initialize state machine
-                        let token = auth_state.token_input.trim().to_string();
-                        let repo_name = self.config.repo_name.clone();
-
-                        // Validate token format first
-                        if !token.starts_with("ghp_") {
-                            let actual_start = if token.len() >= 4 {
-                                &token[..4]
-                            } else {
-                                "too short"
-                            };
-                            auth_state.error_message = Some(
-                                format!("❌ Invalid token format: Must start with 'ghp_' but starts with '{}'.\n\
-                                See help for more details.", actual_start)
-                            );
-                            return Ok(());
-                        }
-
-                        if token.len() < 40 {
-                            auth_state.error_message = Some(format!(
-                                "❌ Token appears incomplete: {} characters (expected 40+).",
-                                token.len()
-                            ));
-                            return Ok(());
-                        }
-
-                        // Initialize setup state machine
-                        auth_state.step =
-                            GitHubAuthStep::SetupStep(crate::ui::GitHubSetupStep::Connecting);
-                        auth_state.status_message = Some("🔌 Connecting to GitHub...".to_string());
-                        auth_state.setup_data = Some(crate::ui::GitHubSetupData {
-                            token,
-                            repo_name,
-                            username: None,
-                            repo_exists: None,
-                            is_private: auth_state.is_private,
-                            delay_until: Some(
-                                std::time::Instant::now() + Duration::from_millis(500),
-                            ),
-                            is_new_repo: false,
-                        });
-                        *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
-                    }
+                if let Err(e) = self.config.save(&self.config_path) {
+                    self.github_auth_screen.get_auth_state_mut().error_message =
+                        Some(format!("Failed to save config: {}", e));
                     return Ok(());
                 }
 
-                // Normal input handling - check for navigation/editing actions from keymap
-                // Input mode allows NextTab, PrevTab, Home, End, Backspace, DeleteChar, Cancel, Confirm
-                if let Some(act) = action {
-                    match act {
-                        Action::Cancel | Action::Quit => {
-                            self.ui_state.current_screen = Screen::MainMenu;
-                            *auth_state = Default::default();
-                            return Ok(());
-                        }
-                        Action::NextTab if !auth_state.repo_already_configured => {
-                            auth_state.focused_field = match auth_state.focused_field {
-                                GitHubAuthField::Token => GitHubAuthField::RepoName,
-                                GitHubAuthField::RepoName => GitHubAuthField::RepoLocation,
-                                GitHubAuthField::RepoLocation => GitHubAuthField::IsPrivate,
-                                GitHubAuthField::IsPrivate => GitHubAuthField::Token,
-                            };
-                            auth_state.cursor_position = match auth_state.focused_field {
-                                GitHubAuthField::Token => auth_state.token_input.chars().count(),
-                                GitHubAuthField::RepoName => {
-                                    auth_state.repo_name_input.chars().count()
-                                }
-                                GitHubAuthField::RepoLocation => {
-                                    auth_state.repo_location_input.chars().count()
-                                }
-                                GitHubAuthField::IsPrivate => 0,
-                            };
-                            return Ok(());
-                        }
-                        Action::PrevTab if !auth_state.repo_already_configured => {
-                            auth_state.focused_field = match auth_state.focused_field {
-                                GitHubAuthField::Token => GitHubAuthField::IsPrivate,
-                                GitHubAuthField::RepoName => GitHubAuthField::Token,
-                                GitHubAuthField::RepoLocation => GitHubAuthField::RepoName,
-                                GitHubAuthField::IsPrivate => GitHubAuthField::RepoLocation,
-                            };
-                            auth_state.cursor_position = match auth_state.focused_field {
-                                GitHubAuthField::Token => auth_state.token_input.chars().count(),
-                                GitHubAuthField::RepoName => {
-                                    auth_state.repo_name_input.chars().count()
-                                }
-                                GitHubAuthField::RepoLocation => {
-                                    auth_state.repo_location_input.chars().count()
-                                }
-                                GitHubAuthField::IsPrivate => 0,
-                            };
-                            return Ok(());
-                        }
-                        Action::MoveLeft => {
-                            let current_input = match auth_state.focused_field {
-                                GitHubAuthField::Token => &auth_state.token_input,
-                                GitHubAuthField::RepoName => &auth_state.repo_name_input,
-                                GitHubAuthField::RepoLocation => &auth_state.repo_location_input,
-                                GitHubAuthField::IsPrivate => "",
-                            };
-                            crate::utils::handle_cursor_movement(
-                                current_input,
-                                &mut auth_state.cursor_position,
-                                KeyCode::Left,
-                            );
-                            return Ok(());
-                        }
-                        Action::MoveRight => {
-                            let current_input = match auth_state.focused_field {
-                                GitHubAuthField::Token => &auth_state.token_input,
-                                GitHubAuthField::RepoName => &auth_state.repo_name_input,
-                                GitHubAuthField::RepoLocation => &auth_state.repo_location_input,
-                                GitHubAuthField::IsPrivate => "",
-                            };
-                            crate::utils::handle_cursor_movement(
-                                current_input,
-                                &mut auth_state.cursor_position,
-                                KeyCode::Right,
-                            );
-                            return Ok(());
-                        }
-                        Action::Home => {
-                            let text = match auth_state.focused_field {
-                                GitHubAuthField::Token => &auth_state.token_input,
-                                GitHubAuthField::RepoName => &auth_state.repo_name_input,
-                                GitHubAuthField::RepoLocation => &auth_state.repo_location_input,
-                                GitHubAuthField::IsPrivate => "",
-                            };
-                            crate::utils::handle_cursor_movement(
-                                text,
-                                &mut auth_state.cursor_position,
-                                KeyCode::Home,
-                            );
-                            return Ok(());
-                        }
-                        Action::End => {
-                            let text = match auth_state.focused_field {
-                                GitHubAuthField::Token => &auth_state.token_input,
-                                GitHubAuthField::RepoName => &auth_state.repo_name_input,
-                                GitHubAuthField::RepoLocation => &auth_state.repo_location_input,
-                                GitHubAuthField::IsPrivate => "",
-                            };
-                            crate::utils::handle_cursor_movement(
-                                text,
-                                &mut auth_state.cursor_position,
-                                KeyCode::End,
-                            );
-                            return Ok(());
-                        }
-                        Action::Backspace => {
-                            match auth_state.focused_field {
-                                GitHubAuthField::Token => crate::utils::handle_backspace(
-                                    &mut auth_state.token_input,
-                                    &mut auth_state.cursor_position,
-                                ),
-                                GitHubAuthField::RepoName => crate::utils::handle_backspace(
-                                    &mut auth_state.repo_name_input,
-                                    &mut auth_state.cursor_position,
-                                ),
-                                GitHubAuthField::RepoLocation => crate::utils::handle_backspace(
-                                    &mut auth_state.repo_location_input,
-                                    &mut auth_state.cursor_position,
-                                ),
-                                GitHubAuthField::IsPrivate => {}
-                            }
-                            return Ok(());
-                        }
-                        Action::DeleteChar => {
-                            match auth_state.focused_field {
-                                GitHubAuthField::Token => crate::utils::handle_delete(
-                                    &mut auth_state.token_input,
-                                    &mut auth_state.cursor_position,
-                                ),
-                                GitHubAuthField::RepoName => crate::utils::handle_delete(
-                                    &mut auth_state.repo_name_input,
-                                    &mut auth_state.cursor_position,
-                                ),
-                                GitHubAuthField::RepoLocation => crate::utils::handle_delete(
-                                    &mut auth_state.repo_location_input,
-                                    &mut auth_state.cursor_position,
-                                ),
-                                GitHubAuthField::IsPrivate => {}
-                            }
-                            return Ok(());
-                        }
-                        Action::ToggleSelect => {
-                            // Space toggle for IsPrivate
-                            if auth_state.focused_field == GitHubAuthField::IsPrivate
-                                && !auth_state.repo_already_configured
-                            {
-                                auth_state.is_private = !auth_state.is_private;
-                            }
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
+                // Verify git repository can be opened
+                if let Err(e) = crate::git::GitManager::open_or_init(&repo_path) {
+                    self.github_auth_screen.get_auth_state_mut().error_message =
+                        Some(format!("Failed to open repository: {}", e));
+                    return Ok(());
                 }
 
-                // Handle character input (only for text fields, not navigation)
-                if let KeyCode::Char(c) = key.code {
-                    // Regular char insertion for text fields
-                    match auth_state.focused_field {
-                        GitHubAuthField::Token
-                            if (!auth_state.repo_already_configured
-                                || auth_state.is_editing_token)
-                                && !key.modifiers.intersects(
-                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                                ) =>
-                        {
-                            crate::utils::handle_char_insertion(
-                                &mut auth_state.token_input,
-                                &mut auth_state.cursor_position,
-                                c,
-                            );
-                        }
-                        GitHubAuthField::RepoName
-                            if !auth_state.repo_already_configured
-                                && !key.modifiers.intersects(
-                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                                ) =>
-                        {
-                            crate::utils::handle_char_insertion(
-                                &mut auth_state.repo_name_input,
-                                &mut auth_state.cursor_position,
-                                c,
-                            );
-                        }
-                        GitHubAuthField::RepoLocation
-                            if !auth_state.repo_already_configured
-                                && !key.modifiers.intersects(
-                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                                ) =>
-                        {
-                            crate::utils::handle_char_insertion(
-                                &mut auth_state.repo_location_input,
-                                &mut auth_state.cursor_position,
-                                c,
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            GitHubAuthStep::Processing => {
-                // Should allow Cancel/Esc. Enter continues if done.
-                match action {
-                    Some(Action::Confirm) => {
-                        if !self.ui_state.profile_selection.profiles.is_empty() {
-                            self.ui_state.current_screen = Screen::ProfileSelection;
-                        } else {
-                            self.ui_state.current_screen = Screen::MainMenu;
-                            *auth_state = Default::default();
-                        }
-                    }
-                    Some(Action::Cancel | Action::Quit) => {
-                        self.ui_state.current_screen = Screen::MainMenu;
-                        *auth_state = Default::default();
-                    }
-                    _ => {}
-                }
-            }
-            GitHubAuthStep::SetupStep(_) => {
-                if let Some(Action::Cancel | Action::Quit) = action {
-                    *auth_state = Default::default();
+                if profiles.is_empty() {
+                    // No profiles, create default and go to main menu
+                    self.config.active_profile = "default".to_string();
+                    let _ = self.config.save(&self.config_path);
+                    self.github_auth_screen.reset();
+                    self.main_menu_screen.update_config(self.config.clone());
                     self.ui_state.current_screen = Screen::MainMenu;
+                } else {
+                    // Show profile selection
+                    self.ui_state.profile_selection.profiles = profiles;
+                    self.ui_state.profile_selection.list_state.select(Some(0));
+                    self.github_auth_screen.reset();
+                    self.ui_state.current_screen = Screen::ProfileSelection;
                 }
             }
-        }
-        Ok(())
-    }
+            ScreenAction::StartGitHubSetup {
+                token,
+                repo_name,
+                is_private,
+            } => {
+                // Initialize the GitHub setup state machine
+                use crate::ui::{GitHubAuthStep, GitHubSetupData, GitHubSetupStep};
+                use std::time::Duration;
 
-    /// Handle keyboard input for local setup screen
-    fn handle_local_setup_input(&mut self, key: KeyEvent) -> Result<()> {
-        use crate::keymap::Action;
-        use crate::ui::SetupMode;
-
-        let action = self.get_action(key.code, key.modifiers);
-        let auth_state = &mut self.ui_state.github_auth;
-        auth_state.error_message = None;
-
-        // If already configured, only allow Esc/Cancel to go back
-        if auth_state.repo_already_configured {
-            // Check Action::Cancel or Action::Quit
-            if let Some(Action::Cancel | Action::Quit) = action {
-                self.ui_state.current_screen = Screen::MainMenu;
-                *auth_state = Default::default();
+                let state = self.github_auth_screen.get_auth_state_mut();
+                state.step = GitHubAuthStep::SetupStep(GitHubSetupStep::Connecting);
+                state.status_message = Some("🔌 Connecting to GitHub...".to_string());
+                state.setup_data = Some(GitHubSetupData {
+                    token,
+                    repo_name,
+                    username: None,
+                    repo_exists: None,
+                    is_private,
+                    delay_until: Some(std::time::Instant::now() + Duration::from_millis(500)),
+                    is_new_repo: false,
+                });
             }
-            return Ok(());
-        }
-
-        // Check for Action::Confirm or Action::Save to validate and save
-        if matches!(action, Some(Action::Confirm | Action::Save)) {
-            // Validate local repo
-            let path_str = auth_state.local_repo_path_input.trim();
-            if path_str.is_empty() {
-                auth_state.error_message = Some("Please enter a repository path".to_string());
-                return Ok(());
+            ScreenAction::UpdateGitHubToken { token } => {
+                // Update just the GitHub token
+                if let Some(ref mut github) = self.config.github {
+                    github.token = Some(token.clone());
+                    if let Err(e) = self.config.save(&self.config_path) {
+                        self.github_auth_screen.get_auth_state_mut().error_message =
+                            Some(format!("Failed to save token: {}", e));
+                        return Ok(());
+                    }
+                    // Show success and reset
+                    self.github_auth_screen.get_auth_state_mut().status_message =
+                        Some("✅ Token updated successfully!".to_string());
+                    self.github_auth_screen.get_auth_state_mut().is_editing_token = false;
+                } else {
+                    self.github_auth_screen.get_auth_state_mut().error_message =
+                        Some("No GitHub configuration to update".to_string());
+                }
             }
-
-            let expanded_path = crate::git::expand_path(path_str);
-            let validation = crate::git::validate_local_repo(&expanded_path);
-
-            if !validation.is_valid {
-                auth_state.error_message = validation.error_message;
-                return Ok(());
-            }
-
-            // Validation passed - save config
-            auth_state.status_message = Some(format!(
-                "✅ Valid repository found!\n\nRemote: {}\n\nSaving configuration...",
-                validation.remote_url.as_deref().unwrap_or("unknown")
-            ));
-
-            // Update config for local mode
-            self.config.repo_mode = crate::config::RepoMode::Local;
-            self.config.repo_path = expanded_path.clone();
-            self.config.github = None; // Clear GitHub config for local mode
-
-            // Save config
-            if let Err(e) = self.config.save(&crate::utils::get_config_path()) {
-                auth_state.error_message = Some(format!("Failed to save config: {}", e));
-                auth_state.status_message = None;
-                return Ok(());
-            }
-
-            // Verify git repository can be opened
-            if let Err(e) = crate::git::GitManager::open_or_init(&expanded_path) {
-                auth_state.error_message = Some(format!("Failed to open repository: {}", e));
-                auth_state.status_message = None;
-                return Ok(());
-            }
-
-            // Load or create profile manifest
-            let manifest =
-                crate::utils::ProfileManifest::load_or_backfill(&expanded_path).unwrap_or_default();
-
-            // Set up profile selection
-            let profiles: Vec<String> = manifest.profiles.iter().map(|p| p.name.clone()).collect();
-
-            if profiles.is_empty() {
-                // No profiles found, create default profile
-                let default_profile = "default";
-                self.config.active_profile = default_profile.to_string();
-                self.config.save(&crate::utils::get_config_path())?;
-
-                // Go directly to main menu
-                self.ui_state.current_screen = Screen::MainMenu;
-                *auth_state = Default::default();
-
-                // Update main menu config
-                self.main_menu_screen.update_config(self.config.clone());
-            } else {
-                // Show profile selection
+            ScreenAction::ShowProfileSelection { profiles } => {
+                self.profile_selection_screen.set_profiles(profiles.clone());
+                // Also update ui_state for legacy code
                 self.ui_state.profile_selection.profiles = profiles;
                 self.ui_state.profile_selection.list_state.select(Some(0));
                 self.ui_state.current_screen = Screen::ProfileSelection;
-                *auth_state = Default::default();
             }
-
-            return Ok(());
-        }
-
-        if let Some(Action::Cancel | Action::Quit) = action {
-            auth_state.setup_mode = SetupMode::Choosing;
-            auth_state.error_message = None;
-            auth_state.status_message = None;
-            return Ok(());
-        }
-
-        match key.code {
-            KeyCode::Esc => {
-                // Go back to mode selection
-                auth_state.setup_mode = SetupMode::Choosing;
-                auth_state.error_message = None;
-                auth_state.status_message = None;
-            }
-            KeyCode::Char(c) => {
-                crate::utils::handle_char_insertion(
-                    &mut auth_state.local_repo_path_input,
-                    &mut auth_state.local_repo_path_cursor,
-                    c,
-                );
-            }
-            KeyCode::Backspace => {
-                crate::utils::handle_backspace(
-                    &mut auth_state.local_repo_path_input,
-                    &mut auth_state.local_repo_path_cursor,
-                );
-            }
-            KeyCode::Delete => {
-                crate::utils::handle_delete(
-                    &mut auth_state.local_repo_path_input,
-                    &mut auth_state.local_repo_path_cursor,
-                );
-            }
-            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                crate::utils::handle_cursor_movement(
-                    &auth_state.local_repo_path_input,
-                    &mut auth_state.local_repo_path_cursor,
-                    key.code,
-                );
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    fn update_github_token(&mut self) -> Result<()> {
-        let auth_state = &mut self.ui_state.github_auth;
-        let token = auth_state.token_input.trim().to_string();
-
-        // Validate token format
-        if token.is_empty() {
-            auth_state.error_message = Some("Token cannot be empty".to_string());
-            return Ok(());
-        }
-
-        if !token.starts_with("ghp_") {
-            auth_state.error_message =
-                Some("Token format error: GitHub tokens must start with 'ghp_'".to_string());
-            return Ok(());
-        }
-
-        if token.len() < 40 {
-            auth_state.error_message = Some(format!(
-                "Token appears incomplete: {} characters (expected 40+)",
-                token.len()
-            ));
-            return Ok(());
-        }
-
-        // Validate token with GitHub API
-        auth_state.status_message = Some("Validating token...".to_string());
-
-        let rt = Runtime::new()?;
-        let result = rt.block_on(async {
-            let client = reqwest::Client::new();
-            client
-                .get("https://api.github.com/user")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("User-Agent", "dotstate")
-                .send()
-                .await
-        });
-
-        match result {
-            Ok(response) if response.status().is_success() => {
-                // Token is valid, update config
-                if let Some(github) = &mut self.config.github {
-                    github.token = Some(token.clone());
-                    self.config.save(&crate::utils::get_config_path())?;
-
-                    auth_state.status_message = Some("Token updated successfully!".to_string());
-                    auth_state.is_editing_token = false;
-                    auth_state.token_input = String::new(); // Clear for security
-
-                    // Sync back to component
-                    *self.github_auth_screen.get_auth_state_mut() = auth_state.clone();
-                } else {
-                    auth_state.error_message = Some(
-                        "GitHub configuration not found. Please complete setup first.".to_string(),
-                    );
-                    auth_state.status_message = None;
+            ScreenAction::CreateAndActivateProfile { name } => {
+                // Create a new profile and activate it
+                match self.create_profile(&name, None, None) {
+                    Ok(_) => {
+                        // Activate the newly created profile
+                        if let Err(e) = self.activate_profile_after_setup(&name) {
+                            error!("Failed to activate profile: {}", e);
+                            self.message_component = Some(MessageComponent::new(
+                                "Activation Failed".to_string(),
+                                e.to_string(),
+                                Screen::MainMenu,
+                            ));
+                        } else {
+                            self.profile_selection_screen.reset();
+                            self.ui_state.profile_selection = Default::default();
+                            self.ui_state.current_screen = Screen::MainMenu;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to create profile: {}", e);
+                        self.message_component = Some(MessageComponent::new(
+                            "Creation Failed".to_string(),
+                            format!("Failed to create profile: {}", e),
+                            Screen::ProfileSelection,
+                        ));
+                    }
                 }
             }
-            Ok(response) => {
-                let status = response.status();
-                auth_state.error_message = Some(format!(
-                    "Token validation failed: HTTP {}\nPlease check your token.",
-                    status
-                ));
-                auth_state.status_message = None;
+            ScreenAction::ActivateProfile { name } => {
+                // Activate an existing profile
+                if let Err(e) = self.activate_profile_after_setup(&name) {
+                    error!("Failed to activate profile: {}", e);
+                    self.message_component = Some(MessageComponent::new(
+                        "Activation Failed".to_string(),
+                        e.to_string(),
+                        Screen::MainMenu,
+                    ));
+                } else {
+                    self.profile_selection_screen.reset();
+                    self.ui_state.profile_selection = Default::default();
+                    self.ui_state.current_screen = Screen::MainMenu;
+                }
             }
-            Err(e) => {
-                auth_state.error_message = Some(format!(
-                    "Network error: {}\nPlease check your internet connection.",
-                    e
-                ));
-                auth_state.status_message = None;
+            // Dotfile selection actions
+            ScreenAction::ScanDotfiles => {
+                self.scan_dotfiles()?;
+                // Copy state back to screen
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+            }
+            ScreenAction::RefreshFileBrowser => {
+                // Copy state from screen to ui_state first
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+                self.refresh_file_browser()?;
+                // Copy back
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+            }
+            ScreenAction::ToggleFileSync { file_index, is_synced } => {
+                // Copy state from screen to ui_state first
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+                if is_synced {
+                    self.remove_file_from_sync(file_index)?;
+                } else {
+                    self.add_file_to_sync(file_index)?;
+                }
+                // Copy back
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+            }
+            ScreenAction::AddCustomFileToSync { full_path, relative_path } => {
+                // Copy state from screen to ui_state first
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+
+                if let Err(e) = self.add_custom_file_to_sync(&full_path, &relative_path) {
+                    self.ui_state.dotfile_selection.status_message =
+                        Some(format!("Error: Failed to sync file: {}", e));
+                } else {
+                    // Re-scan to refresh the list
+                    self.scan_dotfiles()?;
+
+                    // Find and select the file in the list
+                    if let Some(index) = self.ui_state.dotfile_selection.dotfiles.iter().position(|d| {
+                        d.relative_path.to_string_lossy() == relative_path
+                    }) {
+                        self.ui_state.dotfile_selection.dotfile_list_state.select(Some(index));
+                        self.ui_state.dotfile_selection.selected_for_sync.insert(index);
+                    }
+                }
+
+                // Copy back
+                std::mem::swap(
+                    &mut self.ui_state.dotfile_selection,
+                    self.dotfile_selection_screen.get_state_mut(),
+                );
+            }
+            ScreenAction::SetBackupEnabled { enabled } => {
+                self.config.backup_enabled = enabled;
+                self.config.save(&self.config_path)?;
             }
         }
-
         Ok(())
     }
 
     /// Process one step of the GitHub setup state machine
     /// Called from the event loop to allow UI updates between steps
     fn process_github_setup_step(&mut self) -> Result<()> {
-        let auth_state = &mut self.ui_state.github_auth;
+        // Clone the screen's state to work with (avoids borrow checker issues)
+        let mut auth_state = self.github_auth_screen.get_auth_state().clone();
 
         // Get setup_data, cloning if needed to avoid borrow issues
         let setup_data_opt = auth_state.setup_data.clone();
@@ -3865,6 +2500,7 @@ impl App {
             None => {
                 // No setup data, reset to input
                 auth_state.step = GitHubAuthStep::Input;
+                *self.github_auth_screen.get_auth_state_mut() = auth_state;
                 return Ok(());
             }
         };
@@ -3874,6 +2510,7 @@ impl App {
             if std::time::Instant::now() < delay_until {
                 // Still waiting, don't process yet - save state and return
                 auth_state.setup_data = Some(setup_data);
+                *self.github_auth_screen.get_auth_state_mut() = auth_state;
                 return Ok(());
             }
             // Delay complete, clear it
@@ -3886,6 +2523,7 @@ impl App {
         } else {
             // Not in setup, clear data
             auth_state.setup_data = Some(setup_data);
+            *self.github_auth_screen.get_auth_state_mut() = auth_state;
             return Ok(());
         };
 
@@ -4303,171 +2941,6 @@ impl App {
         Ok(())
     }
 
-    /// Handle input for adding custom files
-    fn handle_custom_file_input(&mut self, key_code: KeyCode) -> Result<()> {
-        use crate::ui::DotfileSelectionFocus;
-        let state = &mut self.ui_state.dotfile_selection;
-
-        // When input is not focused, only allow Enter to focus or Esc to cancel
-        if !state.custom_file_focused {
-            match key_code {
-                KeyCode::Enter => {
-                    state.custom_file_focused = true;
-                    return Ok(());
-                }
-                KeyCode::Esc => {
-                    state.adding_custom_file = false;
-                    state.custom_file_input.clear();
-                    state.custom_file_cursor = 0;
-                    return Ok(());
-                }
-                _ => {
-                    // Ignore all other keys when not focused (including characters)
-                    return Ok(());
-                }
-            }
-        }
-
-        // When focused, handle all input - characters are captured FIRST before any other logic
-        match key_code {
-            // Character input - capture ALL characters including 's', 'a', 'q', etc.
-            // Text input handling - use text input utility
-            KeyCode::Char(c) => {
-                crate::utils::handle_char_insertion(
-                    &mut state.custom_file_input,
-                    &mut state.custom_file_cursor,
-                    c,
-                );
-                return Ok(());
-            }
-            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                crate::utils::handle_cursor_movement(
-                    &state.custom_file_input,
-                    &mut state.custom_file_cursor,
-                    key_code,
-                );
-            }
-            KeyCode::Backspace => {
-                crate::utils::handle_backspace(
-                    &mut state.custom_file_input,
-                    &mut state.custom_file_cursor,
-                );
-            }
-            KeyCode::Delete => {
-                crate::utils::handle_delete(
-                    &mut state.custom_file_input,
-                    &mut state.custom_file_cursor,
-                );
-            }
-            KeyCode::Tab => {
-                state.custom_file_focused = false;
-            }
-            KeyCode::Enter => {
-                let path_str = state.custom_file_input.trim();
-                if path_str.is_empty() {
-                    state.status_message = Some("Error: File path cannot be empty".to_string());
-                } else {
-                    // Validate and add the file - use path utility
-                    let path_str_clone = path_str.to_string();
-                    let full_path = crate::utils::expand_path(path_str);
-
-                    if !full_path.exists() {
-                        state.status_message =
-                            Some(format!("Error: File does not exist: {:?}", full_path));
-                    } else {
-                        // Calculate relative path
-                        let home_dir = crate::utils::get_home_dir();
-                        let relative_path = match full_path.strip_prefix(&home_dir) {
-                            Ok(p) => p.to_string_lossy().to_string(),
-                            Err(_) => path_str_clone.clone(),
-                        };
-
-                        // Store paths before releasing borrow
-                        let relative_path_clone = relative_path.clone();
-                        let full_path_clone = full_path.clone();
-
-                        // Close custom input mode
-                        state.adding_custom_file = false;
-                        state.custom_file_input.clear();
-                        state.custom_file_cursor = 0;
-                        state.focus = DotfileSelectionFocus::FilesList;
-
-                        // Comprehensive validation before showing confirmation
-                        let previously_synced: std::collections::HashSet<String> = self
-                            .get_active_profile_info()
-                            .ok()
-                            .flatten()
-                            .map(|p| p.synced_files.iter().cloned().collect())
-                            .unwrap_or_default();
-
-                        let validation = crate::utils::sync_validation::validate_before_sync(
-                            &relative_path_clone,
-                            &full_path_clone,
-                            &previously_synced,
-                            &self.config.repo_path,
-                        );
-
-                        if !validation.is_safe {
-                            let state = &mut self.ui_state.dotfile_selection;
-                            state.status_message = validation.error_message.clone();
-                            return Ok(());
-                        }
-
-                        // Show confirmation modal
-                        let state = &mut self.ui_state.dotfile_selection;
-                        state.show_custom_file_confirm = true;
-                        state.custom_file_confirm_path = Some(full_path_clone.clone());
-                        state.custom_file_confirm_relative = Some(relative_path_clone.clone());
-                        state.file_browser_mode = false;
-                        state.adding_custom_file = false;
-                        state.file_browser_path_input.clear();
-                        state.file_browser_path_cursor = 0;
-                        state.focus = DotfileSelectionFocus::FilesList;
-
-                        // Re-scan to refresh the list
-                        self.scan_dotfiles()?;
-
-                        // Add custom file to list if it's synced but not in scanned list
-                        let state = &mut self.ui_state.dotfile_selection;
-                        if !state
-                            .dotfiles
-                            .iter()
-                            .any(|d| d.relative_path.to_string_lossy() == relative_path_clone)
-                        {
-                            // File is synced but not in default list, add it manually
-                            use crate::file_manager::Dotfile;
-                            state.dotfiles.push(Dotfile {
-                                original_path: full_path_clone.clone(),
-                                relative_path: PathBuf::from(&relative_path_clone),
-                                synced: true,
-                                description: None,
-                            });
-                        }
-
-                        // Find and select the file in the list
-                        if let Some(index) = state
-                            .dotfiles
-                            .iter()
-                            .position(|d| d.relative_path.to_string_lossy() == relative_path_clone)
-                        {
-                            state.dotfile_list_state.select(Some(index));
-                            // Mark as selected for sync
-                            state.selected_for_sync.insert(index);
-                        }
-                    }
-                }
-            }
-            KeyCode::Esc => {
-                state.adding_custom_file = false;
-                state.custom_file_input.clear();
-                state.custom_file_cursor = 0;
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
     /// Add a single file to sync (copy to repo, create symlink, update manifest)
     fn add_file_to_sync(&mut self, file_index: usize) -> Result<()> {
         use crate::services::SyncService;
@@ -4613,128 +3086,6 @@ impl App {
     }
 
 
-    /// Handle input for file browser
-    fn handle_file_browser_input(&mut self, key_code: KeyCode) -> Result<()> {
-        use crate::ui::DotfileSelectionFocus;
-        let state = &mut self.ui_state.dotfile_selection;
-
-        // Handle path input if focused
-        if state.file_browser_path_focused && state.focus == DotfileSelectionFocus::FileBrowserInput
-        {
-            match key_code {
-                // Text input handling - use text input utility
-                KeyCode::Char(c) => {
-                    crate::utils::handle_char_insertion(
-                        &mut state.file_browser_path_input,
-                        &mut state.file_browser_path_cursor,
-                        c,
-                    );
-                    return Ok(());
-                }
-                KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                    crate::utils::handle_cursor_movement(
-                        &state.file_browser_path_input,
-                        &mut state.file_browser_path_cursor,
-                        key_code,
-                    );
-                    return Ok(());
-                }
-                KeyCode::Backspace => {
-                    crate::utils::handle_backspace(
-                        &mut state.file_browser_path_input,
-                        &mut state.file_browser_path_cursor,
-                    );
-                    return Ok(());
-                }
-                KeyCode::Delete => {
-                    crate::utils::handle_delete(
-                        &mut state.file_browser_path_input,
-                        &mut state.file_browser_path_cursor,
-                    );
-                    return Ok(());
-                }
-                KeyCode::Enter => {
-                    // Load path from input into file browser
-                    let path_str = state.file_browser_path_input.trim();
-                    if !path_str.is_empty() {
-                        let full_path = crate::utils::expand_path(path_str);
-
-                        if full_path.exists() {
-                            if full_path.is_dir() {
-                                state.file_browser_path = full_path.clone();
-                                // Update path input to show the new directory
-                                state.file_browser_path_input =
-                                    state.file_browser_path.to_string_lossy().to_string();
-                                state.file_browser_path_cursor =
-                                    state.file_browser_path_input.chars().count();
-                                state.file_browser_list_state.select(Some(0));
-                                state.focus = DotfileSelectionFocus::FileBrowserList;
-                                // Refresh after updating path
-                                self.ui_state.dotfile_selection.file_browser_path =
-                                    state.file_browser_path.clone();
-                                self.refresh_file_browser()?;
-                                return Ok(());
-                            } else {
-                                // It's a file - directly sync it
-                                let home_dir = crate::utils::get_home_dir();
-                                let relative_path = full_path
-                                    .strip_prefix(&home_dir)
-                                    .map(|p| p.to_string_lossy().to_string())
-                                    .unwrap_or_else(|_| full_path.to_string_lossy().to_string());
-
-                                // Close browser first
-                                state.file_browser_mode = false;
-                                state.adding_custom_file = false;
-                                state.file_browser_path_input.clear();
-                                state.file_browser_path_cursor = 0;
-                                state.focus = DotfileSelectionFocus::FilesList;
-
-                                // Store relative_path before releasing borrow
-                                let relative_path_clone = relative_path.clone();
-
-                                // Release borrow
-                                let _ = state;
-
-                                // Re-scan to include the new file
-                                self.scan_dotfiles()?;
-
-                                // Find the file index and sync it
-                                let file_index = {
-                                    let state = &self.ui_state.dotfile_selection;
-                                    state.dotfiles.iter().position(|d| {
-                                        d.relative_path.to_string_lossy() == relative_path_clone
-                                    })
-                                };
-
-                                if let Some(index) = file_index {
-                                    // Sync the file immediately
-                                    let _ = self.add_file_to_sync(index);
-                                    // Select the file
-                                    let state = &mut self.ui_state.dotfile_selection;
-                                    state.dotfile_list_state.select(Some(index));
-                                }
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-                KeyCode::Tab => {
-                    // Tab in input field - switch to next focus area (handled by Action::NextTab in main handler)
-                    // For now, allow Tab to unfocus input and go to list
-                    state.file_browser_path_focused = false;
-                    state.focus = DotfileSelectionFocus::FileBrowserList;
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
-
-        // Navigation is now handled by keymap actions in the main event handler
-        // This function only handles text input for the path field when in input mode
-
-        Ok(())
-    }
-
     /// Refresh file browser entries for current directory
     fn refresh_file_browser(&mut self) -> Result<()> {
         let state = &mut self.ui_state.dotfile_selection;
@@ -4819,6 +3170,7 @@ impl App {
     }
 
     /// Helper: Load manifest from repo
+    #[allow(dead_code)]
     fn load_manifest(&self) -> Result<crate::utils::ProfileManifest> {
         crate::services::ProfileService::load_manifest(&self.config.repo_path)
     }

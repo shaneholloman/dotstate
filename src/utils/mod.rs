@@ -1,5 +1,4 @@
 pub mod backup_manager;
-pub mod form;
 pub mod layout;
 pub mod list_navigation;
 pub mod package_installer;
@@ -28,7 +27,6 @@ pub use style::{
     input_text_style, unfocused_border_style,
 };
 pub use symlink_manager::SymlinkManager;
-pub use form::{Form, FormField};
 pub use list_navigation::{ListStateExt, DEFAULT_PAGE_SIZE};
 pub use syntax_theme::get_current_syntax_theme;
 pub use text_input::{
