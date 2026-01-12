@@ -167,6 +167,33 @@ pub enum ScreenAction {
         /// Whether backups are enabled.
         enabled: bool,
     },
+    // Profile management actions
+    /// Create a new profile.
+    CreateProfile {
+        /// Name of the new profile.
+        name: String,
+        /// Optional description.
+        description: Option<String>,
+        /// Index of profile to copy from.
+        copy_from: Option<usize>,
+    },
+    /// Switch to a different profile by name.
+    SwitchProfile {
+        /// Name of the profile to switch to.
+        name: String,
+    },
+    /// Rename a profile.
+    RenameProfile {
+        /// Current name of the profile.
+        old_name: String,
+        /// New name for the profile.
+        new_name: String,
+    },
+    /// Delete a profile.
+    DeleteProfile {
+        /// Name of the profile to delete.
+        name: String,
+    },
 }
 
 impl Default for ScreenAction {

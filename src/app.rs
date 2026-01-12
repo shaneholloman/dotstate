@@ -1,10 +1,10 @@
 use crate::components::package_manager::PackageManagerComponent;
-use crate::components::profile_manager::ProfilePopupType;
+
 use crate::components::{
-    Component, ComponentAction, MessageComponent, ProfileManagerComponent,
+    Component, ComponentAction, MessageComponent,
 };
 use crate::config::{Config, GitHubConfig};
-use crate::screens::{GitHubAuthScreen, MainMenuScreen, Screen as ScreenTrait, SyncWithRemoteScreen, ViewSyncedFilesScreen};
+use crate::screens::{GitHubAuthScreen, MainMenuScreen, ManageProfilesScreen, Screen as ScreenTrait, SyncWithRemoteScreen, ViewSyncedFilesScreen};
 use crate::git::GitManager;
 use crate::github::GitHubClient;
 use crate::tui::Tui;
@@ -12,7 +12,7 @@ use crate::ui::{
     AddPackageField, GitHubAuthStep, GitHubSetupStep, InstallationStep, PackagePopupType,
     PackageStatus, Screen, UiState,
 };
-use crate::utils::list_navigation::ListStateExt;
+
 use crate::utils::profile_manifest::PackageManager;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -73,7 +73,7 @@ pub struct App {
     view_synced_files_screen: ViewSyncedFilesScreen,
     sync_with_remote_screen: SyncWithRemoteScreen,
     profile_selection_screen: crate::screens::ProfileSelectionScreen,
-    profile_manager_component: ProfileManagerComponent,
+    manage_profiles_screen: ManageProfilesScreen,
     package_manager_component: PackageManagerComponent,
     message_component: Option<MessageComponent>,
     // Syntax highlighting assets
@@ -125,7 +125,7 @@ impl App {
             view_synced_files_screen: ViewSyncedFilesScreen::new(config_clone),
             sync_with_remote_screen: SyncWithRemoteScreen::new(),
             profile_selection_screen: crate::screens::ProfileSelectionScreen::new(),
-            profile_manager_component: ProfileManagerComponent::new(),
+            manage_profiles_screen: ManageProfilesScreen::new(),
             package_manager_component: PackageManagerComponent::new(),
 
             message_component: None,
@@ -484,17 +484,17 @@ impl App {
                     }
                 }
                 Screen::ManageProfiles => {
-                    // Component handles all rendering including Clear
-                    // Profiles already obtained before closure (we need to get them here too)
-                    // Actually, we can't call self.get_profiles() inside the closure
-                    // We need to get them before the closure
-                    // For now, let's get them from the manifest directly
-                    let repo_path = config_clone.repo_path.clone();
-                    let profiles: Vec<crate::utils::ProfileInfo> = crate::utils::ProfileManifest::load_or_backfill(&repo_path)
-                        .unwrap_or_default()
-                        .profiles;
-                    if let Err(e) = self.profile_manager_component.render_with_config(frame, area, &config_clone, &profiles, &mut self.ui_state.profile_manager) {
-                        eprintln!("Error rendering profile manager: {}", e);
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{Screen as ScreenTrait, RenderContext};
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                    let ctx = RenderContext::new(
+                        &config_clone,
+                        &self.syntax_set,
+                        &self.theme_set,
+                        &syntax_theme,
+                    );
+                    if let Err(e) = self.manage_profiles_screen.render(frame, area, &ctx) {
+                        error!("Failed to render manage profiles screen: {}", e);
                     }
                 }
                 Screen::ManagePackages => {
@@ -563,13 +563,10 @@ impl App {
                 self.profile_selection_screen.is_input_focused()
             }
 
-            // Manage Profiles - create/rename/delete popups
+            // Manage Profiles - delegated to screen
             Screen::ManageProfiles => {
-                use crate::components::profile_manager::ProfilePopupType;
-                matches!(
-                    self.ui_state.profile_manager.popup_type,
-                    ProfilePopupType::Create | ProfilePopupType::Rename | ProfilePopupType::Delete
-                )
+                use crate::screens::Screen as ScreenTrait;
+                self.manage_profiles_screen.is_input_focused()
             }
 
             // Package Manager - add/edit/delete popups with text input
@@ -1278,890 +1275,13 @@ impl App {
                 return Ok(());
             }
             Screen::ManageProfiles => {
-                // Get profiles from manifest
-                let profiles = self.get_profiles().unwrap_or_default();
-
-                // Handle popup events first
-                if self.ui_state.profile_manager.popup_type != ProfilePopupType::None {
-                    // Handle popup events inline
-                    match event {
-                        Event::Key(key) if key.kind == KeyEventKind::Press => {
-                            // Get action before borrowing state
-                            let action = self.get_action(key.code, key.modifiers);
-                            let state = &mut self.ui_state.profile_manager;
-                            use crate::keymap::Action;
-
-                            match state.popup_type {
-                                ProfilePopupType::Create => {
-                                    use crate::components::profile_manager::CreateField;
-
-                                    // Handle keymap actions first
-                                    if let Some(action) = action {
-                                        match action {
-                                            Action::Cancel => {
-                                                state.popup_type = ProfilePopupType::None;
-                                                return Ok(());
-                                            }
-                                            Action::NextTab => {
-                                                // Switch to next field
-                                                state.create_focused_field = match state
-                                                    .create_focused_field
-                                                {
-                                                    CreateField::Name => CreateField::Description,
-                                                    CreateField::Description => {
-                                                        CreateField::CopyFrom
-                                                    }
-                                                    CreateField::CopyFrom => CreateField::Name,
-                                                };
-                                                return Ok(());
-                                            }
-                                            Action::PrevTab => {
-                                                // Switch to previous field
-                                                state.create_focused_field = match state
-                                                    .create_focused_field
-                                                {
-                                                    CreateField::Name => CreateField::CopyFrom,
-                                                    CreateField::Description => CreateField::Name,
-                                                    CreateField::CopyFrom => {
-                                                        CreateField::Description
-                                                    }
-                                                };
-                                                return Ok(());
-                                            }
-                                            Action::Confirm => {
-                                                // Enter always creates the profile (if name is filled)
-                                                // If Copy From is focused, select the current item first, then create
-                                                if state.create_focused_field
-                                                    == CreateField::CopyFrom
-                                                {
-                                                    // Get current UI index (0 = "Start Blank", 1+ = profiles)
-                                                    let ui_current =
-                                                        if let Some(idx) = state.create_copy_from {
-                                                            idx + 1
-                                                        } else {
-                                                            0
-                                                        };
-
-                                                    if ui_current == 0 {
-                                                        // "Start Blank" is selected, keep it
-                                                        state.create_copy_from = None;
-                                                    } else {
-                                                        // Select the current profile
-                                                        let profile_idx = ui_current - 1;
-                                                        state.create_copy_from = Some(profile_idx);
-                                                    }
-                                                }
-
-                                                // Create profile (Enter always creates, regardless of focus)
-                                                if !state.create_name_input.is_empty() {
-                                                    let name = state.create_name_input.clone();
-                                                    let description = if state
-                                                        .create_description_input
-                                                        .is_empty()
-                                                    {
-                                                        None
-                                                    } else {
-                                                        Some(state.create_description_input.clone())
-                                                    };
-                                                    let copy_from = state.create_copy_from;
-                                                    let name_clone = name.clone();
-                                                    let description_clone = description.clone();
-                                                    {
-                                                        let _ = state;
-                                                    }
-                                                    match self.create_profile(
-                                                        &name_clone,
-                                                        description_clone,
-                                                        copy_from,
-                                                    ) {
-                                                        Ok(_) => {
-                                                            self.config = Config::load_or_create(
-                                                                &self.config_path,
-                                                            )?;
-                                                            self.ui_state
-                                                                .profile_manager
-                                                                .popup_type =
-                                                                ProfilePopupType::None;
-                                                            self.ui_state
-                                                                .profile_manager
-                                                                .create_name_input
-                                                                .clear();
-                                                            self.ui_state
-                                                                .profile_manager
-                                                                .create_description_input
-                                                                .clear();
-                                                            self.ui_state
-                                                                .profile_manager
-                                                                .create_focused_field =
-                                                                CreateField::Name;
-                                                            if let Ok(profiles) =
-                                                                self.get_profiles()
-                                                            {
-                                                                if !profiles.is_empty() {
-                                                                    let new_idx = profiles
-                                                                        .iter()
-                                                                        .position(|p| {
-                                                                            p.name == name
-                                                                        })
-                                                                        .unwrap_or(
-                                                                            profiles
-                                                                                .len()
-                                                                                .saturating_sub(1),
-                                                                        );
-                                                                    self.ui_state
-                                                                        .profile_manager
-                                                                        .list_state
-                                                                        .select(Some(new_idx));
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            error!(
-                                                                "Failed to create profile: {}",
-                                                                e
-                                                            );
-                                                            self.message_component = Some(MessageComponent::new(
-                                                                "Profile Creation Failed".to_string(),
-                                                                format!("Failed to create profile '{}':\n{}", name, e),
-                                                                Screen::ManageProfiles,
-                                                            ));
-                                                        }
-                                                    }
-                                                }
-                                                return Ok(());
-                                            }
-                                            Action::ToggleSelect => {
-                                                // Space toggles Copy From selection when Copy From is focused
-                                                if state.create_focused_field
-                                                    == CreateField::CopyFrom
-                                                {
-                                                    let ui_current =
-                                                        if let Some(idx) = state.create_copy_from {
-                                                            idx + 1
-                                                        } else {
-                                                            0
-                                                        };
-
-                                                    if ui_current == 0 {
-                                                        state.create_copy_from = None;
-                                                    } else {
-                                                        let profile_idx = ui_current - 1;
-                                                        if state.create_copy_from
-                                                            == Some(profile_idx)
-                                                        {
-                                                            state.create_copy_from = None;
-                                                        } else {
-                                                            state.create_copy_from =
-                                                                Some(profile_idx);
-                                                        }
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                // Otherwise treat space as character input in text fields
-                                                // Fall through to character handling
-                                            }
-                                            Action::MoveUp => {
-                                                // Navigate Copy From list
-                                                if state.create_focused_field
-                                                    == CreateField::CopyFrom
-                                                {
-                                                    let ui_current =
-                                                        if let Some(idx) = state.create_copy_from {
-                                                            idx + 1
-                                                        } else {
-                                                            0
-                                                        };
-
-                                                    if ui_current > 0 {
-                                                        if ui_current == 1 {
-                                                            state.create_copy_from = None;
-                                                        } else {
-                                                            state.create_copy_from =
-                                                                Some(ui_current - 2);
-                                                        }
-                                                    } else if !profiles.is_empty() {
-                                                        state.create_copy_from =
-                                                            Some(profiles.len() - 1);
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                // For text fields, fall through to cursor movement
-                                            }
-                                            Action::MoveDown => {
-                                                // Navigate Copy From list
-                                                if state.create_focused_field
-                                                    == CreateField::CopyFrom
-                                                {
-                                                    let ui_current =
-                                                        if let Some(idx) = state.create_copy_from {
-                                                            idx + 1
-                                                        } else {
-                                                            0
-                                                        };
-
-                                                    let max_ui_idx = profiles.len();
-                                                    if ui_current < max_ui_idx {
-                                                        if ui_current == 0 {
-                                                            state.create_copy_from = Some(0);
-                                                        } else {
-                                                            state.create_copy_from =
-                                                                Some(ui_current);
-                                                        }
-                                                    } else {
-                                                        state.create_copy_from = None;
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                // For text fields, fall through to cursor movement
-                                            }
-                                            Action::MoveLeft
-                                            | Action::MoveRight
-                                            | Action::Home
-                                            | Action::End => {
-                                                // Cursor movement in text fields - handled below
-                                                // Fall through
-                                            }
-                                            Action::Backspace | Action::DeleteChar => {
-                                                // Text editing - handled below
-                                                // Fall through
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-
-                                    // Handle text editing and character input (only if action wasn't handled above)
-                                    // Check if we need to handle text editing actions or character input
-                                    let handled_by_action = if let Some(action) = action {
-                                        matches!(
-                                            action,
-                                            Action::MoveLeft
-                                                | Action::MoveRight
-                                                | Action::Home
-                                                | Action::End
-                                                | Action::Backspace
-                                                | Action::DeleteChar
-                                                | Action::ToggleSelect
-                                        )
-                                    } else {
-                                        false
-                                    };
-
-                                    if !handled_by_action {
-                                        // Handle text editing actions that fell through
-                                        if let Some(action) = action {
-                                            match action {
-                                                Action::MoveLeft | Action::MoveRight => {
-                                                    let key_code = match action {
-                                                        Action::MoveLeft => KeyCode::Left,
-                                                        Action::MoveRight => KeyCode::Right,
-                                                        _ => return Ok(()),
-                                                    };
-                                                    match state.create_focused_field {
-                                                        CreateField::Name => {
-                                                            crate::utils::text_input::handle_cursor_movement(&state.create_name_input, &mut state.create_name_cursor, key_code);
-                                                        }
-                                                        CreateField::Description => {
-                                                            crate::utils::text_input::handle_cursor_movement(&state.create_description_input, &mut state.create_description_cursor, key_code);
-                                                        }
-                                                        CreateField::CopyFrom => {}
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                Action::Home | Action::End => {
-                                                    let key_code = match action {
-                                                        Action::Home => KeyCode::Home,
-                                                        Action::End => KeyCode::End,
-                                                        _ => return Ok(()),
-                                                    };
-                                                    match state.create_focused_field {
-                                                        CreateField::Name => {
-                                                            crate::utils::text_input::handle_cursor_movement(&state.create_name_input, &mut state.create_name_cursor, key_code);
-                                                        }
-                                                        CreateField::Description => {
-                                                            crate::utils::text_input::handle_cursor_movement(&state.create_description_input, &mut state.create_description_cursor, key_code);
-                                                        }
-                                                        CreateField::CopyFrom => {}
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                Action::Backspace => {
-                                                    match state.create_focused_field {
-                                                        CreateField::Name => {
-                                                            if !state.create_name_input.is_empty() {
-                                                                crate::utils::text_input::handle_backspace(
-                                                                    &mut state.create_name_input,
-                                                                    &mut state.create_name_cursor,
-                                                                );
-                                                            }
-                                                        }
-                                                        CreateField::Description => {
-                                                            if !state
-                                                                .create_description_input
-                                                                .is_empty()
-                                                            {
-                                                                crate::utils::text_input::handle_backspace(
-                                                                    &mut state.create_description_input,
-                                                                    &mut state.create_description_cursor,
-                                                                );
-                                                            }
-                                                        }
-                                                        CreateField::CopyFrom => {}
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                Action::DeleteChar => {
-                                                    match state.create_focused_field {
-                                                        CreateField::Name => {
-                                                            if !state.create_name_input.is_empty() {
-                                                                crate::utils::text_input::handle_delete(
-                                                                    &mut state.create_name_input,
-                                                                    &mut state.create_name_cursor,
-                                                                );
-                                                            }
-                                                        }
-                                                        CreateField::Description => {
-                                                            if !state
-                                                                .create_description_input
-                                                                .is_empty()
-                                                            {
-                                                                crate::utils::text_input::handle_delete(
-                                                                    &mut state.create_description_input,
-                                                                    &mut state.create_description_cursor,
-                                                                );
-                                                            }
-                                                        }
-                                                        CreateField::CopyFrom => {}
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                Action::ToggleSelect => {
-                                                    // Space in text fields - treat as character
-                                                    match state.create_focused_field {
-                                                        CreateField::Name => {
-                                                            crate::utils::text_input::handle_char_insertion(&mut state.create_name_input, &mut state.create_name_cursor, ' ');
-                                                        }
-                                                        CreateField::Description => {
-                                                            crate::utils::text_input::handle_char_insertion(&mut state.create_description_input, &mut state.create_description_cursor, ' ');
-                                                        }
-                                                        CreateField::CopyFrom => {}
-                                                    }
-                                                    return Ok(());
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-
-                                        // Handle character input
-                                        if let KeyCode::Char(c) = key.code {
-                                            if !key.modifiers.intersects(
-                                                KeyModifiers::CONTROL
-                                                    | KeyModifiers::ALT
-                                                    | KeyModifiers::SUPER,
-                                            ) {
-                                                match state.create_focused_field {
-                                                    CreateField::Name => {
-                                                        crate::utils::text_input::handle_char_insertion(
-                                                            &mut state.create_name_input,
-                                                            &mut state.create_name_cursor,
-                                                            c,
-                                                        );
-                                                    }
-                                                    CreateField::Description => {
-                                                        crate::utils::text_input::handle_char_insertion(
-                                                            &mut state.create_description_input,
-                                                            &mut state.create_description_cursor,
-                                                            c,
-                                                        );
-                                                    }
-                                                    CreateField::CopyFrom => {}
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                ProfilePopupType::Switch => {
-                                    if let Some(action) = action {
-                                        match action {
-                                            Action::Cancel => {
-                                                state.popup_type = ProfilePopupType::None;
-                                                return Ok(());
-                                            }
-                                            Action::Confirm => {
-                                                // Switch profile
-                                                if let Some(idx) = state.list_state.selected() {
-                                                    if let Some(profile) = profiles.get(idx) {
-                                                        let profile_name = profile.name.clone();
-                                                        {
-                                                            let _ = state;
-                                                            let _ = profiles;
-                                                        }
-                                                        match self.switch_profile(&profile_name) {
-                                                            Ok(_) => {
-                                                                self.config =
-                                                                    Config::load_or_create(
-                                                                        &self.config_path,
-                                                                    )?;
-                                                                self.ui_state
-                                                                    .profile_manager
-                                                                    .popup_type =
-                                                                    ProfilePopupType::None;
-                                                                if let Ok(profiles) =
-                                                                    self.get_profiles()
-                                                                {
-                                                                    if !profiles.is_empty() {
-                                                                        let new_idx = profiles
-                                                                            .iter()
-                                                                            .position(|p| {
-                                                                                p.name
-                                                                                    == profile_name
-                                                                            })
-                                                                            .unwrap_or(0);
-                                                                        self.ui_state
-                                                                            .profile_manager
-                                                                            .list_state
-                                                                            .select(Some(new_idx));
-                                                                    }
-                                                                }
-                                                            }
-                                                            Err(e) => {
-                                                                error!(
-                                                                    "Failed to switch profile: {}",
-                                                                    e
-                                                                );
-                                                                self.ui_state
-                                                                    .profile_manager
-                                                                    .popup_type =
-                                                                    ProfilePopupType::None;
-                                                                self.message_component = Some(MessageComponent::new(
-                                                                    "Error".to_string(),
-                                                                    format!("Failed to switch profile: {}", e),
-                                                                    Screen::ManageProfiles,
-                                                                ));
-                                                            }
-                                                        }
-                                                        return Ok(());
-                                                    }
-                                                }
-                                                return Ok(());
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                                ProfilePopupType::Rename => {
-                                    if let Some(action) = action {
-                                        match action {
-                                            Action::Cancel => {
-                                                state.popup_type = ProfilePopupType::None;
-                                                return Ok(());
-                                            }
-                                            Action::Confirm => {
-                                                // Rename profile
-                                                if !state.rename_input.is_empty() {
-                                                    if let Some(idx) = state.list_state.selected() {
-                                                        if let Some(profile) = profiles.get(idx) {
-                                                            let old_name = profile.name.clone();
-                                                            let new_name =
-                                                                state.rename_input.clone();
-                                                            let old_name_clone = old_name.clone();
-                                                            let new_name_clone = new_name.clone();
-                                                            {
-                                                                let _ = state;
-                                                                let _ = profiles;
-                                                            }
-                                                            match self.rename_profile(
-                                                                &old_name_clone,
-                                                                &new_name_clone,
-                                                            ) {
-                                                                Ok(_) => {
-                                                                    self.config =
-                                                                        Config::load_or_create(
-                                                                            &self.config_path,
-                                                                        )?;
-                                                                    self.ui_state
-                                                                        .profile_manager
-                                                                        .popup_type =
-                                                                        ProfilePopupType::None;
-                                                                    if let Ok(profiles) =
-                                                                        self.get_profiles()
-                                                                    {
-                                                                        if !profiles.is_empty() {
-                                                                            let new_idx = profiles
-                                                                                .iter()
-                                                                                .position(|p| {
-                                                                                    p.name
-                                                                                        == new_name
-                                                                                })
-                                                                                .unwrap_or(0);
-                                                                            self.ui_state
-                                                                                .profile_manager
-                                                                                .list_state
-                                                                                .select(Some(
-                                                                                    new_idx,
-                                                                                ));
-                                                                        }
-                                                                    }
-                                                                }
-                                                                Err(e) => {
-                                                                    error!("Failed to rename profile: {}", e);
-                                                                    self.message_component = Some(MessageComponent::new(
-                                                                        "Profile Rename Failed".to_string(),
-                                                                        format!("Failed to rename profile '{}' to '{}':\n{}", old_name, new_name, e),
-                                                                        Screen::ManageProfiles,
-                                                                    ));
-                                                                }
-                                                            }
-                                                            return Ok(());
-                                                        }
-                                                    }
-                                                }
-                                                return Ok(());
-                                            }
-                                            Action::MoveLeft | Action::MoveRight => {
-                                                let key_code = match action {
-                                                    Action::MoveLeft => KeyCode::Left,
-                                                    Action::MoveRight => KeyCode::Right,
-                                                    _ => return Ok(()),
-                                                };
-                                                crate::utils::text_input::handle_cursor_movement(
-                                                    &state.rename_input,
-                                                    &mut state.rename_cursor,
-                                                    key_code,
-                                                );
-                                                return Ok(());
-                                            }
-                                            Action::Backspace => {
-                                                if !state.rename_input.is_empty() {
-                                                    crate::utils::text_input::handle_backspace(
-                                                        &mut state.rename_input,
-                                                        &mut state.rename_cursor,
-                                                    );
-                                                }
-                                                return Ok(());
-                                            }
-                                            Action::DeleteChar => {
-                                                if !state.rename_input.is_empty() {
-                                                    crate::utils::text_input::handle_delete(
-                                                        &mut state.rename_input,
-                                                        &mut state.rename_cursor,
-                                                    );
-                                                }
-                                                return Ok(());
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-
-                                    // Handle character input
-                                    if let KeyCode::Char(c) = key.code {
-                                        if !key.modifiers.intersects(
-                                            KeyModifiers::CONTROL
-                                                | KeyModifiers::ALT
-                                                | KeyModifiers::SUPER,
-                                        ) {
-                                            crate::utils::text_input::handle_char_insertion(
-                                                &mut state.rename_input,
-                                                &mut state.rename_cursor,
-                                                c,
-                                            );
-                                        }
-                                    }
-                                }
-                                ProfilePopupType::Delete => {
-                                    if let Some(action) = action {
-                                        match action {
-                                            Action::Cancel => {
-                                                state.popup_type = ProfilePopupType::None;
-                                                return Ok(());
-                                            }
-                                            Action::Confirm => {
-                                                // Delete profile
-                                                if let Some(idx) = state.list_state.selected() {
-                                                    if let Some(profile) = profiles.get(idx) {
-                                                        if state.delete_confirm_input
-                                                            == profile.name
-                                                        {
-                                                            let profile_name = profile.name.clone();
-                                                            let idx_clone = idx;
-                                                            let profile_name_clone =
-                                                                profile_name.clone();
-                                                            {
-                                                                let _ = state;
-                                                                let _ = profiles;
-                                                            }
-                                                            match self
-                                                                .delete_profile(&profile_name_clone)
-                                                            {
-                                                                Ok(_) => {
-                                                                    self.config =
-                                                                        Config::load_or_create(
-                                                                            &self.config_path,
-                                                                        )?;
-                                                                    self.ui_state
-                                                                        .profile_manager
-                                                                        .popup_type =
-                                                                        ProfilePopupType::None;
-                                                                    if let Ok(profiles) =
-                                                                        self.get_profiles()
-                                                                    {
-                                                                        if !profiles.is_empty() {
-                                                                            let new_idx = idx_clone
-                                                                                .min(
-                                                                                    profiles
-                                                                                        .len()
-                                                                                        .saturating_sub(
-                                                                                            1,
-                                                                                        ),
-                                                                                );
-                                                                            self.ui_state
-                                                                                .profile_manager
-                                                                                .list_state
-                                                                                .select(Some(
-                                                                                    new_idx,
-                                                                                ));
-                                                                        } else {
-                                                                            self.ui_state
-                                                                                .profile_manager
-                                                                                .list_state
-                                                                                .select(None);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                Err(e) => {
-                                                                    error!("Failed to delete profile: {}", e);
-                                                                    self.ui_state
-                                                                        .profile_manager
-                                                                        .popup_type =
-                                                                        ProfilePopupType::None;
-                                                                    self.message_component = Some(MessageComponent::new(
-                                                                        "Error".to_string(),
-                                                                        format!("Failed to delete profile: {}", e),
-                                                                        Screen::ManageProfiles,
-                                                                    ));
-                                                                }
-                                                            }
-                                                            return Ok(());
-                                                        }
-                                                    }
-                                                }
-                                                return Ok(());
-                                            }
-                                            Action::MoveLeft | Action::MoveRight => {
-                                                let key_code = match action {
-                                                    Action::MoveLeft => KeyCode::Left,
-                                                    Action::MoveRight => KeyCode::Right,
-                                                    _ => return Ok(()),
-                                                };
-                                                crate::utils::text_input::handle_cursor_movement(
-                                                    &state.delete_confirm_input,
-                                                    &mut state.delete_confirm_cursor,
-                                                    key_code,
-                                                );
-                                                return Ok(());
-                                            }
-                                            Action::Backspace => {
-                                                if !state.delete_confirm_input.is_empty() {
-                                                    crate::utils::text_input::handle_backspace(
-                                                        &mut state.delete_confirm_input,
-                                                        &mut state.delete_confirm_cursor,
-                                                    );
-                                                }
-                                                return Ok(());
-                                            }
-                                            Action::DeleteChar => {
-                                                if !state.delete_confirm_input.is_empty() {
-                                                    crate::utils::text_input::handle_delete(
-                                                        &mut state.delete_confirm_input,
-                                                        &mut state.delete_confirm_cursor,
-                                                    );
-                                                }
-                                                return Ok(());
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-
-                                    // Handle character input
-                                    if let KeyCode::Char(c) = key.code {
-                                        if !key.modifiers.intersects(
-                                            KeyModifiers::CONTROL
-                                                | KeyModifiers::ALT
-                                                | KeyModifiers::SUPER,
-                                        ) {
-                                            crate::utils::text_input::handle_char_insertion(
-                                                &mut state.delete_confirm_input,
-                                                &mut state.delete_confirm_cursor,
-                                                c,
-                                            );
-                                        }
-                                    }
-                                }
-                                ProfilePopupType::None => {}
-                            }
-                        }
-                        _ => {}
-                    }
-                    return Ok(());
-                }
-
-                // Handle main view events
-                match event {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        if let Some(action) = self.get_action(key.code, key.modifiers) {
-                            let state = &mut self.ui_state.profile_manager;
-                            use crate::keymap::Action;
-                            match action {
-                                Action::MoveUp => {
-                                    state.list_state.move_up_by(1, profiles.len());
-                                }
-                                Action::MoveDown => {
-                                    state.list_state.move_down_by(1, profiles.len());
-                                }
-                                Action::Confirm => {
-                                    // Open switch popup (only if not already active)
-                                    if let Some(idx) = state.list_state.selected() {
-                                        if let Some(profile) = profiles.get(idx) {
-                                            if profile.name != self.config.active_profile {
-                                                state.popup_type = ProfilePopupType::Switch;
-                                            }
-                                        }
-                                    }
-                                }
-                                Action::Create => {
-                                    // Open create popup - refresh config first to get latest profiles
-                                    self.config = Config::load_or_create(&self.config_path)?;
-                                    use crate::components::profile_manager::CreateField;
-                                    state.popup_type = ProfilePopupType::Create;
-                                    state.create_name_input.clear();
-                                    state.create_name_cursor = 0;
-                                    state.create_description_input.clear();
-                                    state.create_description_cursor = 0;
-                                    state.create_copy_from = None;
-                                    state.create_focused_field = CreateField::Name;
-                                }
-                                Action::Edit => {
-                                    // Open rename popup
-                                    if let Some(idx) = state.list_state.selected() {
-                                        if let Some(profile) = profiles.get(idx) {
-                                            state.popup_type = ProfilePopupType::Rename;
-                                            state.rename_input = profile.name.clone();
-                                            state.rename_cursor = state.rename_input.len();
-                                        }
-                                    }
-                                }
-                                Action::Delete => {
-                                    // Open delete popup
-                                    if let Some(idx) = state.list_state.selected() {
-                                        if let Some(profile) = profiles.get(idx) {
-                                            if profile.name != self.config.active_profile {
-                                                state.popup_type = ProfilePopupType::Delete;
-                                                state.delete_confirm_input.clear();
-                                                state.delete_confirm_cursor = 0;
-                                            }
-                                        }
-                                    }
-                                }
-                                Action::Cancel | Action::Quit => {
-                                    self.ui_state.current_screen = Screen::MainMenu;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-
-                    Event::Mouse(mouse) => {
-                        let state = &mut self.ui_state.profile_manager;
-                        match mouse.kind {
-                            crossterm::event::MouseEventKind::Down(
-                                crossterm::event::MouseButton::Left,
-                            ) => {
-                                // Handle popup form field clicks
-                                if state.popup_type == ProfilePopupType::Create {
-                                    use crate::components::profile_manager::CreateField;
-                                    // Check if click is on name field
-                                    if let Some(name_area) = state.create_name_area {
-                                        // Mouse coordinates are absolute screen coordinates
-                                        // The area is also absolute (from the centered popup)
-                                        if mouse.column >= name_area.x
-                                            && mouse.column < name_area.x + name_area.width
-                                            && mouse.row >= name_area.y
-                                            && mouse.row < name_area.y + name_area.height
-                                        {
-                                            state.create_focused_field = CreateField::Name;
-                                            // Set cursor position based on click
-                                            // Account for left border (1 char) - InputField has borders
-                                            let inner_x = name_area.x + 1;
-                                            let click_x = if mouse.column > inner_x {
-                                                (mouse.column as usize)
-                                                    .saturating_sub(inner_x as usize)
-                                            } else {
-                                                0
-                                            };
-                                            state.create_name_cursor = click_x
-                                                .min(state.create_name_input.chars().count());
-                                            return Ok(());
-                                        }
-                                    }
-                                    // Check if click is on description field
-                                    if let Some(desc_area) = state.create_description_area {
-                                        // Mouse coordinates are absolute screen coordinates
-                                        // The area is also absolute (from the centered popup)
-                                        if mouse.column >= desc_area.x
-                                            && mouse.column < desc_area.x + desc_area.width
-                                            && mouse.row >= desc_area.y
-                                            && mouse.row < desc_area.y + desc_area.height
-                                        {
-                                            state.create_focused_field = CreateField::Description;
-                                            // Set cursor position based on click
-                                            // Account for left border (1 char) - InputField has borders
-                                            let inner_x = desc_area.x + 1;
-                                            let click_x = if mouse.column > inner_x {
-                                                (mouse.column as usize)
-                                                    .saturating_sub(inner_x as usize)
-                                            } else {
-                                                0
-                                            };
-                                            state.create_description_cursor = click_x.min(
-                                                state.create_description_input.chars().count(),
-                                            );
-                                            return Ok(());
-                                        }
-                                    }
-                                    // Check if click is on Copy From list area
-                                    // The Copy From list is in chunks[3], but we don't store that area
-                                    // For now, clicks on the list will be handled by the list widget itself
-                                }
-
-                                // Check if click is in profile list
-                                for (rect, profile_idx) in &state.clickable_areas {
-                                    if mouse.column >= rect.x
-                                        && mouse.column < rect.x + rect.width
-                                        && mouse.row >= rect.y
-                                        && mouse.row < rect.y + rect.height
-                                    {
-                                        // Select the clicked profile
-                                        state.list_state.select(Some(*profile_idx));
-                                        return Ok(());
-                                    }
-                                }
-                            }
-                            crossterm::event::MouseEventKind::ScrollUp => {
-                                if state.popup_type == ProfilePopupType::None {
-                                    state.list_state.move_up_by(1, profiles.len());
-                                }
-                            }
-                            crossterm::event::MouseEventKind::ScrollDown => {
-                                if state.popup_type == ProfilePopupType::None {
-                                    state.list_state.move_down_by(1, profiles.len());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
-                }
+                use crate::screens::ScreenContext;
+                let ctx = ScreenContext::new(&self.config, &self.config_path);
+                let action = self.manage_profiles_screen.handle_event(event, &ctx)?;
+                self.process_screen_action(action)?;
                 return Ok(());
             }
+
         }
     }
 
@@ -2370,7 +1490,8 @@ impl App {
             }
             ScreenAction::CreateAndActivateProfile { name } => {
                 // Create a new profile and activate it
-                match self.create_profile(&name, None, None) {
+                use crate::services::ProfileService;
+                match ProfileService::create_profile(&self.config.repo_path, &name, None, None) {
                     Ok(_) => {
                         // Activate the newly created profile
                         if let Err(e) = self.activate_profile_after_setup(&name) {
@@ -2482,6 +1603,76 @@ impl App {
             ScreenAction::SetBackupEnabled { enabled } => {
                 self.config.backup_enabled = enabled;
                 self.config.save(&self.config_path)?;
+            }
+            ScreenAction::CreateProfile {
+                name,
+                description,
+                copy_from,
+            } => {
+                use crate::services::ProfileService;
+                match ProfileService::create_profile(
+                    &self.config.repo_path,
+                    &name,
+                    description,
+                    copy_from,
+                ) {
+                     Ok(_) => {
+                        // Reload config - but create_profile doesn't affect config.toml
+                         self.config = crate::config::Config::load_or_create(&self.config_path)?;
+                     }
+                    Err(e) => {
+                        error!("Failed to create profile: {}", e);
+                        self.message_component = Some(MessageComponent::new(
+                            "Profile Creation Failed".to_string(),
+                            format!("Failed to create profile '{}':\n{}", name, e),
+                            Screen::ManageProfiles,
+                        ));
+                    }
+                 }
+            }
+            ScreenAction::SwitchProfile { name } => {
+                if let Err(e) = self.switch_profile(&name) {
+                    error!("Failed to switch profile: {}", e);
+                    self.message_component = Some(MessageComponent::new(
+                        "Switch Profile Failed".to_string(),
+                        format!("Failed to switch to profile '{}':\n{}", name, e),
+                        Screen::ManageProfiles,
+                    ));
+                }
+            }
+            ScreenAction::RenameProfile { old_name, new_name } => {
+                 if let Err(e) = self.rename_profile(&old_name, &new_name) {
+                    error!("Failed to rename profile: {}", e);
+                    self.message_component = Some(MessageComponent::new(
+                        "Rename Failed".to_string(),
+                        format!("Failed to rename profile '{}':\n{}", old_name, e),
+                        Screen::ManageProfiles,
+                    ));
+                }
+            }
+            ScreenAction::DeleteProfile { name } => {
+                use crate::services::ProfileService;
+                match ProfileService::delete_profile(
+                    &self.config.repo_path,
+                    &name,
+                    &self.config.active_profile,
+                ) {
+                    Ok(_) => {
+                        // Reload config
+                        match crate::config::Config::load_or_create(&self.config_path) {
+                            Ok(config) => self.config = config,
+                            Err(e) => error!("Failed to reload config: {}", e),
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to delete profile: {}", e);
+                        self.message_component = Some(MessageComponent::new(
+                            "Delete Failed".to_string(),
+                            format!("Failed to delete profile '{}':\n{}", name, e),
+                            Screen::ManageProfiles,
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -3185,17 +2376,7 @@ impl App {
         crate::services::ProfileService::get_profile_info(&self.config.repo_path, &self.config.active_profile)
     }
 
-    /// Create a new profile
-    fn create_profile(
-        &mut self,
-        name: &str,
-        description: Option<String>,
-        copy_from: Option<usize>,
-    ) -> Result<()> {
-        use crate::services::ProfileService;
-        ProfileService::create_profile(&self.config.repo_path, name, description, copy_from)?;
-        Ok(())
-    }
+
 
     /// Switch to a different profile
     fn switch_profile(&mut self, target_profile_name: &str) -> Result<()> {
@@ -3265,11 +2446,7 @@ impl App {
         Ok(())
     }
 
-    /// Delete a profile
-    fn delete_profile(&mut self, profile_name: &str) -> Result<()> {
-        use crate::services::ProfileService;
-        ProfileService::delete_profile(&self.config.repo_path, profile_name, &self.config.active_profile)
-    }
+
 
     /// Activate a profile after GitHub setup (includes syncing files from repo)
     fn activate_profile_after_setup(&mut self, profile_name: &str) -> Result<()> {
