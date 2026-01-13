@@ -850,6 +850,115 @@ impl SymlinkManager {
 
         Ok(operations)
     }
+
+    /// Add a single symlink to an existing profile.
+    ///
+    /// This is more efficient than calling activate_profile with a single file,
+    /// as it doesn't need to iterate or create unnecessary data structures.
+    ///
+    /// # Arguments
+    ///
+    /// * `profile_name` - Name of the profile
+    /// * `relative_path` - Path relative to home directory (e.g., ".zshrc")
+    ///
+    /// # Returns
+    ///
+    /// The symlink operation result
+    pub fn add_symlink_to_profile(
+        &mut self,
+        profile_name: &str,
+        relative_path: &str,
+    ) -> Result<SymlinkOperation> {
+        let profile_path = self.repo_path.join(profile_name);
+        let source = profile_path.join(relative_path);
+        let home_dir = crate::utils::get_home_dir();
+        let target = home_dir.join(relative_path);
+
+        info!(
+            "Adding symlink to profile {}: {} -> {:?}",
+            profile_name, relative_path, source
+        );
+
+        // Create backup session if backups are enabled and not already created
+        if self.backup_enabled && self.backup_session.is_none() {
+            if let Some(ref backup_mgr) = self.backup_manager {
+                self.backup_session = Some(backup_mgr.create_backup_session()?);
+                debug!("Created backup session: {:?}", self.backup_session);
+            }
+        }
+
+        // Create the symlink
+        let operation = self.create_symlink(&source, &target, relative_path)?;
+
+        // Update tracking if successful
+        if matches!(operation.status, OperationStatus::Success) {
+            self.tracking.symlinks.push(TrackedSymlink {
+                target: operation.target.clone(),
+                source: operation.source.clone(),
+                created_at: operation.timestamp,
+                backup: operation.backup.clone(),
+            });
+
+            // Update active profile if not set
+            if self.tracking.active_profile.is_empty() {
+                self.tracking.active_profile = profile_name.to_string();
+            }
+
+            self.save_tracking()?;
+            info!("Successfully added symlink for {}", relative_path);
+        }
+
+        Ok(operation)
+    }
+
+    /// Remove a specific symlink from tracking without affecting other symlinks.
+    ///
+    /// This is a surgical operation that only updates the tracking data for a single file,
+    /// unlike deactivate_profile which removes all symlinks for a profile.
+    ///
+    /// # Arguments
+    ///
+    /// * `profile_name` - Name of the profile
+    /// * `relative_path` - Path relative to home directory (e.g., ".zshrc")
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or failure
+    pub fn remove_symlink_from_tracking(
+        &mut self,
+        profile_name: &str,
+        relative_path: &str,
+    ) -> Result<()> {
+        let profile_path = self.repo_path.join(profile_name);
+        let source_path = profile_path.join(relative_path);
+
+        debug!(
+            "Removing symlink from tracking: profile={}, path={}",
+            profile_name, relative_path
+        );
+
+        // Remove the specific symlink from tracking
+        let initial_count = self.tracking.symlinks.len();
+        self.tracking
+            .symlinks
+            .retain(|s| s.source != source_path);
+        let removed_count = initial_count - self.tracking.symlinks.len();
+
+        if removed_count > 0 {
+            info!(
+                "Removed {} symlink(s) from tracking for {}",
+                removed_count, relative_path
+            );
+            self.save_tracking()?;
+        } else {
+            debug!(
+                "No symlink found in tracking for {} (may have already been removed)",
+                relative_path
+            );
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

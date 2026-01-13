@@ -171,10 +171,7 @@ impl SyncService {
         info!("Creating symlink...");
         let mut symlink_mgr = SymlinkManager::new_with_backup(repo_path.clone(), backup_enabled)?;
         symlink_mgr
-            .activate_profile(
-                profile_name,
-                std::slice::from_ref(&relative_path.to_string()),
-            )
+            .add_symlink_to_profile(profile_name, relative_path)
             .context("Failed to create symlink")?;
         info!("Successfully created symlink");
 
@@ -243,19 +240,13 @@ impl SyncService {
             }
         }
 
-        // Update symlink tracking
+        // Update symlink tracking - remove only the specific file
         let mut symlink_mgr = SymlinkManager::new(repo_path.clone())?;
-        let remaining_files: Vec<String> = previously_synced
-            .iter()
-            .filter(|f| *f != relative_path)
-            .cloned()
-            .collect();
 
-        // Deactivate and reactivate with remaining files
-        let _ = symlink_mgr.deactivate_profile(profile_name);
-        if !remaining_files.is_empty() {
-            let _ = symlink_mgr.activate_profile(profile_name, &remaining_files);
-        }
+        // Remove the specific symlink from tracking
+        // Note: We already removed the actual symlink and restored the file above (lines 227-244)
+        // This just updates the tracking data without touching other symlinks
+        symlink_mgr.remove_symlink_from_tracking(profile_name, relative_path)?;
 
         // Remove from repo
         if repo_file_path.exists() {
@@ -267,7 +258,13 @@ impl SyncService {
             }
         }
 
-        // Update manifest
+        // Update manifest - remove the file from the synced files list
+        let remaining_files: Vec<String> = previously_synced
+            .iter()
+            .filter(|f| *f != relative_path)
+            .cloned()
+            .collect();
+
         let mut manifest = ProfileManifest::load_or_backfill(repo_path)?;
         manifest.update_synced_files(profile_name, remaining_files)?;
         manifest.save(repo_path)?;
