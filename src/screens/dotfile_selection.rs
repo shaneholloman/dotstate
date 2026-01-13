@@ -1,7 +1,7 @@
 //! Dotfile selection screen controller.
 //!
 //! This screen handles selecting and managing dotfiles for syncing.
-//! It wraps the DotfileSelectionComponent for rendering and handles all events.
+//! It owns all state and rendering logic (self-contained screen).
 
 use crate::file_manager::Dotfile;
 use crate::components::file_preview::FilePreview;

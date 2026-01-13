@@ -369,7 +369,7 @@ impl App {
             *self.github_auth_screen.get_auth_state_mut() = self.ui_state.github_auth.clone();
         }
 
-        // DotfileSelectionComponent just handles Clear widget, state stays in ui_state
+        // DotfileSelectionScreen handles its own state and rendering
 
         // Update synced files screen config (only if on that screen to avoid unnecessary clones)
         if self.ui_state.current_screen == Screen::ViewSyncedFiles {

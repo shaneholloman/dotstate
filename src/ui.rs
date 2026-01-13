@@ -381,5 +381,5 @@ impl UiState {
 // - render_github_auth() -> GitHubAuthComponent
 // - render_message() -> MessageComponent
 // - render_synced_files() -> SyncedFilesComponent
-// - render_dotfile_selection() -> DotfileSelectionComponent::render_with_state()
+// - render_dotfile_selection() -> DotfileSelectionScreen (self-contained)
 // popup_area removed - use crate::utils::center_popup instead
