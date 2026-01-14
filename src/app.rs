@@ -81,6 +81,10 @@ pub struct App {
     /// Result is Ok(Some(UpdateInfo)) if update available, Ok(None) if no update, Err(String) if error
     update_check_receiver:
         Option<oneshot::Receiver<Result<Option<crate::version_check::UpdateInfo>, String>>>,
+    /// Receiver for async git status check
+    git_status_receiver: Option<oneshot::Receiver<crate::services::git_service::GitStatus>>,
+    /// Last time git status was checked
+    last_git_status_check: Option<std::time::Instant>,
 }
 
 impl App {
@@ -129,6 +133,8 @@ impl App {
             theme_set,
             has_checked_updates: false,
             update_check_receiver: None,
+            git_status_receiver: None,
+            last_git_status_check: None,
         };
 
         Ok(app)
@@ -219,6 +225,35 @@ impl App {
                         warn!("Update check channel closed unexpectedly");
                         self.has_checked_updates = true;
                         self.update_check_receiver = None;
+                    }
+                }
+            }
+
+            // Check for git status update (non-blocking)
+            if let Some(receiver) = &mut self.git_status_receiver {
+                match receiver.try_recv() {
+                    Ok(status) => {
+                        trace!("Git status update received");
+                        // Update UI state
+                        self.ui_state.git_status = Some(status.clone());
+                        self.ui_state.has_changes_to_push = status.has_changes;
+
+                        // Update changed files for sync screen and main menu (implicit via ui_state.git_status)
+                        // But we also need to update the sync screen state directly if needed, or better,
+                        // let the draw loop pick it up from UiState.
+                        // Currently MainMenu checks syncing status in draw().
+
+                        // We update the screen state's version of changed_files for compatibility
+                        let sync_state = self.sync_with_remote_screen.get_state_mut();
+                        sync_state.changed_files = status.uncommitted_files.clone();
+                        sync_state.git_status = Some(status.clone());
+
+                        self.git_status_receiver = None;
+                        self.last_git_status_check = Some(std::time::Instant::now());
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {} // Still running
+                    Err(_) => {
+                        self.git_status_receiver = None; // Failed or cancelled
                     }
                 }
             }
@@ -325,7 +360,7 @@ impl App {
             );
             // Screen changed - check for changes when entering MainMenu
             if current_screen == Screen::MainMenu {
-                self.check_changes_to_push();
+                self.trigger_git_status_check(true);
             }
             // Handle ManagePackages screen transitions
             if current_screen == Screen::ManagePackages {
@@ -358,10 +393,7 @@ impl App {
         // Update components with current state
         if self.ui_state.current_screen == Screen::MainMenu {
             self.main_menu_screen
-                .set_has_changes_to_push(self.ui_state.has_changes_to_push);
-            // Update changed files for status display
-            self.main_menu_screen
-                .update_changed_files(self.sync_with_remote_screen.get_state().changed_files.clone());
+                .set_git_status(self.ui_state.git_status.clone());
         }
 
         // Update GitHub auth component state
@@ -736,7 +768,8 @@ impl App {
                 if let crate::screens::ScreenAction::Navigate(Screen::MainMenu) = &action {
                     // Reset screen state and check for changes after sync
                     self.sync_with_remote_screen.reset_state();
-                    self.check_changes_to_push();
+                    // Force a check since we just synced
+                    self.trigger_git_status_check(true);
                 }
 
                 self.process_screen_action(action)?;
@@ -775,13 +808,40 @@ impl App {
         }
     }
 
-    /// Check for changes to push and update UI state
-    fn check_changes_to_push(&mut self) {
-        use crate::services::GitService;
-        let result = GitService::check_changes_to_push(&self.config);
-        self.ui_state.has_changes_to_push = result.has_changes;
-        // Store changed files in the screen's state
-        self.sync_with_remote_screen.get_state_mut().changed_files = result.changed_files;
+
+
+    /// Trigger an async check for git status/updates
+    ///
+    /// # Arguments
+    /// * `force` - If true, ignore rate limiting and force a check
+    fn trigger_git_status_check(&mut self, force: bool) {
+        // Don't spawn if already running
+        if self.git_status_receiver.is_some() {
+            return;
+        }
+
+        // Rate limit checks (unless forced)
+        if !force {
+            if let Some(last_check) = self.last_git_status_check {
+                // Check at most every 30 seconds automatically
+                if last_check.elapsed() < Duration::from_secs(30) {
+                    return;
+                }
+            }
+        }
+
+        debug!("Triggering async git status check (force={})", force);
+        let config_clone = self.config.clone();
+        let (tx, rx) = oneshot::channel();
+
+        // Spawn on thread
+        thread::spawn(move || {
+            let status = crate::services::git_service::GitService::fetch_and_check_status(&config_clone);
+            // Ignore send error
+            let _ = tx.send(status);
+        });
+
+        self.git_status_receiver = Some(rx);
     }
 
     /// Handle navigation-specific logic when navigating from MainMenu
@@ -789,7 +849,7 @@ impl App {
         match target {
             Screen::DotfileSelection => {
                 // Check for changes when returning to menu
-                self.check_changes_to_push();
+                self.trigger_git_status_check(false);
                 // Get screen state and update it directly
                 let state = self.dotfile_selection_screen.get_state_mut();
                 state.status_message = None;

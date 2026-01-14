@@ -779,6 +779,64 @@ impl GitManager {
         Ok(pulled_count)
     }
 
+    /// Fetch from remote (without merging)
+    pub fn fetch(&self, remote_name: &str, branch: &str, token: Option<&str>) -> Result<()> {
+        use tracing::debug;
+        debug!("Fetching from remote: {} (branch: {})", remote_name, branch);
+
+        let mut remote = self
+            .repo
+            .find_remote(remote_name)
+            .with_context(|| format!("Remote '{}' not found", remote_name))?;
+
+        let mut callbacks = RemoteCallbacks::new();
+        let remote_url = remote
+            .url()
+            .ok_or_else(|| anyhow::anyhow!("Remote '{}' has no URL", remote_name))?;
+        let token_to_use = token
+            .map(|t| t.to_string())
+            .or_else(|| Self::extract_token_from_url(remote_url));
+        Self::setup_credentials(&mut callbacks, token_to_use);
+
+        let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        remote
+            .fetch(&[branch], Some(&mut fetch_options), None)
+            .with_context(|| format!("Failed to fetch from remote '{}'", remote_name))?;
+
+        Ok(())
+    }
+
+    /// Get ahead/behind counts for a branch relative to its upstream
+    /// Returns (ahead, behind) tuple
+    pub fn get_ahead_behind(&self, remote_name: &str, branch: &str) -> Result<(usize, usize)> {
+        let local_ref_name = format!("refs/heads/{}", branch);
+
+        // Ensure we have the local branch references
+        let local_oid = match self.repo.refname_to_id(&local_ref_name) {
+            Ok(oid) => oid,
+            Err(_) => return Ok((0, 0)), // Local branch doesn't exist yet
+        };
+
+        // For remote, we look for FETCH_HEAD since we just fetched,
+        // or try to find the remote tracking branch via standard naming
+        let remote_oid = if let Ok(fetch_head) = self.repo.find_reference("FETCH_HEAD") {
+            fetch_head.peel_to_commit()?.id()
+        } else {
+            // Fallback to finding the remote tracking branch ref
+            // Note: This might be stale if we didn't just fetch
+            let remote_ref_name = format!("refs/remotes/{}/{}", remote_name, branch);
+             match self.repo.refname_to_id(&remote_ref_name) {
+                Ok(oid) => oid,
+                Err(_) => return Ok((0, 0)), // Remote branch doesn't exist
+            }
+        };
+
+        let (ahead, behind) = self.repo.graph_ahead_behind(local_oid, remote_oid)?;
+        Ok((ahead, behind))
+    }
+
     /// Add a remote (or update if it exists)
     pub fn add_remote(&mut self, name: &str, url: &str) -> Result<()> {
         // remote_set_url doesn't exist in git2, so we delete and recreate

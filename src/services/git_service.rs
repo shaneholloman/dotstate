@@ -29,6 +29,21 @@ pub struct SyncResult {
     pub pulled_count: Option<usize>,
 }
 
+/// Detailed status of the git repository.
+#[derive(Debug, Clone, Default)]
+pub struct GitStatus {
+    /// Whether there are any uncommitted changes.
+    pub has_changes: bool,
+    /// List of uncommitted changed files.
+    pub uncommitted_files: Vec<String>,
+    /// Number of commits ahead of remote.
+    pub ahead: usize,
+    /// Number of commits behind remote.
+    pub behind: usize,
+    /// Any error message encountered during check.
+    pub error: Option<String>,
+}
+
 /// Service for git-related operations.
 ///
 /// This service provides a clean interface for git operations without
@@ -88,6 +103,87 @@ impl GitService {
         }
 
         result
+    }
+
+    /// Fetch updates and check comprehensive status (uncommitted + ahead/behind).
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Application configuration.
+    ///
+    /// # Returns
+    ///
+    /// A `GitStatus` with detailed repository state.
+    pub fn fetch_and_check_status(config: &Config) -> GitStatus {
+        let mut status = GitStatus::default();
+
+        // Check if repository is configured and repo exists
+        if !config.is_repo_configured() {
+            return status;
+        }
+
+        let repo_path = &config.repo_path;
+        if !repo_path.exists() {
+            status.error = Some("Repository path does not exist".to_string());
+            return status;
+        }
+
+        // Open git repository
+        let git_mgr = match GitManager::open_or_init(repo_path) {
+            Ok(mgr) => mgr,
+            Err(e) => {
+                status.error = Some(format!("Failed to open repository: {}", e));
+                return status;
+            }
+        };
+
+        // 1. Check uncommitted changes
+        match git_mgr.get_changed_files() {
+            Ok(files) => {
+                status.has_changes = !files.is_empty();
+                status.uncommitted_files = files;
+            }
+            Err(e) => {
+                status.error = Some(format!("Failed to check changes: {}", e));
+                return status;
+            }
+        }
+
+        // 2. Fetch and check ahead/behind (if configured for remote)
+        // Skip for Local mode or if GitHub token is missing for GitHub mode
+        let should_fetch = match config.repo_mode {
+            RepoMode::Local => false,
+            RepoMode::GitHub => config.get_github_token().is_some(),
+        };
+
+        if should_fetch {
+            let branch = git_mgr
+                .get_current_branch()
+                .unwrap_or_else(|| config.default_branch.clone());
+
+            let token = config.get_github_token();
+
+            // Try to fetch
+            if let Err(e) = git_mgr.fetch("origin", &branch, token.as_deref()) {
+                warn!("Background fetch failed: {}", e);
+                // Don't fail the whole status check, just record error
+                // We can still return uncommitted changes info
+                // status.error = Some(format!("Fetch failed: {}", e));
+            }
+
+            // Check ahead/behind counts
+            match git_mgr.get_ahead_behind("origin", &branch) {
+                Ok((ahead, behind)) => {
+                    status.ahead = ahead;
+                    status.behind = behind;
+                }
+                Err(e) => {
+                    warn!("Failed to get ahead/behind count: {}", e);
+                }
+            }
+        }
+
+        status
     }
 
     /// Load changed files from the repository.

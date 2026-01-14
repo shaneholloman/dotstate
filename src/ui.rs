@@ -157,6 +157,7 @@ pub struct SyncWithRemoteState {
     pub scrollbar_state: ScrollbarState,
     pub diff_content: Option<String>, // Content of the diff for preview
     pub preview_scroll: usize,        // Scroll state for preview
+    pub git_status: Option<crate::services::git_service::GitStatus>, // Detailed git status
 }
 
 impl Default for SyncWithRemoteState {
@@ -172,6 +173,7 @@ impl Default for SyncWithRemoteState {
             scrollbar_state: ScrollbarState::new(0),
             diff_content: None,
             preview_scroll: 0,
+            git_status: None,
         }
     }
 }
@@ -325,6 +327,7 @@ pub struct UiState {
     pub selected_index: usize,
     pub github_auth: GitHubAuthState,
     pub has_changes_to_push: bool, // Whether there are uncommitted or unpushed changes
+    pub git_status: Option<crate::services::git_service::GitStatus>, // Detailed git status
     /// State for profile selection after GitHub setup
     pub profile_selection: ProfileSelectionState,
     /// Whether a text input is currently focused (blocks navigation keybindings)
@@ -347,6 +350,7 @@ impl UiState {
             selected_index: 0,
             github_auth: GitHubAuthState::default(),
             has_changes_to_push: false,
+            git_status: None,
             profile_selection: ProfileSelectionState::default(),
             input_mode_active: false,
             show_help_overlay: false,

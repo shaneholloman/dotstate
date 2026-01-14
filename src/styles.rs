@@ -21,6 +21,7 @@ static THEME: RwLock<Theme> = RwLock::new(Theme {
     error: Color::Red,
     text: Color::White,
     text_muted: Color::DarkGray,
+    text_dimmed: Color::Cyan,
     text_emphasis: Color::Yellow,
     border: Color::DarkGray,
     border_focused: Color::Cyan,
@@ -88,6 +89,8 @@ pub struct Theme {
     pub text: Color,
     /// Muted/secondary text
     pub text_muted: Color,
+    // Dimmed/less prominent text
+    pub text_dimmed: Color,
     /// Emphasized text (commands, code, highlights)
     pub text_emphasis: Color,
 
@@ -129,6 +132,7 @@ impl Theme {
             // Text colors
             text: Color::White,
             text_muted: Color::DarkGray,
+            text_dimmed: Color::Cyan,
             text_emphasis: Color::Yellow,
 
             // UI colors
@@ -157,6 +161,7 @@ impl Theme {
             // Text colors - dark text on light background
             text: Color::Black,
             text_muted: Color::DarkGray,
+            text_dimmed: Color::Cyan,
             text_emphasis: Color::Blue,
 
             // UI colors
@@ -186,6 +191,7 @@ impl Theme {
 
             text: Color::Reset,
             text_muted: Color::Reset,
+            text_dimmed: Color::Reset,
             text_emphasis: Color::Reset,
 
             border: Color::Reset,

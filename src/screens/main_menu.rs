@@ -349,10 +349,11 @@ impl MenuItem {
     }
 }
 
+use crate::services::git_service::GitStatus;
+
 /// Main menu screen controller.
 pub struct MainMenuScreen {
     selected_item: MenuItem,
-    has_changes_to_push: bool,
     menu_state: MenuState,
     /// Clickable areas: (rect, MenuItem)
     clickable_areas: Vec<(Rect, MenuItem)>,
@@ -360,8 +361,8 @@ pub struct MainMenuScreen {
     update_clickable_area: Option<Rect>,
     /// Config for displaying stats
     config: Option<Config>,
-    /// Changed files pending sync
-    changed_files: Vec<String>,
+    /// Detailed git status
+    git_status: GitStatus,
     /// Update information if a new version is available
     update_info: Option<UpdateInfo>,
     /// Whether the update item is currently selected (instead of a menu item)
@@ -380,12 +381,11 @@ impl MainMenuScreen {
 
         Self {
             selected_item: default_item,
-            has_changes_to_push: false,
             menu_state,
             clickable_areas: Vec::new(),
             update_clickable_area: None,
             config: None,
-            changed_files: Vec::new(),
+            git_status: GitStatus::default(),
             update_info: None,
             is_update_selected: false,
             icons: Icons::new(),
@@ -403,14 +403,16 @@ impl MainMenuScreen {
         let default_index = default_item.to_index();
         menu_state.select(Some(default_index));
 
+        let mut git_status = GitStatus::default();
+        git_status.has_changes = has_changes;
+
         Self {
             selected_item: default_item,
-            has_changes_to_push: has_changes,
             menu_state,
             clickable_areas: Vec::new(),
             update_clickable_area: None,
             config: Some(config.clone()),
-            changed_files: Vec::new(),
+            git_status,
             update_info: None,
             is_update_selected: false,
             icons: Icons::from_config(config),
@@ -525,17 +527,17 @@ impl MainMenuScreen {
         self.selected_item.to_index()
     }
 
-    pub fn set_has_changes_to_push(&mut self, has_changes: bool) {
-        self.has_changes_to_push = has_changes;
+    pub fn set_git_status(&mut self, status: Option<GitStatus>) {
+        if let Some(status) = status {
+            self.git_status = status;
+        } else {
+            self.git_status = GitStatus::default();
+        }
     }
 
     /// Update config (only updates config, doesn't change selection)
     pub fn update_config(&mut self, config: Config) {
         self.config = Some(config);
-    }
-
-    pub fn update_changed_files(&mut self, changed_files: Vec<String>) {
-        self.changed_files = changed_files;
     }
 
     /// Get explanation text for selected menu item
@@ -624,15 +626,29 @@ impl MainMenuScreen {
                 synced_count, profile_count, active_profile, repo_info
             );
 
+            // Add git status info
+            let status = &self.git_status;
+
+            // Show ahead/behind info
+            if status.ahead > 0 || status.behind > 0 {
+                stats.push_str("\n\nRemote Status:");
+                if status.behind > 0 {
+                    stats.push_str(&format!("\n  ↓ {} commit(s) behind (pull needed)", status.behind));
+                }
+                if status.ahead > 0 {
+                    stats.push_str(&format!("\n  ↑ {} commit(s) ahead (push needed)", status.ahead));
+                }
+            }
+
             // Add pending changes if any
-            if !self.changed_files.is_empty() {
+            if !status.uncommitted_files.is_empty() {
                 stats.push_str(&format!(
                     "\n\nPending Changes ({}):",
-                    self.changed_files.len()
+                    status.uncommitted_files.len()
                 ));
                 // Show first few files (limit to avoid overflow)
-                let max_files = 5.min(self.changed_files.len());
-                for file in self.changed_files.iter().take(max_files) {
+                let max_files = 5.min(status.uncommitted_files.len());
+                for file in status.uncommitted_files.iter().take(max_files) {
                     // Remove status prefix (A, M, D) for display, or show it
                     let display_file = if file.len() > 2 && file.chars().nth(1) == Some(' ') {
                         &file[2..] // Skip "A ", "M ", "D "
@@ -641,12 +657,15 @@ impl MainMenuScreen {
                     };
                     stats.push_str(&format!("\n  • {}", display_file));
                 }
-                if self.changed_files.len() > max_files {
+                if status.uncommitted_files.len() > max_files {
                     stats.push_str(&format!(
                         "\n  ... and {} more",
-                        self.changed_files.len() - max_files
+                        status.uncommitted_files.len() - max_files
                     ));
                 }
+            } else if status.ahead == 0 && status.behind == 0 && status.has_changes {
+                 // Fallback if has_changes is true but list is empty (shouldn't happen but safe to handle)
+                 stats.push_str("\n\nPending Changes: Yes");
             }
 
             stats
@@ -695,16 +714,35 @@ impl MainMenuScreen {
                 let icon = menu_item.icon(&self.icons);
                 let text = menu_item.text();
                 let is_enabled = menu_item.is_enabled(is_setup);
-                let color = menu_item.color(self.has_changes_to_push);
+                let has_action_needed = self.git_status.has_changes || self.git_status.ahead > 0 || self.git_status.behind > 0;
+                let color = menu_item.color(has_action_needed);
 
                 let mut item = MenuWidgetItem::new(icon, text, color).enabled(is_enabled);
 
                 // Add info for sync item if there are pending changes
                 if *menu_item == MenuItem::SyncWithRemote
-                    && self.has_changes_to_push
+                    && has_action_needed
                     && is_enabled
                 {
-                    item = item.info(format!("{} pending", self.changed_files.len()));
+                    let mut info_parts = Vec::new();
+                    if self.git_status.behind > 0 {
+                        info_parts.push(format!("↓{}", self.git_status.behind));
+                    }
+                    if self.git_status.ahead > 0 {
+                        info_parts.push(format!("↑{}", self.git_status.ahead));
+                    }
+                    if self.git_status.has_changes {
+                         let count = self.git_status.uncommitted_files.len();
+                         if count > 0 {
+                             info_parts.push(format!("+{}", count));
+                         } else {
+                             info_parts.push("*".to_string());
+                         }
+                    }
+
+                    if !info_parts.is_empty() {
+                        item = item.info(info_parts.join(" "));
+                    }
                 }
 
                 item
@@ -798,7 +836,7 @@ impl MainMenuScreen {
         frame.render_widget(explanation_para, right_split[0]);
 
         // Stats block with colorful styling
-        let has_pending = !self.changed_files.is_empty();
+        let has_pending = self.git_status.has_changes || self.git_status.ahead > 0 || self.git_status.behind > 0;
         let stats_color = if has_pending { t.warning } else { t.success };
         let stats_icon = if has_pending { self.icons.warning() } else { self.icons.success() };
 

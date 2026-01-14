@@ -162,7 +162,13 @@ impl SyncWithRemoteScreen {
     fn render_changes_list(&mut self, frame: &mut Frame, content_chunk: Rect, ctx: &RenderContext) -> Result<()> {
         let t = ui_theme();
 
-        if self.state.changed_files.is_empty() {
+        let has_remote_changes = if let Some(status) = &self.state.git_status {
+            status.ahead > 0 || status.behind > 0
+        } else {
+            false
+        };
+
+        if self.state.changed_files.is_empty() && !has_remote_changes {
             let empty_message = Paragraph::new(
                 "No changes to sync.\n\nAll files are up to date with the remote repository.",
             )
@@ -177,6 +183,32 @@ impl SyncWithRemoteScreen {
                     .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
             );
             frame.render_widget(empty_message, content_chunk);
+            return Ok(());
+        }
+
+        // If we have remote changes but no local file changes, show status summary
+        if self.state.changed_files.is_empty() && has_remote_changes {
+             let status = self.state.git_status.as_ref().unwrap();
+             let mut msg = String::from("Ready to Sync:\n\n");
+             if status.behind > 0 {
+                 msg.push_str(&format!("• {} commit(s) behind remote (will pull)\n", status.behind));
+             }
+             if status.ahead > 0 {
+                 msg.push_str(&format!("• {} commit(s) ahead of remote (will push)\n", status.ahead));
+             }
+
+             let status_para = Paragraph::new(msg)
+                .style(t.text_style())
+                .wrap(Wrap { trim: true })
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .title("Sync Status")
+                        .title_alignment(Alignment::Center)
+                        .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
+                );
+            frame.render_widget(status_para, content_chunk);
             return Ok(());
         }
 
@@ -309,11 +341,19 @@ impl Screen for SyncWithRemoteScreen {
 
         // Footer
         let k = |a| ctx.config.keymap.get_key_display_for_action(a);
+
+        let has_remote_changes = if let Some(status) = &self.state.git_status {
+            status.ahead > 0 || status.behind > 0
+        } else {
+            false
+        };
+        let can_sync = !self.state.changed_files.is_empty() || has_remote_changes;
+
         let footer_text = if self.state.show_result_popup {
             "Press any key or click to close".to_string()
         } else if self.state.is_syncing {
             "Syncing with remote...".to_string()
-        } else if self.state.changed_files.is_empty() {
+        } else if !can_sync {
             format!("{}: Back to Main Menu", k(crate::keymap::Action::Cancel))
         } else {
             format!(
@@ -338,8 +378,14 @@ impl Screen for SyncWithRemoteScreen {
                 if let Some(action) = ctx.config.keymap.get_action(key.code, key.modifiers) {
                     match action {
                         Action::Confirm => {
-                            // Start pushing if not already pushing and we have changes
-                            if !self.state.is_syncing && !self.state.changed_files.is_empty() {
+                            // Start pushing if not already pushing and we have changes (local or remote)
+                            let has_remote_changes = if let Some(status) = &self.state.git_status {
+                                status.ahead > 0 || status.behind > 0
+                            } else {
+                                false
+                            };
+
+                            if !self.state.is_syncing && (!self.state.changed_files.is_empty() || has_remote_changes) {
                                 self.start_sync(ctx)?;
                             }
                             return Ok(ScreenAction::None);

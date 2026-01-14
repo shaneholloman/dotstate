@@ -173,8 +173,7 @@ impl Cli {
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
             .join("dotstate");
         let log_file = log_dir.join("dotstate.log");
-        println!("Logs are being written to: {:?}", log_dir);
-        println!("View logs in real-time: tail -f {:?}", log_file);
+        println!("{}", log_file.display());
         Ok(())
     }
 
