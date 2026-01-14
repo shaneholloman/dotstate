@@ -7,17 +7,15 @@ use crate::components::footer::Footer;
 use crate::components::header::Header;
 use crate::config::Config;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
-use crate::styles::{theme, LIST_HIGHLIGHT_SYMBOL};
+use crate::styles::theme;
 use crate::ui::Screen as ScreenId;
 use crate::utils::create_standard_layout;
 use crate::version_check::UpdateInfo;
+use crate::widgets::{Menu, MenuItem as MenuWidgetItem, MenuState};
 use anyhow::Result;
 use crossterm::event::{Event, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
-use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget,
-    Wrap,
-};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, StatefulWidget, Wrap};
 
 /// Menu items enum - defines the order and available menu options
 /// This is the single source of truth for menu items
@@ -344,7 +342,7 @@ impl MenuItem {
 pub struct MainMenuScreen {
     selected_item: MenuItem,
     has_changes_to_push: bool,
-    list_state: ListState,
+    menu_state: MenuState,
     /// Clickable areas: (rect, MenuItem)
     clickable_areas: Vec<(Rect, MenuItem)>,
     /// Clickable area for update notification (shown as last menu item)
@@ -362,15 +360,15 @@ pub struct MainMenuScreen {
 impl MainMenuScreen {
     /// Create a new main menu screen.
     pub fn new() -> Self {
-        let mut list_state = ListState::default();
+        let mut menu_state = MenuState::new();
         let default_item = MenuItem::SetupRepository;
         let default_index = default_item.to_index();
-        list_state.select(Some(default_index));
+        menu_state.select(Some(default_index));
 
         Self {
             selected_item: default_item,
             has_changes_to_push: false,
-            list_state,
+            menu_state,
             clickable_areas: Vec::new(),
             update_clickable_area: None,
             config: None,
@@ -382,19 +380,19 @@ impl MainMenuScreen {
 
     /// Create and initialize with configuration.
     pub fn with_config(config: &Config, has_changes: bool) -> Self {
-        let mut list_state = ListState::default();
+        let mut menu_state = MenuState::new();
         let default_item = if config.is_repo_configured() {
             MenuItem::ScanDotfiles
         } else {
             MenuItem::SetupRepository
         };
         let default_index = default_item.to_index();
-        list_state.select(Some(default_index));
+        menu_state.select(Some(default_index));
 
         Self {
             selected_item: default_item,
             has_changes_to_push: has_changes,
-            list_state,
+            menu_state,
             clickable_areas: Vec::new(),
             update_clickable_area: None,
             config: Some(config.clone()),
@@ -424,15 +422,6 @@ impl MainMenuScreen {
         self.is_update_selected && self.update_info.is_some()
     }
 
-    /// Get the current selected index (for rendering)
-    fn current_selected_index(&self) -> usize {
-        if self.is_update_selected {
-            MenuItem::all().len()
-        } else {
-            self.selected_item.to_index()
-        }
-    }
-
     /// Get the total number of items (menu items + update item if available)
     fn total_items(&self) -> usize {
         let base = MenuItem::all().len();
@@ -445,14 +434,14 @@ impl MainMenuScreen {
 
     /// Move selection up
     pub fn move_up(&mut self) {
-        let menu_count = MenuItem::all().len();
+        let menu_count = MenuItem::all();
         if self.is_update_selected {
             // Move from update item to last menu item
             self.is_update_selected = false;
-            if let Some(item) = MenuItem::from_index(menu_count - 1) {
+            if let Some(item) = MenuItem::from_index(menu_count.len() - 1) {
                 self.selected_item = item;
                 let index = item.to_index();
-                self.list_state.select(Some(index));
+                self.menu_state.select(Some(index));
             }
         } else {
             let current_index = self.selected_item.to_index();
@@ -460,7 +449,7 @@ impl MainMenuScreen {
                 if let Some(item) = MenuItem::from_index(current_index - 1) {
                     self.selected_item = item;
                     let index = item.to_index();
-                    self.list_state.select(Some(index));
+                    self.menu_state.select(Some(index));
                 }
             }
         }
@@ -468,7 +457,8 @@ impl MainMenuScreen {
 
     /// Move selection down
     pub fn move_down(&mut self) {
-        let menu_count = MenuItem::all().len();
+        let menu_items = MenuItem::all();
+        let menu_count = menu_items.len();
         let max_index = self.total_items().saturating_sub(1);
 
         if self.is_update_selected {
@@ -483,11 +473,13 @@ impl MainMenuScreen {
                 if let Some(item) = MenuItem::from_index(current_index + 1) {
                     self.selected_item = item;
                     let index = item.to_index();
-                    self.list_state.select(Some(index));
+                    self.menu_state.select(Some(index));
                 }
             } else if current_index == menu_count - 1 && self.update_info.is_some() {
                 // Move from last menu item to update item
                 self.is_update_selected = true;
+                // Update menu_state to select the update item (which is at index menu_count)
+                self.menu_state.select(Some(menu_count));
             }
         }
     }
@@ -510,7 +502,7 @@ impl MainMenuScreen {
         self.selected_item = item;
         self.is_update_selected = false;
         let index = item.to_index();
-        self.list_state.select(Some(index));
+        self.menu_state.select(Some(index));
     }
 
     /// Get the selected index (for backward compatibility)
@@ -681,112 +673,79 @@ impl MainMenuScreen {
         let menu_items = MenuItem::all();
         let is_setup = self.is_setup();
 
-        let mut items: Vec<ListItem> = menu_items
+        // Convert to Menu widget items
+        let mut widget_items: Vec<MenuWidgetItem> = menu_items
             .iter()
-            .enumerate()
-            .map(|(i, menu_item)| {
+            .map(|menu_item| {
                 let icon = menu_item.icon();
                 let text = menu_item.text();
                 let is_enabled = menu_item.is_enabled(is_setup);
+                let color = menu_item.color(self.has_changes_to_push);
 
-                // Determine color based on enabled state
-                let color = if !is_enabled {
-                    t.text_muted // Disabled items in muted color
-                } else {
-                    menu_item.color(self.has_changes_to_push)
-                };
+                let mut item = MenuWidgetItem::new(icon, text, color).enabled(is_enabled);
 
-                let display_text = if *menu_item == MenuItem::SyncWithRemote
+                // Add info for sync item if there are pending changes
+                if *menu_item == MenuItem::SyncWithRemote
                     && self.has_changes_to_push
                     && is_enabled
                 {
-                    format!("{} {} ({} pending)", icon, text, self.changed_files.len())
-                } else if !is_enabled {
-                    format!("{} {} (requires setup)", icon, text)
-                } else {
-                    format!("{} {}", icon, text)
-                };
+                    item = item.info(format!("{} pending", self.changed_files.len()));
+                }
 
-                let style = if i == self.current_selected_index() {
-                    if is_enabled {
-                        Style::default().fg(color).add_modifier(Modifier::BOLD)
-                    } else {
-                        // Disabled items stay gray even when selected
-                        Style::default()
-                            .fg(t.text_muted)
-                            .add_modifier(Modifier::BOLD)
-                    }
-                } else {
-                    Style::default().fg(color)
-                };
-                ListItem::new(display_text).style(style)
+                item
             })
             .collect();
 
         // Add update item if there's an update available
         if let Some(ref update_info) = self.update_info {
-            let is_selected = self.is_update_selected;
             let update_text = format!(
-                "🎉 Update available: {} → {}",
+                "Update available: {} → {}",
                 update_info.current_version, update_info.latest_version
             );
-            let style = if is_selected {
-                Style::default()
-                    .fg(t.text_emphasis)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(t.text_emphasis)
-            };
-            items.push(ListItem::new(update_text).style(style));
+            widget_items.push(
+                MenuWidgetItem::new(
+                    "🎉",
+                    &update_text,
+                    t.text_emphasis,
+                )
+                .enabled(true),
+            );
         }
 
-        let list_block = Block::default()
+        let menu_block = Block::default()
             .borders(Borders::ALL)
             .border_style(t.border_focused_style())
             .border_type(ratatui::widgets::BorderType::Rounded)
             .title("📋 Menu")
             .title_style(t.title_style())
-            .title_alignment(Alignment::Center)
-            .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
+            .title_alignment(Alignment::Center);
 
-        // Store clickable area for mouse support
+        let menu_inner = menu_block.inner(content_split[0]);
+
+        // Create the menu widget (no highlight symbol, we'll use left border instead)
+        let menu = Menu::new(widget_items);
+
+        // Store clickable areas (3 lines per item)
         self.clickable_areas.clear();
-        let list_inner = list_block.inner(content_split[0]);
-
-        let list = List::new(items)
-            .block(list_block)
-            .highlight_style(t.highlight_style())
-            .highlight_spacing(HighlightSpacing::Always)
-            .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
-
-        let item_height = 1;
-        for (i, menu_item) in menu_items.iter().enumerate() {
-            let y = list_inner.y + i as u16;
-            if y < list_inner.y + list_inner.height {
-                self.clickable_areas.push((
-                    Rect::new(list_inner.x, y, list_inner.width, item_height),
-                    *menu_item,
-                ));
+        let clickable_areas = menu.clickable_areas(menu_inner);
+        for (rect, index) in clickable_areas {
+            if index < menu_items.len() {
+                self.clickable_areas.push((rect, menu_items[index]));
+            } else {
+                // This is the update item
+                self.update_clickable_area = Some(rect);
             }
         }
 
-        // Add clickable area for update item if present
-        if self.update_info.is_some() {
-            let y = list_inner.y + menu_items.len() as u16;
-            if y < list_inner.y + list_inner.height {
-                self.update_clickable_area =
-                    Some(Rect::new(list_inner.x, y, list_inner.width, item_height));
-            }
-        } else {
-            self.update_clickable_area = None;
-        }
+        // Render the block
+        frame.render_widget(menu_block, content_split[0]);
 
-        // Render list
+        // Render the menu inside the block
         StatefulWidget::render(
-            list,
-            content_split[0],
+            menu,
+            menu_inner,
             frame.buffer_mut(),
-            &mut self.list_state,
+            &mut self.menu_state,
         );
 
         // Right panel: Explanation and stats
@@ -989,6 +948,9 @@ impl MainMenuScreen {
                             && mouse.row < update_rect.y + update_rect.height
                         {
                             self.is_update_selected = true;
+                            // Update menu_state to select the update item
+                            let menu_count = MenuItem::all().len();
+                            self.menu_state.select(Some(menu_count));
                             return Ok(true); // Selection made
                         }
                     }
