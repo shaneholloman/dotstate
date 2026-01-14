@@ -743,7 +743,12 @@ impl DotfileSelectionScreen {
                         .unwrap_or_else(|| path.to_string_lossy().to_string())
                 };
 
-                let prefix = if is_dir { "📁 " } else { "📄 " };
+                let icons = crate::icons::Icons::from_config(config);
+                let prefix = if is_dir {
+                    format!("{} ", icons.folder())
+                } else {
+                    format!("{} ", icons.file())
+                };
                 let display = format!("{}{}", prefix, name);
 
                 ListItem::new(display)

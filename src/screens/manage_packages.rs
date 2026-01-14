@@ -157,12 +157,12 @@ impl ManagePackagesScreen {
             state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
         }
 
-        // If we have a specific index to check (from "Check Selected"), check only that one
+        // STEP 1: If we have a target package to check, check it now.
         if let Some(index) = state.checking_index {
             if index < state.packages.len() {
                 let package = &state.packages[index];
-                info!(
-                    "Checking selected package: {} (index: {})",
+                debug!(
+                    "Checking package: {} (index: {})",
                     package.name, index
                 );
 
@@ -185,55 +185,34 @@ impl ManagePackagesScreen {
                         state.package_statuses[index] = PackageStatus::Error(e.to_string());
                     }
                 }
-
-                state.checking_index = None;
-                state.is_checking = false;
-                state.checking_delay_until = None;
-                return Ok(());
-            } else {
-                state.checking_index = None;
-                state.is_checking = false;
-                return Ok(());
             }
+
+            // Clear checking_index immediately after checking
+            state.checking_index = None;
+
+            // Schedule next tick to look for more work context switch
+            state.checking_delay_until = Some(std::time::Instant::now() + Duration::from_millis(10));
+            return Ok(());
         }
 
-        // Check all packages sequentially (one per tick to keep UI responsive)
-        // Find first 'Unknown' package
+        // STEP 2: Look for more work (next 'Unknown' package)
         if let Some(index) = state
             .package_statuses
             .iter()
             .position(|s| matches!(s, PackageStatus::Unknown))
         {
-            let package = &state.packages[index];
-            debug!("Checking package {}/{}", index + 1, state.packages.len());
+            // Found work: Set checking_index so the loading icon shows for this package
+            state.checking_index = Some(index);
 
-            match PackageInstaller::check_exists(package) {
-                Ok((true, _)) => {
-                    state.package_statuses[index] = PackageStatus::Installed;
-                }
-                Ok((false, _)) => {
-                    if !PackageManagerImpl::is_manager_installed(&package.manager) {
-                        state.package_statuses[index] = PackageStatus::Error(format!(
-                            "Package not found and package manager '{:?}' is not installed",
-                            package.manager
-                        ));
-                    } else {
-                        state.package_statuses[index] = PackageStatus::NotInstalled;
-                    }
-                }
-                Err(e) => {
-                    state.package_statuses[index] = PackageStatus::Error(e.to_string());
-                }
-            }
-
-            // Schedule next check
-            state.checking_delay_until =
-                Some(std::time::Instant::now() + Duration::from_millis(10));
-        } else {
-            // All done
-            state.is_checking = false;
-            info!("Finished checking all packages");
+            // Schedule delay to let UI render the Loading icon for this index before we check it
+            state.checking_delay_until = Some(std::time::Instant::now() + Duration::from_millis(10));
+            return Ok(());
         }
+
+        // STEP 3: No work left
+        state.is_checking = false;
+        state.checking_index = None;
+        info!("Finished checking all packages");
 
         Ok(())
     }
@@ -458,10 +437,10 @@ impl Screen for ManagePackagesScreen {
                 .split(main_area);
 
             // Left panel: Package list
-            self.render_package_list(frame, chunks[0])?;
+            self.render_package_list(frame, chunks[0], config)?;
 
             // Right panel: Package details
-            self.render_package_details(frame, chunks[1])?;
+            self.render_package_details(frame, chunks[1], config)?;
 
             // Footer
             let footer_text = if self.state.is_checking {
@@ -1184,7 +1163,7 @@ impl ManagePackagesScreen {
 
 // Rendering methods inlined from PackageManagerComponent
 impl ManagePackagesScreen {
-    fn render_package_list(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+    fn render_package_list(&mut self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
         let t = theme();
 
         if self.state.packages.is_empty() {
@@ -1208,15 +1187,16 @@ impl ManagePackagesScreen {
                 .iter()
                 .enumerate()
                 .map(|(idx, package)| {
+                    let icons = crate::icons::Icons::from_config(config);
                     let status_icon = match self.state.package_statuses.get(idx) {
-                        Some(PackageStatus::Installed) => "✅",
-                        Some(PackageStatus::NotInstalled) => "❌",
-                        Some(PackageStatus::Error(_)) => "⚠️",
+                        Some(PackageStatus::Installed) => icons.success(),
+                        Some(PackageStatus::NotInstalled) => icons.error(),
+                        Some(PackageStatus::Error(_)) => icons.warning(),
                         _ => {
                             if self.state.is_checking && self.state.checking_index == Some(idx) {
-                                "🔄"
+                                icons.loading()
                             } else {
-                                "  "
+                                " "
                             }
                         }
                     };
@@ -1249,11 +1229,11 @@ impl ManagePackagesScreen {
         Ok(())
     }
 
-    fn render_package_details(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+    fn render_package_details(&mut self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
         let selected = self.state.list_state.selected();
         let details = if let Some(idx) = selected {
             if let Some(package) = self.state.packages.get(idx) {
-                self.format_package_details(package, idx)
+                self.format_package_details(package, idx, config)
             } else {
                 "No package selected".to_string()
             }
@@ -1275,7 +1255,8 @@ impl ManagePackagesScreen {
         Ok(())
     }
 
-    fn format_package_details(&self, package: &Package, idx: usize) -> String {
+    fn format_package_details(&self, package: &Package, idx: usize, config: &Config) -> String {
+        let icons = crate::icons::Icons::from_config(config);
         let mut details = format!("Name: {}\n", package.name);
 
         if let Some(desc) = &package.description {
@@ -1293,13 +1274,14 @@ impl ManagePackagesScreen {
         // Status
         let status = self.state.package_statuses.get(idx);
         match status {
-            Some(PackageStatus::Installed) => details.push_str("\n\nStatus: ✅ Installed"),
+            Some(PackageStatus::Installed) => details.push_str(&format!("\n\nStatus: {} Installed", icons.success())),
             Some(PackageStatus::NotInstalled) => {
-                details.push_str("\n\nStatus: ❌ Not Installed");
+                details.push_str(&format!("\n\nStatus: {} Not Installed", icons.error()));
                 // Check if manager is installed for installation purposes
                 if !PackageManagerImpl::is_manager_installed(&package.manager) {
                     details.push_str(&format!(
-                        "\n⚠️ Package manager '{:?}' is not installed",
+                        "\n{} Package manager '{:?}' is not installed",
+                        icons.warning(),
                         package.manager
                     ));
                     details.push_str(&format!(
@@ -1309,7 +1291,7 @@ impl ManagePackagesScreen {
                 }
             }
             Some(PackageStatus::Error(msg)) => {
-                details.push_str(&format!("\n\nStatus: ⚠️ Error: {}", msg))
+                details.push_str(&format!("\n\nStatus: {} Error: {}", icons.warning(), msg))
             }
             _ => details.push_str("\n\nStatus: ⏳ Unknown (press 'C' to check)"),
         }

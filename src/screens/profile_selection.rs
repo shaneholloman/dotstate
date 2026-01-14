@@ -51,10 +51,11 @@ impl ProfileSelectionScreen {
     }
 
     /// Render the exit warning popup.
-    fn render_exit_warning(&self, frame: &mut Frame, area: Rect, _config: &Config) {
+    fn render_exit_warning(&self, frame: &mut Frame, area: Rect, config: &Config) {
         use crate::components::footer::Footer;
         use crate::utils::center_popup;
 
+        let icons = crate::icons::Icons::from_config(config);
         let popup_area = center_popup(area, 60, 35);
         frame.render_widget(Clear, popup_area);
 
@@ -67,13 +68,12 @@ impl ProfileSelectionScreen {
             ])
             .split(popup_area);
 
-        let warning_text = "⚠️  Profile Selection Required\n\n\
+        let warning_text = format!("{} Profile Selection Required\n\n\
             You MUST select a profile before continuing.\n\
             Activating a profile will replace your current dotfiles with symlinks.\n\
             This action cannot be undone without restoring from backups.\n\n\
             Please select a profile or create a new one.\n\
-            Press Esc again to cancel and return to main menu."
-            .to_string();
+            Press Esc again to cancel and return to main menu.", icons.warning());
 
         let warning = Paragraph::new(warning_text)
             .block(
@@ -125,12 +125,13 @@ impl ProfileSelectionScreen {
     }
 
     /// Render the main profile list.
-    fn render_profile_list(&mut self, frame: &mut Frame, area: Rect, _config: &Config) {
+    fn render_profile_list(&mut self, frame: &mut Frame, area: Rect, config: &Config) {
         use crate::components::footer::Footer;
         use crate::components::header::Header;
         use crate::styles::LIST_HIGHLIGHT_SYMBOL;
         use crate::utils::create_standard_layout;
 
+        let icons = crate::icons::Icons::from_config(config);
         let (header_area, content_area, footer_area) = create_standard_layout(area, 5, 2);
 
         // Header
@@ -150,7 +151,7 @@ impl ProfileSelectionScreen {
             .collect();
 
         // Add "Create New Profile" option
-        items.push(ListItem::new("  + Create New Profile").style(Style::default().fg(Color::Cyan)));
+        items.push(ListItem::new(format!("  {} Create New Profile", icons.create())).style(Style::default().fg(Color::Cyan)));
 
         let list = List::new(items)
             .block(

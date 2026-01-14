@@ -185,6 +185,7 @@ impl ManageProfilesScreen {
         config: &Config,
     ) -> Result<()> {
         let t = theme();
+        let icons = crate::icons::Icons::from_config(config);
         let active_profile = &config.active_profile;
 
         let items: Vec<ListItem> = self.state
@@ -192,7 +193,7 @@ impl ManageProfilesScreen {
             .iter()
             .map(|profile| {
                 let is_active = profile.name == *active_profile;
-                let icon = if is_active { "⭐" } else { "  " };
+                let icon = if is_active { icons.active_profile() } else { " " };
                 let name_style = if is_active {
                     Style::default()
                         .fg(t.text_emphasis)
@@ -238,6 +239,7 @@ impl ManageProfilesScreen {
         config: &Config,
     ) -> Result<()> {
         let active_profile = &config.active_profile;
+        let icons = crate::icons::Icons::from_config(config);
 
         // Find selected profile (use selected index, fallback to active, then first)
         let profile = self.state
@@ -251,9 +253,9 @@ impl ManageProfilesScreen {
         if let Some(profile) = profile {
             let is_active = profile.name == *active_profile;
             let status = if is_active {
-                ("● Active", t.success)
+                (format!("{} Active", icons.active_profile()), t.success)
             } else {
-                ("○ Inactive", t.text_emphasis)
+                (format!("{} Inactive", icons.inactive_profile()), t.text_emphasis)
             };
 
             let description = profile.description.as_deref().unwrap_or("No description");
@@ -263,6 +265,8 @@ impl ManageProfilesScreen {
             } else {
                 format!("{} files synced:", profile.synced_files.len())
             };
+// ... (rest of the function is unchanged, I'll only replace the top part)
+
 
             let files_list = if profile.synced_files.is_empty() {
                 String::new()
@@ -368,7 +372,7 @@ impl ManageProfilesScreen {
         config: &Config,
     ) -> Result<()> {
         match self.state.popup_type {
-            ProfilePopupType::Create => self.render_create_popup(frame, area),
+            ProfilePopupType::Create => self.render_create_popup(frame, area, config),
             ProfilePopupType::Switch => self.render_switch_popup(frame, area, config),
             ProfilePopupType::Rename => self.render_rename_popup(frame, area),
             ProfilePopupType::Delete => self.render_delete_popup(frame, area, config),
@@ -381,8 +385,10 @@ impl ManageProfilesScreen {
         &self,
         frame: &mut Frame,
         area: Rect,
+        config: &Config,
     ) -> Result<()> {
         let popup_area = center_popup(area, 60, 50);
+        let icons = crate::icons::Icons::from_config(config);
         frame.render_widget(Clear, popup_area);
 
         let chunks = Layout::default()
@@ -441,9 +447,9 @@ impl ManageProfilesScreen {
             // Add "Start Blank" option at the start
             let is_start_blank_selected = self.state.create_copy_from.is_none();
             let start_blank_prefix = if is_start_blank_selected {
-                "✓ "
+                format!("{} ", icons.check())
             } else {
-                "  "
+                format!("{} ", icons.uncheck())
             };
             let start_blank_style = if is_start_blank_selected {
                 Style::default().fg(t.success)
@@ -458,7 +464,11 @@ impl ManageProfilesScreen {
             // Add profiles (offset by 1 because "Start Blank" is at index 0)
             for (idx, profile) in self.state.profiles.iter().enumerate() {
                 let is_selected = self.state.create_copy_from == Some(idx);
-                let prefix = if is_selected { "✓ " } else { "  " };
+                let prefix = if is_selected {
+                    format!("{} ", icons.check())
+                } else {
+                    format!("{} ", icons.uncheck())
+                };
                 let style = if is_selected {
                     Style::default().fg(t.success)
                 } else {
@@ -618,6 +628,7 @@ impl ManageProfilesScreen {
         config: &Config,
     ) -> Result<()> {
         let popup_area = center_popup(area, 70, 60);
+        let icons = crate::icons::Icons::from_config(config);
         frame.render_widget(Clear, popup_area);
 
         let selected_idx = self.state.list_state.selected();
@@ -637,19 +648,21 @@ impl ManageProfilesScreen {
         let warning_text = if let Some(p) = profile {
             if is_active {
                 format!(
-                    "⚠️  WARNING: Cannot Delete Active Profile\n\n\
+                    "{} WARNING: Cannot Delete Active Profile\n\n\
                     Profile '{}' is currently active.\n\
                     Please switch to another profile first.",
+                    icons.warning(),
                     p.name
                 )
             } else {
                 format!(
-                    "⚠️  WARNING: Delete Profile\n\n\
+                    "{} WARNING: Delete Profile\n\n\
                     This will permanently delete:\n\
                     • Profile '{}'\n\
                     • All {} synced files in the repo\n\
                     • Profile folder: ~/.config/dotstate/storage/{}/\n\n\
                     Type the profile name to confirm:",
+                    icons.warning(),
                     p.name,
                     p.synced_files.len(),
                     p.name

@@ -76,6 +76,9 @@ pub struct Config {
     /// Color theme: "dark", "light", or "nocolor" (default: dark)
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Icon set: "nerd", "unicode", or "ascii" (default: auto-detect)
+    #[serde(default = "default_icon_set")]
+    pub icon_set: String,
     /// Keymap configuration (preset and overrides)
     #[serde(default)]
     pub keymap: crate::keymap::Keymap,
@@ -83,6 +86,10 @@ pub struct Config {
 
 fn default_theme() -> String {
     "dark".to_string()
+}
+
+fn default_icon_set() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +135,7 @@ impl Default for Config {
             custom_files: Vec::new(),
             updates: UpdateConfig::default(),
             theme: default_theme(),
+            icon_set: default_icon_set(),
             keymap: crate::keymap::Keymap::default(),
         }
     }
@@ -247,6 +255,19 @@ impl Config {
             .as_ref()
             .and_then(|gh| gh.token.as_ref())
             .cloned()
+    }
+
+    /// Get the icon set based on config value
+    /// Returns the configured icon set, or auto-detects if set to "auto"
+    pub fn get_icon_set(&self) -> crate::icons::IconSet {
+        use crate::icons::IconSet;
+
+        match self.icon_set.to_lowercase().as_str() {
+            "nerd" | "nerdfont" | "nerdfonts" => IconSet::NerdFonts,
+            "unicode" | "emoji" => IconSet::Unicode,
+            "ascii" | "plain" => IconSet::Ascii,
+            "auto" | _ => IconSet::detect(), // Auto-detect or fallback to detection
+        }
     }
 
     // Profile-related methods removed - use ProfileManifest directly

@@ -6,6 +6,7 @@
 use crate::components::footer::Footer;
 use crate::components::header::Header;
 use crate::config::Config;
+use crate::icons::Icons;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
 use crate::styles::theme;
 use crate::ui::Screen as ScreenId;
@@ -53,14 +54,14 @@ impl MenuItem {
         !self.requires_setup() || is_setup
     }
 
-    /// Get the icon for this menu item
-    pub fn icon(&self) -> &'static str {
+    /// Get the icon for this menu item using the icon provider
+    pub fn icon(&self, icons: &Icons) -> &'static str {
         match self {
-            MenuItem::ScanDotfiles => "📁",
-            MenuItem::SyncWithRemote => "🔄",
-            MenuItem::ManageProfiles => "👤",
-            MenuItem::ManagePackages => "📦",
-            MenuItem::SetupRepository => "🔧",
+            MenuItem::ScanDotfiles => icons.folder(),
+            MenuItem::SyncWithRemote => icons.sync(),
+            MenuItem::ManageProfiles => icons.profile(),
+            MenuItem::ManagePackages => icons.package(),
+            MenuItem::SetupRepository => icons.git(),
         }
     }
 
@@ -84,8 +85,8 @@ impl MenuItem {
         }
     }
 
-    /// Get the explanation text for this menu item
-    pub fn explanation(&self) -> Text<'static> {
+    /// Get the explanation text for this menu item (uses icon provider)
+    pub fn explanation(&self, icons: &Icons) -> Text<'static> {
         let t = theme();
         match self {
             MenuItem::ScanDotfiles => {
@@ -113,7 +114,8 @@ impl MenuItem {
                     ]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("💡 Tip: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(icons.lightbulb(), Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(" Tip: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
                         Span::styled("You can add custom files using the file browser, or use the CLI:\n", t.text_style()),
                         Span::styled("  dotstate add ~/.myconfig", t.emphasis_style()),
                     ]),
@@ -150,7 +152,8 @@ impl MenuItem {
                     ]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("💡 CLI: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(icons.lightbulb(), Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(" CLI: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
                         Span::styled("dotstate sync", t.emphasis_style()),
                         Span::styled(" - Same functionality from the command line", t.text_style()),
                     ]),
@@ -186,7 +189,8 @@ impl MenuItem {
                     ]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("💡 CLI: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(icons.lightbulb(), Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(" CLI: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
                         Span::styled("dotstate profile list", t.emphasis_style()),
                         Span::styled(" - List all profiles\n", t.text_style()),
                         Span::styled("  dotstate profile switch <name>", t.emphasis_style()),
@@ -228,7 +232,8 @@ impl MenuItem {
                     ]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("💡 Example: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(icons.lightbulb(), Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
+                        Span::styled(" Example: ", Style::default().fg(t.secondary).add_modifier(Modifier::BOLD)),
                         Span::styled("Add packages like ", t.text_style()),
                         Span::styled("ripgrep", t.emphasis_style()),
                         Span::styled(" or ", t.text_style()),
@@ -292,7 +297,13 @@ impl MenuItem {
                     Line::from(""),
                     Line::from(vec![
                         Span::styled(
-                            "💡 Tip: ",
+                            icons.lightbulb(),
+                            Style::default()
+                                .fg(t.secondary)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            " Tip: ",
                             Style::default()
                                 .fg(t.secondary)
                                 .add_modifier(Modifier::BOLD),
@@ -308,14 +319,14 @@ impl MenuItem {
         }
     }
 
-    /// Get the explanation panel icon
-    pub fn explanation_icon(&self) -> &'static str {
+    /// Get the explanation panel icon (uses icon provider)
+    pub fn explanation_icon(&self, icons: &Icons) -> &'static str {
         match self {
-            MenuItem::ScanDotfiles => "💡",
-            MenuItem::SyncWithRemote => "🔄",
-            MenuItem::ManageProfiles => "👤",
-            MenuItem::ManagePackages => "📦",
-            MenuItem::SetupRepository => "🔧",
+            MenuItem::ScanDotfiles => icons.lightbulb(),
+            MenuItem::SyncWithRemote => icons.sync(),
+            MenuItem::ManageProfiles => icons.profile(),
+            MenuItem::ManagePackages => icons.package(),
+            MenuItem::SetupRepository => icons.git(),
         }
     }
 
@@ -355,6 +366,8 @@ pub struct MainMenuScreen {
     update_info: Option<UpdateInfo>,
     /// Whether the update item is currently selected (instead of a menu item)
     is_update_selected: bool,
+    /// Icon provider for rendering icons
+    icons: Icons,
 }
 
 impl MainMenuScreen {
@@ -375,6 +388,7 @@ impl MainMenuScreen {
             changed_files: Vec::new(),
             update_info: None,
             is_update_selected: false,
+            icons: Icons::new(),
         }
     }
 
@@ -399,6 +413,7 @@ impl MainMenuScreen {
             changed_files: Vec::new(),
             update_info: None,
             is_update_selected: false,
+            icons: Icons::from_config(config),
         }
     }
 
@@ -574,7 +589,7 @@ impl MainMenuScreen {
                 return Text::from(lines);
             }
         }
-        self.selected_item.explanation()
+        self.selected_item.explanation(&self.icons)
     }
 
     /// Get stats text based on config
@@ -677,7 +692,7 @@ impl MainMenuScreen {
         let mut widget_items: Vec<MenuWidgetItem> = menu_items
             .iter()
             .map(|menu_item| {
-                let icon = menu_item.icon();
+                let icon = menu_item.icon(&self.icons);
                 let text = menu_item.text();
                 let is_enabled = menu_item.is_enabled(is_setup);
                 let color = menu_item.color(self.has_changes_to_push);
@@ -704,7 +719,7 @@ impl MainMenuScreen {
             );
             widget_items.push(
                 MenuWidgetItem::new(
-                    "🎉",
+                    self.icons.update(),
                     &update_text,
                     t.text_emphasis,
                 )
@@ -716,7 +731,7 @@ impl MainMenuScreen {
             .borders(Borders::ALL)
             .border_style(t.border_focused_style())
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .title("📋 Menu")
+            .title(format!("{} Menu", self.icons.menu()))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center);
 
@@ -759,10 +774,10 @@ impl MainMenuScreen {
 
         // Explanation block with colorful styling
         let (icon, color) = if self.is_update_item_selected() {
-            ("🎉", t.text_emphasis)
+            (self.icons.update(), t.text_emphasis)
         } else {
             (
-                self.selected_item.explanation_icon(),
+                self.selected_item.explanation_icon(&self.icons),
                 self.selected_item.explanation_color(),
             )
         };
@@ -785,7 +800,7 @@ impl MainMenuScreen {
         // Stats block with colorful styling
         let has_pending = !self.changed_files.is_empty();
         let stats_color = if has_pending { t.warning } else { t.success };
-        let stats_icon = if has_pending { "⚠️" } else { "✅" };
+        let stats_icon = if has_pending { self.icons.warning() } else { self.icons.success() };
 
         let stats_block = Block::default()
             .borders(Borders::ALL)
@@ -885,7 +900,7 @@ impl MainMenuScreen {
         if self.is_update_item_selected() {
             // Return action to show update info popup
             if let Some(info) = self.get_update_info() {
-                let (title, content) = Self::build_update_message(info);
+                let (title, content) = self.build_update_message(info);
                 return Ok(ScreenAction::ShowMessage { title, content });
             }
         }
@@ -909,10 +924,10 @@ impl MainMenuScreen {
     }
 
     /// Build the update message from UpdateInfo.
-    fn build_update_message(info: &UpdateInfo) -> (String, String) {
-        let title = format!("🎉 Version {} Available!", info.latest_version);
+    fn build_update_message(&self, info: &UpdateInfo) -> (String, String) {
+        let title = format!("{} Version {} Available!", self.icons.update(), info.latest_version);
         let content = format!(
-            "🎉 New version available: {} → {}\n\n\
+            "{} New version available: {} → {}\n\n\
             Update options:\n\n\
             1. Using install script:\n\
             curl -fsSL {} | bash\n\n\
@@ -921,6 +936,7 @@ impl MainMenuScreen {
             3. Using Homebrew:\n\
             brew upgrade dotstate\n\n\
             Visit release page for details.",
+            self.icons.update(),
             info.current_version,
             info.latest_version,
             info.release_url
@@ -1019,7 +1035,7 @@ impl Screen for MainMenuScreen {
                             // Check for update item selection
                             if self.is_update_item_selected() {
                                 if let Some(info) = self.get_update_info() {
-                                    let (title, content) = Self::build_update_message(info);
+                                    let (title, content) = self.build_update_message(info);
                                     return Ok(ScreenAction::ShowMessage { title, content });
                                 }
                             } else {
