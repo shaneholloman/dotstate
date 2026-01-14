@@ -58,6 +58,14 @@ impl GitHubAuthComponent {
         }
     }
 
+    fn icons(&self) -> crate::icons::Icons {
+        if let Some(config) = &self.config {
+            crate::icons::Icons::from_config(config)
+        } else {
+            crate::icons::Icons::default()
+        }
+    }
+
     pub fn update_config(&mut self, config: crate::config::Config) {
         self.config = Some(config);
     }
@@ -150,6 +158,7 @@ impl GitHubAuthComponent {
     fn render_visibility_field(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
         let is_focused = self.auth_state.focused_field == GitHubAuthField::IsPrivate;
         let is_disabled = self.auth_state.repo_already_configured;
+        let icons = self.icons();
 
         let border_style = if is_disabled {
             disabled_border_style()
@@ -169,9 +178,9 @@ impl GitHubAuthComponent {
         self.visibility_area = Some(block.inner(area));
 
         let visibility_text = if self.auth_state.is_private {
-            "[✓] Private    [ ] Public"
+            format!("[{}] Private    [{}] Public", icons.check(), icons.uncheck())
         } else {
-            "[ ] Private    [✓] Public"
+            format!("[{}] Private    [{}] Public", icons.uncheck(), icons.check())
         };
 
         let t = theme();
@@ -215,13 +224,14 @@ impl GitHubAuthComponent {
             .split(content_chunk);
 
         // Left panel: Mode selection list
+        let icons = self.icons();
         let options = vec![
             ListItem::new(vec![Line::from(vec![
-                Span::styled("🔧 ", Style::default()),
+                Span::styled(format!("{} ", icons.github()), Style::default()),
                 Span::styled("Create repository for me (GitHub)", t.success_style()),
             ])]),
             ListItem::new(vec![Line::from(vec![
-                Span::styled("📁 ", Style::default()),
+                Span::styled(format!("{} ", icons.folder()), Style::default()),
                 Span::styled("Use my own repository", Style::default().fg(t.tertiary)),
             ])]),
         ];
@@ -230,7 +240,7 @@ impl GitHubAuthComponent {
             .borders(Borders::ALL)
             .border_style(focused_border_style())
             .border_type(BorderType::Rounded)
-            .title("📋 Choose Setup Method")
+            .title(format!("{} Choose Setup Method", icons.menu()))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
@@ -292,7 +302,7 @@ impl GitHubAuthComponent {
                     Line::from("  with 'repo' scope"),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("💡 ", Style::default().fg(t.secondary)),
+                        Span::styled(format!("{} ", icons.lightbulb()), Style::default().fg(t.secondary)),
                         Span::raw("Best for: Users who want a quick,"),
                     ]),
                     Line::from("   automated setup on GitHub."),
@@ -330,7 +340,7 @@ impl GitHubAuthComponent {
                     Line::from("• Any git remote"),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled("💡 ", Style::default().fg(t.secondary)),
+                        Span::styled(format!("{} ", icons.lightbulb()), Style::default().fg(t.secondary)),
                         Span::raw("Best for: Users who already have"),
                     ]),
                     Line::from("   a repo or use non-GitHub hosts."),
@@ -342,7 +352,7 @@ impl GitHubAuthComponent {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.primary))
             .border_type(BorderType::Rounded)
-            .title(format!("💡 {}", title))
+            .title(format!("{} {}", icons.lightbulb(), title))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
@@ -369,6 +379,7 @@ impl GitHubAuthComponent {
     /// Render the local repository setup screen
     fn render_local_setup(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
         let t = theme();
+        let icons = self.icons();
         // Layout: Header, Content, Footer
         let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
@@ -442,7 +453,7 @@ impl GitHubAuthComponent {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.tertiary))
             .border_type(BorderType::Rounded)
-            .title("📋 Setup Instructions")
+            .title(format!("{} Setup Instructions", icons.menu()))
             .title_style(Style::default().fg(t.tertiary).add_modifier(Modifier::BOLD))
             .title_alignment(Alignment::Center);
 
@@ -487,6 +498,7 @@ impl GitHubAuthComponent {
     /// Render help panel for local setup
     fn render_local_help_panel(&self, frame: &mut Frame, area: Rect) -> Result<()> {
         let t = theme();
+        let icons = self.icons();
         if let Some(status) = &self.auth_state.status_message {
             let status_block = Block::default()
                 .borders(Borders::ALL)
@@ -539,13 +551,13 @@ impl GitHubAuthComponent {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Status: ", Style::default().fg(t.primary)),
-                    Span::styled("✅ Configured", Style::default().fg(t.success)),
+                    Span::styled(format!("{} Configured", icons.check()), Style::default().fg(t.success)),
                 ]),
             ];
 
             let help_block = Block::default()
                 .borders(Borders::ALL)
-                .title("📋 Repository Info")
+                .title(format!("{} Repository Info", icons.menu()))
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.success))
                 .border_type(BorderType::Rounded)
@@ -581,7 +593,7 @@ impl GitHubAuthComponent {
 
             let help_block = Block::default()
                 .borders(Borders::ALL)
-                .title("💡 Help")
+                .title(format!("{} Help", icons.lightbulb()))
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.primary))
                 .border_type(BorderType::Rounded)
@@ -597,6 +609,7 @@ impl GitHubAuthComponent {
 
     fn render_help_panel(&self, frame: &mut Frame, area: Rect) -> Result<()> {
         let t = theme();
+        let icons = self.icons();
         if let Some(status) = &self.auth_state.status_message {
             let status_block = Block::default()
                 .borders(Borders::ALL)
@@ -712,7 +725,7 @@ impl GitHubAuthComponent {
 
             let help_block = Block::default()
                 .borders(Borders::ALL)
-                .title(title)
+                .title(format!("{} {}", icons.info(), title))
                 .border_type(BorderType::Rounded)
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.primary));

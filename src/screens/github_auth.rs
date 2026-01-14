@@ -221,7 +221,7 @@ impl GitHubAuthScreen {
             } else if !self.state.repo_already_configured {
                 // Full setup - validate and start setup
                 let token = self.state.token_input.text_trimmed().to_string();
-                let repo_name = ctx.config.repo_name.clone();
+                let repo_name = self.state.repo_name_input.text_trimmed().to_string(); // Use input value
 
                 // Validate token format
                 if !token.starts_with("ghp_") {

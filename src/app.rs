@@ -396,11 +396,6 @@ impl App {
                 .set_git_status(self.ui_state.git_status.clone());
         }
 
-        // Update GitHub auth component state
-        if self.ui_state.current_screen == Screen::GitHubAuth {
-            *self.github_auth_screen.get_auth_state_mut() = self.ui_state.github_auth.clone();
-        }
-
         // DotfileSelectionScreen handles its own state and rendering
 
         // Update synced files screen config (only if on that screen to avoid unnecessary clones)
@@ -883,10 +878,12 @@ impl App {
                 } else {
                     self.ui_state.github_auth.repo_already_configured = false;
                     self.ui_state.github_auth.is_editing_token = false;
-                    // Start in "Choosing" mode for new setup
                     self.ui_state.github_auth.setup_mode = crate::ui::SetupMode::Choosing;
                     self.ui_state.github_auth.mode_selection_index = 0;
                 }
+
+                // Sync the initialized state to the screen controller once
+                *self.github_auth_screen.get_auth_state_mut() = self.ui_state.github_auth.clone();
             }
             Screen::SyncWithRemote => {
                 // Reset sync screen state
@@ -985,8 +982,12 @@ impl App {
                     self.ui_state.current_screen = Screen::MainMenu;
                 } else {
                     // Show profile selection
-                    self.ui_state.profile_selection.profiles = profiles;
+                    self.ui_state.profile_selection.profiles = profiles.clone();
                     self.ui_state.profile_selection.list_state.select(Some(0));
+
+                    // Update the screen controller state as well
+                    self.profile_selection_screen.set_profiles(profiles);
+
                     self.github_auth_screen.reset();
                     self.ui_state.current_screen = Screen::ProfileSelection;
                 }
@@ -1576,11 +1577,16 @@ impl App {
                 }
 
                 // Set up profile selection state
-                self.ui_state.profile_selection.profiles =
-                    manifest.profiles.iter().map(|p| p.name.clone()).collect();
+                let profiles: Vec<String> = manifest.profiles.iter().map(|p| p.name.clone()).collect();
+
+                // Update legacy ui_state
+                self.ui_state.profile_selection.profiles = profiles.clone();
                 if !self.ui_state.profile_selection.profiles.is_empty() {
                     self.ui_state.profile_selection.list_state.select(Some(0));
                 }
+
+                // Update screen controller state
+                self.profile_selection_screen.set_profiles(profiles);
 
                 // Move to complete step - show success message in progress screen
                 if !self.ui_state.profile_selection.profiles.is_empty() {

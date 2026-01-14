@@ -247,6 +247,30 @@ impl Icons {
             IconSet::Ascii => "[+]",
         }
     }
+
+    pub fn github(&self) -> &'static str {
+        match self.icon_set {
+            IconSet::NerdFonts => "\u{f09b}", // GitHub logo
+            IconSet::Unicode => "🔧",         // Fallback to wrench for unicode as it's setup-related
+            IconSet::Ascii => "[GH]",
+        }
+    }
+
+    pub fn wrench(&self) -> &'static str {
+        match self.icon_set {
+            IconSet::NerdFonts => "\u{f0ad}", // Wrench
+            IconSet::Unicode => "🔧",
+            IconSet::Ascii => "[TOOL]",
+        }
+    }
+
+    pub fn plug(&self) -> &'static str {
+        match self.icon_set {
+            IconSet::NerdFonts => "\u{f1e6}", // Plug
+            IconSet::Unicode => "🔌",
+            IconSet::Ascii => "[CONN]",
+        }
+    }
 }
 
 impl Default for Icons {
