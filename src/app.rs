@@ -407,7 +407,18 @@ impl App {
                     } else {
                         // Pass config to main menu for stats
                         self.main_menu_screen.update_config(config_clone.clone());
-                        let _ = self.main_menu_screen.render_frame(frame, area);
+                        // Router pattern - delegate to screen's render method
+                        use crate::screens::{RenderContext, Screen as ScreenTrait};
+                        let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                        let ctx = RenderContext::new(
+                            &config_clone,
+                            &self.syntax_set,
+                            &self.theme_set,
+                            syntax_theme,
+                        );
+                        if let Err(e) = self.main_menu_screen.render(frame, area, &ctx) {
+                            error!("Failed to render main menu screen: {}", e);
+                        }
                     }
                 }
                 Screen::GitHubAuth => {
@@ -431,7 +442,18 @@ impl App {
                     }
                 }
                 Screen::ViewSyncedFiles => {
-                    let _ = self.view_synced_files_screen.render_frame(frame, area);
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                    let ctx = RenderContext::new(
+                        &config_clone,
+                        &self.syntax_set,
+                        &self.theme_set,
+                        syntax_theme,
+                    );
+                    if let Err(e) = self.view_synced_files_screen.render(frame, area, &ctx) {
+                        error!("Failed to render view synced files screen: {}", e);
+                    }
                 }
                 Screen::SyncWithRemote => {
                     // Router pattern - delegate to screen's render method

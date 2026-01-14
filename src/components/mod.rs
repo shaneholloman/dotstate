@@ -7,7 +7,6 @@ pub mod footer;
 pub mod github_auth;
 pub mod header;
 pub mod help_overlay;
-pub mod main_menu;
 pub mod message;
 pub mod message_box;
 
@@ -19,7 +18,6 @@ pub use component::{Component, ComponentAction};
 // pub use input_field::InputField;
 
 pub use github_auth::GitHubAuthComponent;
-pub use main_menu::{MainMenuComponent, MenuItem};
 pub use message::MessageComponent;
 
 pub use synced_files::SyncedFilesComponent;
