@@ -251,7 +251,7 @@ impl Icons {
     pub fn github(&self) -> &'static str {
         match self.icon_set {
             IconSet::NerdFonts => "\u{f09b}", // GitHub logo
-            IconSet::Unicode => "🔧",         // Fallback to wrench for unicode as it's setup-related
+            IconSet::Unicode => "🔧", // Fallback to wrench for unicode as it's setup-related
             IconSet::Ascii => "[GH]",
         }
     }

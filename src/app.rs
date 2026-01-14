@@ -1577,7 +1577,8 @@ impl App {
                 }
 
                 // Set up profile selection state
-                let profiles: Vec<String> = manifest.profiles.iter().map(|p| p.name.clone()).collect();
+                let profiles: Vec<String> =
+                    manifest.profiles.iter().map(|p| p.name.clone()).collect();
 
                 // Update legacy ui_state
                 self.ui_state.profile_selection.profiles = profiles.clone();

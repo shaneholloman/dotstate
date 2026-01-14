@@ -178,9 +178,17 @@ impl GitHubAuthComponent {
         self.visibility_area = Some(block.inner(area));
 
         let visibility_text = if self.auth_state.is_private {
-            format!("[{}] Private    [{}] Public", icons.check(), icons.uncheck())
+            format!(
+                "[{}] Private    [{}] Public",
+                icons.check(),
+                icons.uncheck()
+            )
         } else {
-            format!("[{}] Private    [{}] Public", icons.uncheck(), icons.check())
+            format!(
+                "[{}] Private    [{}] Public",
+                icons.uncheck(),
+                icons.check()
+            )
         };
 
         let t = theme();
@@ -302,7 +310,10 @@ impl GitHubAuthComponent {
                     Line::from("  with 'repo' scope"),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled(format!("{} ", icons.lightbulb()), Style::default().fg(t.secondary)),
+                        Span::styled(
+                            format!("{} ", icons.lightbulb()),
+                            Style::default().fg(t.secondary),
+                        ),
                         Span::raw("Best for: Users who want a quick,"),
                     ]),
                     Line::from("   automated setup on GitHub."),
@@ -340,7 +351,10 @@ impl GitHubAuthComponent {
                     Line::from("• Any git remote"),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled(format!("{} ", icons.lightbulb()), Style::default().fg(t.secondary)),
+                        Span::styled(
+                            format!("{} ", icons.lightbulb()),
+                            Style::default().fg(t.secondary),
+                        ),
                         Span::raw("Best for: Users who already have"),
                     ]),
                     Line::from("   a repo or use non-GitHub hosts."),
@@ -551,7 +565,10 @@ impl GitHubAuthComponent {
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Status: ", Style::default().fg(t.primary)),
-                    Span::styled(format!("{} Configured", icons.check()), Style::default().fg(t.success)),
+                    Span::styled(
+                        format!("{} Configured", icons.check()),
+                        Style::default().fg(t.success),
+                    ),
                 ]),
             ];
 
