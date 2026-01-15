@@ -379,6 +379,31 @@ impl SyncService {
             });
         }
 
+        // IMPORTANT: Also add synced files from manifest that aren't in the list yet
+        // This ensures that custom files synced on another machine still show up
+        // even if they're not in the local config.custom_files
+        for synced_path in &synced_set {
+            // Skip if already in the list
+            if found
+                .iter()
+                .any(|d| d.relative_path.to_string_lossy() == *synced_path)
+            {
+                continue;
+            }
+
+            let full_path = home_dir.join(synced_path);
+            let relative_path = PathBuf::from(synced_path);
+
+            // Add even if file doesn't exist locally (might have been deleted)
+            // This allows user to see and manage it in the UI
+            found.push(Dotfile {
+                original_path: full_path,
+                relative_path,
+                synced: true, // It's in the manifest, so it's synced
+                description: None,
+            });
+        }
+
         // Sort by relative path for consistent display
         found.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
