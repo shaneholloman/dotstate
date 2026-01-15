@@ -265,8 +265,10 @@ impl SymlinkManager {
             rollback_performed: false,
         };
 
-        // Step 1: Deactivate old profile
-        match self.deactivate_profile(from) {
+        // Step 1: Deactivate old profile WITHOUT restoring files
+        // We don't restore because we're about to activate a new profile
+        // which will either create new symlinks or leave files unmanaged
+        match self.deactivate_profile_with_restore(from, false) {
             Ok(ops) => report.removed = ops,
             Err(e) => {
                 error!("Failed to deactivate profile {}: {}", from, e);
@@ -909,6 +911,159 @@ impl SymlinkManager {
         }
 
         Ok(operation)
+    }
+
+    /// Ensure all files in a profile have their symlinks created.
+    ///
+    /// This is an efficient "reconciliation" method that only creates symlinks for files
+    /// that are missing them. It's perfect for after pulling changes from remote, where
+    /// new files may have been added but their symlinks don't exist locally yet.
+    ///
+    /// Unlike `activate_profile`, this does NOT remove any existing symlinks - it only
+    /// adds missing ones.
+    ///
+    /// # Arguments
+    ///
+    /// * `profile_name` - Name of the profile
+    /// * `files` - List of files that should have symlinks (relative paths)
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (created_count, skipped_count, errors)
+    pub fn ensure_profile_symlinks(
+        &mut self,
+        profile_name: &str,
+        files: &[String],
+    ) -> Result<(usize, usize, Vec<String>)> {
+        info!(
+            "Ensuring symlinks for profile '{}' ({} files)",
+            profile_name,
+            files.len()
+        );
+
+        let profile_path = self.repo_path.join(profile_name);
+        let home_dir = crate::utils::get_home_dir();
+
+        let mut created_count = 0;
+        let mut skipped_count = 0;
+        let mut errors = Vec::new();
+
+        // Create backup session if backups are enabled
+        if self.backup_enabled && self.backup_session.is_none() {
+            if let Some(ref backup_mgr) = self.backup_manager {
+                self.backup_session = Some(backup_mgr.create_backup_session()?);
+                debug!("Created backup session: {:?}", self.backup_session);
+            }
+        }
+
+        for relative_path in files {
+            let source = profile_path.join(relative_path);
+            let target = home_dir.join(relative_path);
+
+            // Check if source exists in repo
+            if !source.exists() {
+                debug!("Source file does not exist in repo, skipping: {:?}", source);
+                skipped_count += 1;
+                continue;
+            }
+
+            // Check if symlink already exists and points to the right place
+            if target.symlink_metadata().is_ok() {
+                if let Ok(metadata) = target.symlink_metadata() {
+                    if metadata.is_symlink() {
+                        // It's a symlink - check if it points to the right place
+                        if let Ok(existing_target) = fs::read_link(&target) {
+                            // Normalize paths for comparison
+                            let existing_normalized = if existing_target.is_absolute() {
+                                existing_target.canonicalize().unwrap_or(existing_target)
+                            } else {
+                                // Relative symlink - resolve relative to target's parent
+                                if let Some(parent) = target.parent() {
+                                    parent
+                                        .join(&existing_target)
+                                        .canonicalize()
+                                        .unwrap_or_else(|_| parent.join(&existing_target))
+                                } else {
+                                    existing_target
+                                }
+                            };
+
+                            let source_normalized = source.canonicalize().unwrap_or(source.clone());
+
+                            if existing_normalized == source_normalized {
+                                debug!(
+                                    "Symlink already exists and is correct, skipping: {:?}",
+                                    target
+                                );
+                                skipped_count += 1;
+                                continue;
+                            } else {
+                                debug!(
+                                    "Symlink exists but points to wrong location: {:?} -> {:?} (expected: {:?})",
+                                    target, existing_normalized, source_normalized
+                                );
+                            }
+                        }
+                    } else {
+                        // Regular file exists at target location
+                        debug!(
+                            "Regular file exists at target location (not a symlink): {:?}",
+                            target
+                        );
+                        errors.push(format!("File exists at {} (not a symlink)", relative_path));
+                        continue;
+                    }
+                }
+            }
+
+            // Symlink doesn't exist or is incorrect - create it
+            debug!("Creating symlink: {:?} -> {:?}", target, source);
+            match self.create_symlink(&source, &target, relative_path) {
+                Ok(operation) => {
+                    if matches!(operation.status, OperationStatus::Success) {
+                        // Update tracking
+                        self.tracking.symlinks.push(TrackedSymlink {
+                            target: operation.target.clone(),
+                            source: operation.source.clone(),
+                            created_at: operation.timestamp,
+                            backup: operation.backup.clone(),
+                        });
+
+                        // Update active profile if not set
+                        if self.tracking.active_profile.is_empty() {
+                            self.tracking.active_profile = profile_name.to_string();
+                        }
+
+                        created_count += 1;
+                        info!("Created symlink for {}", relative_path);
+                    } else {
+                        warn!(
+                            "Failed to create symlink for {}: {:?}",
+                            relative_path, operation.status
+                        );
+                        errors.push(format!("Failed to create symlink for {}", relative_path));
+                    }
+                }
+                Err(e) => {
+                    error!("Error creating symlink for {}: {}", relative_path, e);
+                    errors.push(format!("Error for {}: {}", relative_path, e));
+                }
+            }
+        }
+
+        // Save tracking if we created any symlinks
+        if created_count > 0 {
+            self.save_tracking()?;
+        }
+
+        info!(
+            "Symlink reconciliation complete: {} created, {} skipped, {} errors",
+            created_count,
+            skipped_count,
+            errors.len()
+        );
+
+        Ok((created_count, skipped_count, errors))
     }
 
     /// Remove a specific symlink from tracking without affecting other symlinks.

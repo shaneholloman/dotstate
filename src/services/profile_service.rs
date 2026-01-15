@@ -434,6 +434,49 @@ impl ProfileService {
             }
         }
     }
+
+    /// Ensure all files in the active profile have their symlinks created.
+    ///
+    /// This is an efficient reconciliation method that only creates missing symlinks.
+    /// Perfect for after pulling changes from remote where new files were added but
+    /// their symlinks don't exist locally yet.
+    ///
+    /// Unlike `activate_profile`, this does NOT remove any existing symlinks - it only
+    /// adds missing ones.
+    ///
+    /// # Arguments
+    ///
+    /// * `repo_path` - Path to the repository.
+    /// * `profile_name` - Name of the profile to ensure symlinks for.
+    /// * `backup_enabled` - Whether to enable backups during symlink creation.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (created_count, skipped_count, errors)
+    pub fn ensure_profile_symlinks(
+        repo_path: &Path,
+        profile_name: &str,
+        backup_enabled: bool,
+    ) -> Result<(usize, usize, Vec<String>)> {
+        info!("Ensuring symlinks for profile '{}'", profile_name);
+
+        // Get the list of files that should be synced from the manifest
+        let profile = Self::get_profile_info(repo_path, profile_name)?
+            .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
+
+        let files_to_sync = profile.synced_files;
+
+        if files_to_sync.is_empty() {
+            info!("Profile '{}' has no files to sync", profile_name);
+            return Ok((0, 0, Vec::new()));
+        }
+
+        // Use SymlinkManager to ensure symlinks
+        let mut symlink_mgr =
+            SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
+
+        symlink_mgr.ensure_profile_symlinks(profile_name, &files_to_sync)
+    }
 }
 
 #[cfg(test)]

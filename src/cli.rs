@@ -161,6 +161,37 @@ impl Cli {
                 "✅ Successfully synced with remote! Pulled {} change(s) from remote.",
                 pulled_count
             );
+
+            // Ensure symlinks for any new files pulled from remote
+            // This is efficient - only creates symlinks for missing files
+            use crate::services::ProfileService;
+            println!("🔗 Checking for new files to symlink...");
+            match ProfileService::ensure_profile_symlinks(
+                repo_path,
+                &config.active_profile,
+                config.backup_enabled,
+            ) {
+                Ok((created, _skipped, errors)) => {
+                    if created > 0 {
+                        println!("   Created {} symlink(s) for new files.", created);
+                    } else {
+                        println!("   All files already have symlinks.");
+                    }
+                    if !errors.is_empty() {
+                        eprintln!("⚠️  Warning: {} error(s) creating symlinks:", errors.len());
+                        for error in errors {
+                            eprintln!("   {}", error);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to ensure symlinks after pull: {}", e);
+                    eprintln!(
+                        "⚠️  Warning: Failed to create symlinks for new files: {}",
+                        e
+                    );
+                }
+            }
         } else {
             info!("CLI sync completed: no changes pulled");
             println!("✅ Successfully synced with remote! No changes pulled from remote.");

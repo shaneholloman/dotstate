@@ -184,7 +184,6 @@ impl SyncWithRemoteScreen {
             let empty_message = Paragraph::new(
                 "No changes to sync.\n\nAll files are up to date with the remote repository.",
             )
-            .style(t.muted_style())
             .wrap(Wrap { trim: true })
             .block(
                 Block::default()

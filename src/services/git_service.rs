@@ -331,6 +331,38 @@ impl GitService {
                                         "\n\nPulled {} change(s) from remote.",
                                         pulled_count
                                     ));
+
+                                    // Step 4: Ensure symlinks for any new files pulled from remote
+                                    // This is efficient - only creates symlinks for missing files
+                                    use crate::services::ProfileService;
+                                    match ProfileService::ensure_profile_symlinks(
+                                        repo_path,
+                                        &config.active_profile,
+                                        config.backup_enabled,
+                                    ) {
+                                        Ok((created, _skipped, errors)) => {
+                                            if created > 0 {
+                                                success_msg.push_str(&format!(
+                                                    "\nCreated {} symlink(s) for new files.",
+                                                    created
+                                                ));
+                                            }
+                                            if !errors.is_empty() {
+                                                success_msg.push_str(&format!(
+                                                    "\n\nWarning: {} error(s) creating symlinks:\n{}",
+                                                    errors.len(),
+                                                    errors.join("\n")
+                                                ));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to ensure symlinks after pull: {}", e);
+                                            success_msg.push_str(&format!(
+                                                "\n\nWarning: Failed to create symlinks for new files: {}",
+                                                e
+                                            ));
+                                        }
+                                    }
                                 } else {
                                     success_msg.push_str("\n\nNo changes pulled from remote.");
                                 }
