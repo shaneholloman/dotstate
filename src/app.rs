@@ -1209,11 +1209,9 @@ impl App {
                                 // Refresh list to update UI
                                 Self::scan_dotfiles_into(&self.config, state)?;
                                 // Try to maintain selection
-                                if let Some(idx) = state
-                                    .dotfiles
-                                    .iter()
-                                    .position(|d| d.relative_path.to_string_lossy() == relative_path)
-                                {
+                                if let Some(idx) = state.dotfiles.iter().position(|d| {
+                                    d.relative_path.to_string_lossy() == relative_path
+                                }) {
                                     state.dotfile_list_state.select(Some(idx));
                                 }
                             }
@@ -1230,11 +1228,9 @@ impl App {
                                 // Refresh list to update UI
                                 Self::scan_dotfiles_into(&self.config, state)?;
                                 // Try to maintain selection
-                                if let Some(idx) = state
-                                    .dotfiles
-                                    .iter()
-                                    .position(|d| d.relative_path.to_string_lossy() == relative_path)
-                                {
+                                if let Some(idx) = state.dotfiles.iter().position(|d| {
+                                    d.relative_path.to_string_lossy() == relative_path
+                                }) {
                                     state.dotfile_list_state.select(Some(idx));
                                 }
                             }

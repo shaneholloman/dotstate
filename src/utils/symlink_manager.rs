@@ -1135,15 +1135,11 @@ impl SymlinkManager {
         let home_dir = crate::utils::get_home_dir();
         let target = home_dir.join(relative_path);
 
-        info!(
-            "Adding common symlink: {} -> {:?}",
-            relative_path, source
-        );
+        info!("Adding common symlink: {} -> {:?}", relative_path, source);
 
         // Ensure common directory exists
         if !common_path.exists() {
-            fs::create_dir_all(&common_path)
-                .context("Failed to create common directory")?;
+            fs::create_dir_all(&common_path).context("Failed to create common directory")?;
         }
 
         // Create backup session if backups are enabled and not already created
@@ -1344,7 +1340,10 @@ impl SymlinkManager {
                     }
                 }
                 Err(e) => {
-                    errors.push(format!("Failed to create common symlink for {}: {}", relative_path, e));
+                    errors.push(format!(
+                        "Failed to create common symlink for {}: {}",
+                        relative_path, e
+                    ));
                 }
             }
         }
@@ -1355,7 +1354,9 @@ impl SymlinkManager {
 
         info!(
             "Common symlinks: {} created, {} skipped, {} errors",
-            created_count, skipped_count, errors.len()
+            created_count,
+            skipped_count,
+            errors.len()
         );
 
         Ok((created_count, skipped_count, errors))
@@ -1377,8 +1378,7 @@ impl SymlinkManager {
 
         // Ensure common directory exists
         if !common_path.exists() {
-            fs::create_dir_all(&common_path)
-                .context("Failed to create common directory")?;
+            fs::create_dir_all(&common_path).context("Failed to create common directory")?;
         }
 
         // Create backup session if backups are enabled

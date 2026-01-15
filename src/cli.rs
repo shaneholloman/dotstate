@@ -273,7 +273,10 @@ impl Cli {
 
         // Print common files first
         if !common_files.is_empty() {
-            println!("Common files ({}) - shared across all profiles:", common_files.len());
+            println!(
+                "Common files ({}) - shared across all profiles:",
+                common_files.len()
+            );
             for file in common_files {
                 let symlink_path = home_dir.join(file);
                 let repo_file_path = repo_path.join("common").join(file);
@@ -385,7 +388,10 @@ impl Cli {
 
         // Show confirmation prompt
         let destination = if common { "common files" } else { "profile" };
-        println!("⚠️  Warning: This will move the following path to {} and replace it with a symlink:", destination);
+        println!(
+            "⚠️  Warning: This will move the following path to {} and replace it with a symlink:",
+            destination
+        );
         println!("   {}", resolved_path.display());
         if common {
             println!("\n   This file will be shared across ALL profiles.");
@@ -406,7 +412,10 @@ impl Cli {
             return Ok(());
         }
 
-        info!("CLI: Adding file to sync: {} (common: {})", relative_str, common);
+        info!(
+            "CLI: Adding file to sync: {} (common: {})",
+            relative_str, common
+        );
 
         // Use appropriate SyncService method
         let result = if common {
@@ -438,7 +447,10 @@ impl Cli {
                     }
                 }
                 let dest_type = if common { "common files" } else { "repository" };
-                println!("✅ Added {} to {} and created symlink", relative_str, dest_type);
+                println!(
+                    "✅ Added {} to {} and created symlink",
+                    relative_str, dest_type
+                );
             }
             AddFileResult::AlreadySynced => {
                 let dest_type = if common { "common" } else { "synced" };
@@ -462,7 +474,10 @@ impl Cli {
 
         // Show confirmation prompt
         let source = if common { "common files" } else { "profile" };
-        println!("⚠️  Warning: This will remove {} from {} and restore the original file.", path, source);
+        println!(
+            "⚠️  Warning: This will remove {} from {} and restore the original file.",
+            path, source
+        );
         print!("   Continue? [y/N]: ");
         use std::io::{self, Write};
         io::stdout().flush().context("Failed to flush stdout")?;
@@ -478,7 +493,10 @@ impl Cli {
             return Ok(());
         }
 
-        info!("CLI: Removing file from sync: {} (common: {})", path, common);
+        info!(
+            "CLI: Removing file from sync: {} (common: {})",
+            path, common
+        );
 
         // Use appropriate SyncService method
         let result = if common {
@@ -497,7 +515,10 @@ impl Cli {
                     config.save(&config_path)?;
                 }
                 let source_type = if common { "common files" } else { "sync" };
-                println!("✅ Removed {} from {} and restored original file", path, source_type);
+                println!(
+                    "✅ Removed {} from {} and restored original file",
+                    path, source_type
+                );
             }
             RemoveFileResult::NotSynced => {
                 let source_type = if common { "common" } else { "synced" };

@@ -338,7 +338,9 @@ impl ProfileManifest {
 
     /// Check if a file is in the common section
     pub fn is_common_file(&self, relative_path: &str) -> bool {
-        self.common.synced_files.contains(&relative_path.to_string())
+        self.common
+            .synced_files
+            .contains(&relative_path.to_string())
     }
 
     /// Move a file from a profile to common

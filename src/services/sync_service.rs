@@ -510,7 +510,10 @@ impl SyncService {
             let error_msg = validation
                 .error_message
                 .unwrap_or_else(|| "Cannot add this file to common".to_string());
-            warn!("Validation failed for common file {}: {}", relative_path, error_msg);
+            warn!(
+                "Validation failed for common file {}: {}",
+                relative_path, error_msg
+            );
             return Ok(AddFileResult::ValidationFailed(error_msg));
         }
 
@@ -605,7 +608,10 @@ impl SyncService {
     /// # Returns
     ///
     /// Result indicating success or that file was not in common.
-    pub fn remove_common_file_from_sync(config: &Config, relative_path: &str) -> Result<RemoveFileResult> {
+    pub fn remove_common_file_from_sync(
+        config: &Config,
+        relative_path: &str,
+    ) -> Result<RemoveFileResult> {
         let repo_path = &config.repo_path;
         let home_dir = get_home_dir();
 
@@ -760,10 +766,7 @@ impl SyncService {
         symlink_mgr.remove_symlink_from_tracking(profile_name, relative_path)?;
         // Note: The common symlink will be tracked when we add it through the normal flow
 
-        info!(
-            "Successfully moved {} to common",
-            relative_path
-        );
+        info!("Successfully moved {} to common", relative_path);
 
         Ok(())
     }
@@ -792,10 +795,7 @@ impl SyncService {
 
         // Check if file is in common
         if !manifest.is_common_file(relative_path) {
-            return Err(anyhow::anyhow!(
-                "File '{}' is not in common",
-                relative_path
-            ));
+            return Err(anyhow::anyhow!("File '{}' is not in common", relative_path));
         }
 
         // Move the actual file from common folder to profile folder

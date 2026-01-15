@@ -852,7 +852,8 @@ impl Screen for ManageProfilesScreen {
 
                                             // Validate reserved name
                                             if name.eq_ignore_ascii_case("common") {
-                                                self.state.error_message = Some("Name 'common' is reserved".to_string());
+                                                self.state.error_message =
+                                                    Some("Name 'common' is reserved".to_string());
                                                 return Ok(ScreenAction::Refresh);
                                             }
 
@@ -1041,11 +1042,13 @@ impl Screen for ManageProfilesScreen {
                                     }
                                     Action::Confirm => {
                                         if !self.state.rename_input.text().is_empty() {
-                                            let new_name = self.state.rename_input.text().to_string();
+                                            let new_name =
+                                                self.state.rename_input.text().to_string();
 
                                             // Validate reserved name
                                             if new_name.eq_ignore_ascii_case("common") {
-                                                self.state.error_message = Some("Name 'common' is reserved".to_string());
+                                                self.state.error_message =
+                                                    Some("Name 'common' is reserved".to_string());
                                                 return Ok(ScreenAction::Refresh);
                                             }
 

@@ -156,7 +156,9 @@ impl<'a> TextInputWidget<'a> {
                 .border_style(self.border_style());
 
             if let Some(title) = self.title {
-                block = block.title(format!(" {} ", title)).title_alignment(self.title_alignment);
+                block = block
+                    .title(format!(" {} ", title))
+                    .title_alignment(self.title_alignment);
             }
 
             block

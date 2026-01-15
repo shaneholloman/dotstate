@@ -174,7 +174,10 @@ impl DotfileSelectionScreen {
             if !items.is_empty() {
                 items.push(DisplayItem::Header("".to_string())); // Spacer
             }
-            items.push(DisplayItem::Header(format!("Profile Files ({})", profile_name)));
+            items.push(DisplayItem::Header(format!(
+                "Profile Files ({})",
+                profile_name
+            )));
             for idx in profile_indices {
                 items.push(DisplayItem::File(idx));
             }
@@ -598,7 +601,9 @@ impl DotfileSelectionScreen {
         if let Some(action) = action {
             match action {
                 Action::MoveUp => {
-                    if display_items.is_empty() { return Ok(ScreenAction::None); }
+                    if display_items.is_empty() {
+                        return Ok(ScreenAction::None);
+                    }
 
                     let current = self.state.dotfile_list_state.selected().unwrap_or(0);
                     // Find previous non-header item
@@ -613,23 +618,25 @@ impl DotfileSelectionScreen {
                     }
 
                     if found {
-                         self.state.dotfile_list_state.select(Some(prev));
-                         self.state.preview_scroll = 0;
+                        self.state.dotfile_list_state.select(Some(prev));
+                        self.state.preview_scroll = 0;
                     } else {
-                         // If current is a header (which shouldn't happen usually but can at init),
-                         // try to find first valid item from top
-                         if matches!(display_items[current], DisplayItem::Header(_)) {
-                             for (i, item) in display_items.iter().enumerate() {
-                                 if !matches!(item, DisplayItem::Header(_)) {
-                                     self.state.dotfile_list_state.select(Some(i));
-                                     break;
-                                 }
-                             }
-                         }
+                        // If current is a header (which shouldn't happen usually but can at init),
+                        // try to find first valid item from top
+                        if matches!(display_items[current], DisplayItem::Header(_)) {
+                            for (i, item) in display_items.iter().enumerate() {
+                                if !matches!(item, DisplayItem::Header(_)) {
+                                    self.state.dotfile_list_state.select(Some(i));
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 Action::MoveDown => {
-                    if display_items.is_empty() { return Ok(ScreenAction::None); }
+                    if display_items.is_empty() {
+                        return Ok(ScreenAction::None);
+                    }
 
                     let current = self.state.dotfile_list_state.selected().unwrap_or(0);
                     // Find next non-header item
@@ -637,23 +644,25 @@ impl DotfileSelectionScreen {
                     while next < display_items.len() {
                         if !matches!(display_items[next], DisplayItem::Header(_)) {
                             self.state.dotfile_list_state.select(Some(next));
-                             self.state.preview_scroll = 0;
+                            self.state.preview_scroll = 0;
                             break;
                         }
                         next += 1;
                     }
 
                     // If we didn't move and we are currently on a header (e.g. init), move to first valid
-                    if next >= display_items.len() && matches!(display_items[current], DisplayItem::Header(_)) {
-                         // Try finding valid item from current downwards
-                         let mut fix_idx = current + 1;
-                         while fix_idx < display_items.len() {
-                             if !matches!(display_items[fix_idx], DisplayItem::Header(_)) {
-                                 self.state.dotfile_list_state.select(Some(fix_idx));
-                                 break;
-                             }
-                             fix_idx += 1;
-                         }
+                    if next >= display_items.len()
+                        && matches!(display_items[current], DisplayItem::Header(_))
+                    {
+                        // Try finding valid item from current downwards
+                        let mut fix_idx = current + 1;
+                        while fix_idx < display_items.len() {
+                            if !matches!(display_items[fix_idx], DisplayItem::Header(_)) {
+                                self.state.dotfile_list_state.select(Some(fix_idx));
+                                break;
+                            }
+                            fix_idx += 1;
+                        }
                     }
                 }
                 Action::Confirm => {
@@ -661,13 +670,13 @@ impl DotfileSelectionScreen {
                         self.state.status_message = None;
                     } else if let Some(idx) = self.state.dotfile_list_state.selected() {
                         if idx < display_items.len() {
-                           if let DisplayItem::File(file_idx) = &display_items[idx] {
+                            if let DisplayItem::File(file_idx) = &display_items[idx] {
                                 let is_synced = self.state.selected_for_sync.contains(file_idx);
                                 return Ok(ScreenAction::ToggleFileSync {
                                     file_index: *file_idx,
                                     is_synced,
                                 });
-                           }
+                            }
                         }
                     }
                 }
@@ -675,7 +684,9 @@ impl DotfileSelectionScreen {
                     self.state.focus = DotfileSelectionFocus::Preview;
                 }
                 Action::PageUp => {
-                    if display_items.is_empty() { return Ok(ScreenAction::None); }
+                    if display_items.is_empty() {
+                        return Ok(ScreenAction::None);
+                    }
                     // Simple page up, then fix selection if on header
                     let current = self.state.dotfile_list_state.selected().unwrap_or(0);
                     let target = current.saturating_sub(10);
@@ -683,40 +694,56 @@ impl DotfileSelectionScreen {
 
                     // Ensure we don't go below 0 (handled by usize)
                     // Fix if on header
-                    if next < display_items.len() && matches!(display_items[next], DisplayItem::Header(_)) {
-                         next = next.saturating_add(1); // Move down one
+                    if next < display_items.len()
+                        && matches!(display_items[next], DisplayItem::Header(_))
+                    {
+                        next = next.saturating_add(1); // Move down one
                     }
-                    if next >= display_items.len() { next = current; } // Fallback
+                    if next >= display_items.len() {
+                        next = current;
+                    } // Fallback
 
                     self.state.dotfile_list_state.select(Some(next));
                     self.state.preview_scroll = 0;
                 }
                 Action::PageDown => {
-                    if display_items.is_empty() { return Ok(ScreenAction::None); }
+                    if display_items.is_empty() {
+                        return Ok(ScreenAction::None);
+                    }
                     let current = self.state.dotfile_list_state.selected().unwrap_or(0);
                     let target = current.saturating_add(10);
                     let mut next = target;
-                    if next >= display_items.len() { next = display_items.len() - 1; }
+                    if next >= display_items.len() {
+                        next = display_items.len() - 1;
+                    }
 
                     // Fix if on header
                     if matches!(display_items[next], DisplayItem::Header(_)) {
-                         next = next.saturating_add(1);
+                        next = next.saturating_add(1);
                     }
-                    if next >= display_items.len() { next = current; } // Fallback
+                    if next >= display_items.len() {
+                        next = current;
+                    } // Fallback
 
                     self.state.dotfile_list_state.select(Some(next));
                     self.state.preview_scroll = 0;
                 }
                 Action::GoToTop => {
                     // Find first non-header item
-                    if let Some(first_idx) = display_items.iter().position(|item| matches!(item, DisplayItem::File(_))) {
+                    if let Some(first_idx) = display_items
+                        .iter()
+                        .position(|item| matches!(item, DisplayItem::File(_)))
+                    {
                         self.state.dotfile_list_state.select(Some(first_idx));
                     }
                     self.state.preview_scroll = 0;
                 }
                 Action::GoToEnd => {
                     // Find last non-header item
-                    if let Some(last_idx) = display_items.iter().rposition(|item| matches!(item, DisplayItem::File(_))) {
+                    if let Some(last_idx) = display_items
+                        .iter()
+                        .rposition(|item| matches!(item, DisplayItem::File(_)))
+                    {
                         self.state.dotfile_list_state.select(Some(last_idx));
                     }
                     self.state.preview_scroll = 0;
@@ -1110,32 +1137,32 @@ impl DotfileSelectionScreen {
         // This handles initialization or if state gets desynced
         let current_sel = self.state.dotfile_list_state.selected().unwrap_or(0);
         if !display_items.is_empty() {
-             // If selected index is out of bounds or points to a header, fix it
-             let needs_fix = current_sel >= display_items.len() ||
-                             matches!(display_items[current_sel], DisplayItem::Header(_));
+            // If selected index is out of bounds or points to a header, fix it
+            let needs_fix = current_sel >= display_items.len()
+                || matches!(display_items[current_sel], DisplayItem::Header(_));
 
-             if needs_fix {
-                 // Try to find valid item from current position onwards
-                 let mut found = false;
-                 // First try current to end
-                 for (i, item) in display_items.iter().enumerate().skip(current_sel) {
-                     if !matches!(item, DisplayItem::Header(_)) {
-                         self.state.dotfile_list_state.select(Some(i));
-                         found = true;
-                         break;
-                     }
-                 }
-                 // If not found, try from beginning
-                 if !found {
-                     for (i, item) in display_items.iter().enumerate().take(current_sel) {
-                         if !matches!(item, DisplayItem::Header(_)) {
-                             self.state.dotfile_list_state.select(Some(i));
-                             break;
-                         }
-                     }
-                 }
-                 // If still not found (e.g. only headers?), do nothing (or select None)
-             }
+            if needs_fix {
+                // Try to find valid item from current position onwards
+                let mut found = false;
+                // First try current to end
+                for (i, item) in display_items.iter().enumerate().skip(current_sel) {
+                    if !matches!(item, DisplayItem::Header(_)) {
+                        self.state.dotfile_list_state.select(Some(i));
+                        found = true;
+                        break;
+                    }
+                }
+                // If not found, try from beginning
+                if !found {
+                    for (i, item) in display_items.iter().enumerate().take(current_sel) {
+                        if !matches!(item, DisplayItem::Header(_)) {
+                            self.state.dotfile_list_state.select(Some(i));
+                            break;
+                        }
+                    }
+                }
+                // If still not found (e.g. only headers?), do nothing (or select None)
+            }
         }
 
         // Count common vs profile files for title
@@ -1187,7 +1214,10 @@ impl DotfileSelectionScreen {
                     let path_str = dotfile.relative_path.to_string_lossy();
                     let content = ratatui::text::Line::from(vec![
                         ratatui::text::Span::styled(prefix.to_string(), Style::default()),
-                        ratatui::text::Span::styled(format!(" {}\u{2009}{}", sync_marker, path_str), style),
+                        ratatui::text::Span::styled(
+                            format!(" {}\u{2009}{}", sync_marker, path_str),
+                            style,
+                        ),
                     ]);
                     ListItem::new(content)
                 }
@@ -1205,7 +1235,10 @@ impl DotfileSelectionScreen {
 
         // Add focus indicator to files list with common/profile breakdown
         let list_title = if common_count > 0 {
-            format!(" Dotfiles ({} common, {} profile) ", common_count, profile_count)
+            format!(
+                " Dotfiles ({} common, {} profile) ",
+                common_count, profile_count
+            )
         } else {
             format!(" Found {} dotfiles ", self.state.dotfiles.len())
         };
@@ -1247,7 +1280,7 @@ impl DotfileSelectionScreen {
         let selected_dotfile = if let Some(idx) = self.state.dotfile_list_state.selected() {
             if idx < display_items.len() {
                 if let DisplayItem::File(file_idx) = &display_items[idx] {
-                     Some(&self.state.dotfiles[*file_idx])
+                    Some(&self.state.dotfiles[*file_idx])
                 } else {
                     None
                 }
@@ -1297,8 +1330,7 @@ impl DotfileSelectionScreen {
         if let Some(preview_rect) = preview_area_opt {
             if let Some(dotfile) = selected_dotfile {
                 let is_focused = self.state.focus == DotfileSelectionFocus::Preview;
-                let preview_title =
-                    format!("Preview: {}", dotfile.relative_path.to_string_lossy());
+                let preview_title = format!("Preview: {}", dotfile.relative_path.to_string_lossy());
 
                 FilePreview::render(
                     frame,
@@ -1362,13 +1394,22 @@ impl DotfileSelectionScreen {
 
             // Determine move action text based on selected file
             let display_items = self.get_display_items(&config.active_profile);
-            let move_text = self.state.dotfile_list_state.selected()
+            let move_text = self
+                .state
+                .dotfile_list_state
+                .selected()
                 .and_then(|idx| display_items.get(idx))
                 .and_then(|item| match item {
                     DisplayItem::File(file_idx) => self.state.dotfiles.get(*file_idx),
                     _ => None,
                 })
-                .map(|dotfile| if dotfile.is_common { "Move to Profile" } else { "Move to Common" })
+                .map(|dotfile| {
+                    if dotfile.is_common {
+                        "Move to Profile"
+                    } else {
+                        "Move to Common"
+                    }
+                })
                 .unwrap_or("Move");
 
             format!(
@@ -1481,61 +1522,56 @@ impl DotfileSelectionScreen {
 
         // Handle common actions
         if let Some(action) = action {
-             match action {
-                  crate::keymap::Action::Confirm => {
-                      if let Some(idx) = self.state.confirm_move {
-                          if idx < self.state.dotfiles.len() {
-                              let dotfile = &self.state.dotfiles[idx];
-                              let action = ScreenAction::MoveToCommon {
-                                  file_index: idx,
-                                  is_common: dotfile.is_common,
-                              };
-                              self.state.confirm_move = None;
-                              return Ok(action);
-                          }
-                      }
-                      self.state.confirm_move = None;
-                      return Ok(ScreenAction::Refresh);
-                  }
-                  crate::keymap::Action::Quit | crate::keymap::Action::Cancel => {
-                      self.state.confirm_move = None;
-                      return Ok(ScreenAction::Refresh);
-                  }
-                  _ => {}
+            match action {
+                crate::keymap::Action::Confirm => {
+                    if let Some(idx) = self.state.confirm_move {
+                        if idx < self.state.dotfiles.len() {
+                            let dotfile = &self.state.dotfiles[idx];
+                            let action = ScreenAction::MoveToCommon {
+                                file_index: idx,
+                                is_common: dotfile.is_common,
+                            };
+                            self.state.confirm_move = None;
+                            return Ok(action);
+                        }
+                    }
+                    self.state.confirm_move = None;
+                    return Ok(ScreenAction::Refresh);
+                }
+                crate::keymap::Action::Quit | crate::keymap::Action::Cancel => {
+                    self.state.confirm_move = None;
+                    return Ok(ScreenAction::Refresh);
+                }
+                _ => {}
             }
         }
 
         // Handle explicit chars 'y' and 'n'
         match key_code {
             KeyCode::Char('y') => {
-                 if let Some(idx) = self.state.confirm_move {
-                     if idx < self.state.dotfiles.len() {
-                         let dotfile = &self.state.dotfiles[idx];
-                         let action = ScreenAction::MoveToCommon {
-                             file_index: idx,
-                             is_common: dotfile.is_common,
-                         };
-                         self.state.confirm_move = None;
-                         return Ok(action);
-                     }
-                 }
-                 self.state.confirm_move = None;
-                 Ok(ScreenAction::Refresh)
+                if let Some(idx) = self.state.confirm_move {
+                    if idx < self.state.dotfiles.len() {
+                        let dotfile = &self.state.dotfiles[idx];
+                        let action = ScreenAction::MoveToCommon {
+                            file_index: idx,
+                            is_common: dotfile.is_common,
+                        };
+                        self.state.confirm_move = None;
+                        return Ok(action);
+                    }
+                }
+                self.state.confirm_move = None;
+                Ok(ScreenAction::Refresh)
             }
             KeyCode::Char('n') => {
-                 self.state.confirm_move = None;
-                 Ok(ScreenAction::Refresh)
+                self.state.confirm_move = None;
+                Ok(ScreenAction::Refresh)
             }
             _ => Ok(ScreenAction::None),
         }
     }
 
-    fn render_move_confirm(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        config: &Config,
-    ) -> Result<()> {
+    fn render_move_confirm(&self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
         let t = ui_theme();
         // Dim the background
         let dim = Block::default().style(Style::default().bg(Color::Reset).fg(t.text_muted));
@@ -1546,23 +1582,23 @@ impl DotfileSelectionScreen {
         frame.render_widget(Clear, popup_area);
 
         let dotfile_name = if let Some(idx) = self.state.confirm_move {
-             if idx < self.state.dotfiles.len() {
-                  self.state.dotfiles[idx].relative_path.display().to_string()
-             } else {
-                 "Unknown".to_string()
-             }
+            if idx < self.state.dotfiles.len() {
+                self.state.dotfiles[idx].relative_path.display().to_string()
+            } else {
+                "Unknown".to_string()
+            }
         } else {
-             "Unknown".to_string()
+            "Unknown".to_string()
         };
 
         let is_moving_to_common = if let Some(idx) = self.state.confirm_move {
-             if idx < self.state.dotfiles.len() {
-                  !self.state.dotfiles[idx].is_common
-             } else {
-                 false
-             }
+            if idx < self.state.dotfiles.len() {
+                !self.state.dotfiles[idx].is_common
+            } else {
+                false
+            }
         } else {
-             false
+            false
         };
 
         // Title
@@ -1574,9 +1610,15 @@ impl DotfileSelectionScreen {
 
         // Message
         let msg = if is_moving_to_common {
-             format!("Move '{}' to common files?\nIt will become available to all profiles.", dotfile_name)
+            format!(
+                "Move '{}' to common files?\nIt will become available to all profiles.",
+                dotfile_name
+            )
         } else {
-             format!("Move '{}' back to profile?\nIt will no longer be available to other profiles.", dotfile_name)
+            format!(
+                "Move '{}' back to profile?\nIt will no longer be available to other profiles.",
+                dotfile_name
+            )
         };
 
         // Main Block with borders
@@ -1595,7 +1637,7 @@ impl DotfileSelectionScreen {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1), // Top spacer
-                Constraint::Min(3), // Message
+                Constraint::Min(3),    // Message
                 Constraint::Length(1), // Spacer
                 Constraint::Length(1), // Instructions
                 Constraint::Length(1), // Bottom padding

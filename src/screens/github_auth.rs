@@ -929,7 +929,11 @@ impl GitHubAuthScreen {
                 Constraint::Length(3), // Token input
                 Constraint::Length(1), // Spacer
                 Constraint::Length(3), // Repo name input
-                if !self.state.repo_already_configured { Constraint::Length(2) } else { Constraint::Length(0) }, // Reminder message (only shown for new installs)
+                if !self.state.repo_already_configured {
+                    Constraint::Length(2)
+                } else {
+                    Constraint::Length(0)
+                }, // Reminder message (only shown for new installs)
                 Constraint::Length(1), // Spacer
                 Constraint::Length(3), // Repo location input
                 Constraint::Length(1), // Spacer
