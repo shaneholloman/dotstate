@@ -204,6 +204,28 @@ impl Cli {
                     );
                 }
             }
+
+            // Also ensure common symlinks
+            match ProfileService::ensure_common_symlinks(repo_path, config.backup_enabled) {
+                Ok((created, _skipped, errors)) => {
+                    if created > 0 {
+                        println!("   Created {} common symlink(s).", created);
+                    }
+                    if !errors.is_empty() {
+                        eprintln!(
+                            "⚠️  Warning: {} error(s) creating common symlinks:",
+                            errors.len()
+                        );
+                        for error in errors {
+                            eprintln!("   {}", error);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to ensure common symlinks after pull: {}", e);
+                    eprintln!("⚠️  Warning: Failed to create common symlinks: {}", e);
+                }
+            }
         } else {
             info!("CLI sync completed: no changes pulled");
             println!("✅ Successfully synced with remote! No changes pulled from remote.");

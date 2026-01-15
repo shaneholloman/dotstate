@@ -477,6 +477,45 @@ impl ProfileService {
 
         symlink_mgr.ensure_profile_symlinks(profile_name, &files_to_sync)
     }
+
+    /// Ensure all common files have their symlinks created.
+    ///
+    /// This is an efficient "reconciliation" method that only creates
+    /// symlinks for files that don't already have them. Useful after
+    /// pulling from remote when new common files may have been added.
+    ///
+    /// # Arguments
+    ///
+    /// * `repo_path` - Path to the repository.
+    /// * `backup_enabled` - Whether to enable backups during symlink creation.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (created_count, skipped_count, errors)
+    pub fn ensure_common_symlinks(
+        repo_path: &Path,
+        backup_enabled: bool,
+    ) -> Result<(usize, usize, Vec<String>)> {
+        info!("Ensuring symlinks for common files");
+
+        // Get the list of common files from the manifest
+        let manifest = ProfileManifest::load_or_backfill(repo_path)?;
+        let common_files = manifest.get_common_files();
+
+        if common_files.is_empty() {
+            info!("No common files to sync");
+            return Ok((0, 0, Vec::new()));
+        }
+
+        // Convert to Vec<String> for the symlink manager
+        let common_files_vec = common_files.to_vec();
+
+        // Use SymlinkManager to ensure symlinks
+        let mut symlink_mgr =
+            SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
+
+        symlink_mgr.ensure_common_symlinks(&common_files_vec)
+    }
 }
 
 #[cfg(test)]

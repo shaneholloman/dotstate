@@ -363,6 +363,38 @@ impl GitService {
                                             ));
                                         }
                                     }
+
+                                    // Also ensure common symlinks
+                                    match ProfileService::ensure_common_symlinks(
+                                        repo_path,
+                                        config.backup_enabled,
+                                    ) {
+                                        Ok((created, _skipped, errors)) => {
+                                            if created > 0 {
+                                                success_msg.push_str(&format!(
+                                                    "\nCreated {} common symlink(s).",
+                                                    created
+                                                ));
+                                            }
+                                            if !errors.is_empty() {
+                                                success_msg.push_str(&format!(
+                                                    "\n\nWarning: {} error(s) creating common symlinks:\n{}",
+                                                    errors.len(),
+                                                    errors.join("\n")
+                                                ));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!(
+                                                "Failed to ensure common symlinks after pull: {}",
+                                                e
+                                            );
+                                            success_msg.push_str(&format!(
+                                                "\n\nWarning: Failed to create common symlinks: {}",
+                                                e
+                                            ));
+                                        }
+                                    }
                                 } else {
                                     success_msg.push_str("\n\nNo changes pulled from remote.");
                                 }
