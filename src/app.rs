@@ -449,9 +449,19 @@ impl App {
                     }
                 }
                 Screen::GitHubAuth => {
-                    // Sync state back after render (component may update it)
-                    self.github_auth_screen.update_config(config_clone.clone());
-                    let _ = self.github_auth_screen.render_frame(frame, area);
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                    let ctx = RenderContext::new(
+                        &config_clone,
+                        &self.syntax_set,
+                        &self.theme_set,
+                        syntax_theme,
+                    );
+                    if let Err(e) = self.github_auth_screen.render(frame, area, &ctx) {
+                        error!("Failed to render GitHubAuth screen: {}", e);
+                    }
+                    // Sync state back after render
                     self.ui_state.github_auth = self.github_auth_screen.get_auth_state().clone();
                 }
                 Screen::DotfileSelection => {
@@ -888,6 +898,8 @@ impl App {
             Screen::SyncWithRemote => {
                 // Reset sync screen state
                 self.sync_with_remote_screen.reset_state();
+                // Trigger git status check to fetch ahead/behind commits
+                self.trigger_git_status_check(true);
             }
 
             Screen::ManagePackages => {

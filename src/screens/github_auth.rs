@@ -5,37 +5,70 @@
 //! - GitHub mode: Creates/uses a GitHub repository with token authentication
 //! - Local mode: Uses an existing local git repository
 
-use crate::components::component::Component;
-use crate::components::GitHubAuthComponent;
-use crate::config::Config;
+use crate::components::footer::Footer;
+use crate::components::header::Header;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
+use crate::styles::{theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::{GitHubAuthField, GitHubAuthState, GitHubAuthStep, SetupMode};
+use crate::utils::{
+    create_standard_layout, disabled_border_style, disabled_text_style, focused_border_style,
+    unfocused_border_style,
+};
+use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
-use ratatui::layout::Rect;
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
+use ratatui::layout::{Alignment, Rect};
+use ratatui::prelude::*;
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
+};
 use ratatui::Frame;
 
 /// GitHub authentication screen controller.
 ///
 /// This screen owns its state and handles both rendering and events.
 pub struct GitHubAuthScreen {
-    component: GitHubAuthComponent,
     /// Screen owns its state
     state: GitHubAuthState,
+    /// Clickable areas for input fields (for mouse support)
+    token_area: Option<Rect>,
+    repo_name_area: Option<Rect>,
+    repo_location_area: Option<Rect>,
+    visibility_area: Option<Rect>,
+    /// Clickable areas for mode selection
+    mode_selection_areas: Vec<(Rect, usize)>, // (area, mode_index)
+    /// List state for mode selection
+    mode_list_state: ListState,
+    /// Clickable area for local repo path input
+    local_repo_path_area: Option<Rect>,
 }
 
 impl GitHubAuthScreen {
     /// Create a new GitHub auth screen.
     pub fn new() -> Self {
+        let mut mode_list_state = ListState::default();
+        mode_list_state.select(Some(0)); // Select first option by default
+
         Self {
-            component: GitHubAuthComponent::new(),
             state: GitHubAuthState::default(),
+            token_area: None,
+            repo_name_area: None,
+            repo_location_area: None,
+            visibility_area: None,
+            mode_selection_areas: Vec::new(),
+            mode_list_state,
+            local_repo_path_area: None,
         }
     }
 
-    /// Update configuration.
-    pub fn update_config(&mut self, config: Config) {
-        self.component.update_config(config);
+    /// Get icon set from config
+    fn icons(&self, ctx: &RenderContext) -> crate::icons::Icons {
+        crate::icons::Icons::from_config(ctx.config)
+    }
+
+    /// Get key display for an action
+    fn get_key(&self, ctx: &RenderContext, action: crate::keymap::Action) -> String {
+        ctx.config.keymap.get_key_display_for_action(action)
     }
 
     /// Get the current auth state.
@@ -48,13 +81,6 @@ impl GitHubAuthScreen {
         &mut self.state
     }
 
-    /// Render the screen.
-    pub fn render_frame(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
-        // Sync state to component for rendering
-        *self.component.get_auth_state_mut() = self.state.clone();
-        self.component.render(frame, area)
-    }
-
     /// Reset the screen state to default.
     pub fn reset(&mut self) {
         self.state = GitHubAuthState::default();
@@ -65,6 +91,870 @@ impl GitHubAuthScreen {
     pub fn needs_tick(&self) -> bool {
         matches!(self.state.step, GitHubAuthStep::SetupStep(_))
     }
+
+    /// Check if mouse click is in a specific field area
+    fn is_click_in_area(&self, area: Option<Rect>, x: u16, y: u16) -> bool {
+        if let Some(rect) = area {
+            x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+        } else {
+            false
+        }
+    }
+
+    // Rendering methods
+
+    fn render_token_field(&mut self, frame: &mut Frame, area: Rect, _ctx: &RenderContext) -> Result<()> {
+        let is_focused = self.state.focused_field == GitHubAuthField::Token;
+
+        // Disable token field if repo configured and not in edit mode
+        let is_disabled =
+            self.state.repo_already_configured && !self.state.is_editing_token;
+
+        // Show masked token if repo is already configured and not editing
+        let masked = self.state.repo_already_configured && !self.state.is_editing_token;
+
+        // Store area for mouse support
+        let input_block = Block::bordered();
+        self.token_area = Some(input_block.inner(area));
+
+        let widget = TextInputWidget::new(&self.state.token_input)
+            .title("GitHub Token")
+            .placeholder("ghp_...")
+            .focused(is_focused && !is_disabled)
+            .disabled(is_disabled)
+            .masked(masked);
+
+        frame.render_text_input_widget(widget, area);
+        Ok(())
+    }
+
+    fn render_repo_name_field(&mut self, frame: &mut Frame, area: Rect, _ctx: &RenderContext) -> Result<()> {
+        let is_focused = self.state.focused_field == GitHubAuthField::RepoName;
+        let is_disabled = self.state.repo_already_configured;
+
+        // Store area for mouse support
+        let input_block = Block::bordered();
+        self.repo_name_area = Some(input_block.inner(area));
+
+        let widget = TextInputWidget::new(&self.state.repo_name_input)
+            .title("Repository Name")
+            .placeholder("dotstate-dotfiles")
+            .focused(is_focused && !is_disabled)
+            .disabled(is_disabled);
+
+        frame.render_text_input_widget(widget, area);
+        Ok(())
+    }
+
+    fn render_repo_location_field(&mut self, frame: &mut Frame, area: Rect, _ctx: &RenderContext) -> Result<()> {
+        let is_focused = self.state.focused_field == GitHubAuthField::RepoLocation;
+        let is_disabled = self.state.repo_already_configured;
+
+        // Store area for mouse support
+        let input_block = Block::bordered();
+        self.repo_location_area = Some(input_block.inner(area));
+
+        let widget = TextInputWidget::new(&self.state.repo_location_input)
+            .title("Local Path")
+            .placeholder("~/.config/dotstate/storage")
+            .focused(is_focused && !is_disabled)
+            .disabled(is_disabled);
+
+        frame.render_text_input_widget(widget, area);
+        Ok(())
+    }
+
+    fn render_visibility_field(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let is_focused = self.state.focused_field == GitHubAuthField::IsPrivate;
+        let is_disabled = self.state.repo_already_configured;
+        let icons = self.icons(ctx);
+
+        let border_style = if is_disabled {
+            disabled_border_style()
+        } else if is_focused {
+            focused_border_style()
+        } else {
+            unfocused_border_style()
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title("Repository Visibility")
+            .title_alignment(Alignment::Left);
+
+        // Store area for mouse support
+        self.visibility_area = Some(block.inner(area));
+
+        let visibility_text = if self.state.is_private {
+            format!(
+                "[{}] Private    [{}] Public",
+                icons.check(),
+                icons.uncheck()
+            )
+        } else {
+            format!(
+                "[{}] Private    [{}] Public",
+                icons.uncheck(),
+                icons.check()
+            )
+        };
+
+        let t = theme();
+        let text_style = if is_disabled {
+            disabled_text_style()
+        } else if is_focused {
+            t.text_style()
+        } else {
+            Style::default().fg(t.text_muted)
+        };
+
+        let paragraph = Paragraph::new(visibility_text)
+            .block(block)
+            .style(text_style);
+
+        frame.render_widget(paragraph, area);
+        Ok(())
+    }
+
+    /// Render the mode selection screen (choosing between GitHub and Local modes)
+    fn render_mode_selection(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = theme();
+        // Layout: Header, Content, Footer
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+
+        // Header
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "DotState - Repository Setup",
+            "Choose how you want to set up your dotfiles repository.",
+        )?;
+
+        // Split content into left and right panels
+        let main_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50), // Left panel - options
+                Constraint::Percentage(50), // Right panel - explanation
+            ])
+            .split(content_chunk);
+
+        // Left panel: Mode selection list
+        let icons = self.icons(ctx);
+        let options = vec![
+            ListItem::new(vec![Line::from(vec![
+                Span::styled(format!("{} ", icons.github()), Style::default()),
+                Span::styled("Create repository for me (GitHub)", t.success_style()),
+            ])]),
+            ListItem::new(vec![Line::from(vec![
+                Span::styled(format!("{} ", icons.folder()), Style::default()),
+                Span::styled("Use my own repository", Style::default().fg(t.tertiary)),
+            ])]),
+        ];
+
+        let list_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(focused_border_style())
+            .border_type(BorderType::Rounded)
+            .title(format!("{} Choose Setup Method", icons.menu()))
+            .title_style(t.title_style())
+            .title_alignment(Alignment::Center)
+            .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
+
+        // Store clickable areas
+        self.mode_selection_areas.clear();
+        let list_inner = list_block.inner(main_layout[0]);
+
+        for i in 0..options.len() {
+            let y = list_inner.y + i as u16;
+            if y < list_inner.y + list_inner.height {
+                self.mode_selection_areas
+                    .push((Rect::new(list_inner.x, y, list_inner.width, 1), i));
+            }
+        }
+
+        // Update list state selection
+        self.mode_list_state
+            .select(Some(self.state.mode_selection_index));
+
+        let list = List::new(options)
+            .block(list_block)
+            .highlight_style(t.highlight_style())
+            .highlight_spacing(HighlightSpacing::Always)
+            .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
+
+        frame.render_stateful_widget(list, main_layout[0], &mut self.mode_list_state);
+
+        // Right panel: Context-sensitive explanation
+        let (title, explanation_lines) = if self.state.mode_selection_index == 0 {
+            (
+                "GitHub Setup",
+                vec![
+                    Line::from(vec![Span::styled(
+                        "Automatic GitHub Setup",
+                        Style::default().fg(t.success).add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from(""),
+                    Line::from("DotState will:"),
+                    Line::from(vec![
+                        Span::styled("  1. ", Style::default().fg(t.text_emphasis)),
+                        Span::raw("Connect to GitHub using your token"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  2. ", Style::default().fg(t.text_emphasis)),
+                        Span::raw("Create a repository for you"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  3. ", Style::default().fg(t.text_emphasis)),
+                        Span::raw("Set up syncing automatically"),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![Span::styled(
+                        "Requirements:",
+                        Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from("• GitHub account"),
+                    Line::from("• Personal Access Token (PAT)"),
+                    Line::from("  with 'repo' scope"),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", icons.lightbulb()),
+                            Style::default().fg(t.secondary),
+                        ),
+                        Span::raw("Best for: Users who want a quick,"),
+                    ]),
+                    Line::from("   automated setup on GitHub."),
+                ],
+            )
+        } else {
+            (
+                "Local Repository",
+                vec![
+                    Line::from(vec![Span::styled(
+                        "Use Your Own Repository",
+                        Style::default().fg(t.tertiary).add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from(""),
+                    Line::from("You set up the repository yourself:"),
+                    Line::from(vec![
+                        Span::styled("  1. ", Style::default().fg(t.text_emphasis)),
+                        Span::raw("Create a repo on any git host"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  2. ", Style::default().fg(t.text_emphasis)),
+                        Span::raw("Clone it to your machine"),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  3. ", Style::default().fg(t.text_emphasis)),
+                        Span::raw("Tell DotState where it is"),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![Span::styled(
+                        "Supports:",
+                        Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from("• GitHub, GitLab, Bitbucket"),
+                    Line::from("• Self-hosted git servers"),
+                    Line::from("• Any git remote"),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(
+                            format!("{} ", icons.lightbulb()),
+                            Style::default().fg(t.secondary),
+                        ),
+                        Span::raw("Best for: Users who already have"),
+                    ]),
+                    Line::from("   a repo or use non-GitHub hosts."),
+                ],
+            )
+        };
+
+        let explanation_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.primary))
+            .border_type(BorderType::Rounded)
+            .title(format!("{} {}", icons.lightbulb(), title))
+            .title_style(t.title_style())
+            .title_alignment(Alignment::Center)
+            .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
+
+        let explanation_para = Paragraph::new(explanation_lines)
+            .block(explanation_block)
+            .wrap(Wrap { trim: true });
+
+        frame.render_widget(explanation_para, main_layout[1]);
+
+        // Footer
+        let footer_text = format!(
+            "{}/{} : Navigate | {}: Select | {}: Cancel",
+            self.get_key(ctx, crate::keymap::Action::MoveUp),
+            self.get_key(ctx, crate::keymap::Action::MoveDown),
+            self.get_key(ctx, crate::keymap::Action::Confirm),
+            self.get_key(ctx, crate::keymap::Action::Quit)
+        );
+        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
+
+        Ok(())
+    }
+
+    /// Render the local repository setup screen
+    fn render_local_setup(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = theme();
+        let icons = self.icons(ctx);
+        // Layout: Header, Content, Footer
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+
+        // Header
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "DotState - Local Repository Setup",
+            "Point DotState to your existing git repository.",
+        )?;
+
+        // Split content into left and right panels
+        let main_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(60), // Left panel - instructions + input
+                Constraint::Percentage(40), // Right panel - help
+            ])
+            .split(content_chunk);
+
+        // Left side: instructions and input
+        let left_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(14), // Instructions block
+                Constraint::Length(1),  // Spacer
+                Constraint::Length(3),  // Path input
+                Constraint::Min(0),     // Spacer
+            ])
+            .split(main_layout[0]);
+
+        // Instructions
+        let instructions_lines = vec![
+            Line::from(vec![Span::styled(
+                "Set up your own git repository:",
+                Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("1. ", Style::default().fg(t.text_emphasis)),
+                Span::raw("Create a repository on any git host"),
+            ]),
+            Line::from("   (GitHub, GitLab, Bitbucket, etc.)"),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("2. ", Style::default().fg(t.text_emphasis)),
+                Span::raw("Clone it locally:"),
+            ]),
+            Line::from(vec![Span::styled(
+                "   git clone <url> ~/.config/dotstate/storage",
+                Style::default().fg(t.text_muted),
+            )]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("3. ", Style::default().fg(t.text_emphasis)),
+                Span::raw("Ensure you can push:"),
+            ]),
+            Line::from(vec![Span::styled(
+                "   git push origin main",
+                Style::default().fg(t.text_muted),
+            )]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("4. ", Style::default().fg(t.text_emphasis)),
+                Span::raw("Enter the local path below"),
+            ]),
+        ];
+
+        let instructions_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.tertiary))
+            .border_type(BorderType::Rounded)
+            .title(format!("{} Setup Instructions", icons.menu()))
+            .title_style(Style::default().fg(t.tertiary).add_modifier(Modifier::BOLD))
+            .title_alignment(Alignment::Center);
+
+        let instructions = Paragraph::new(instructions_lines)
+            .block(instructions_block)
+            .wrap(Wrap { trim: true });
+        frame.render_widget(instructions, left_layout[0]);
+
+        // Path input field
+        let is_disabled = self.state.repo_already_configured;
+
+        // Store area for mouse support
+        let input_block = Block::bordered();
+        self.local_repo_path_area = Some(input_block.inner(left_layout[2]));
+
+        let widget = TextInputWidget::new(&self.state.local_repo_path_input)
+            .title("Local Repository Path")
+            .placeholder("~/.config/dotstate/storage")
+            .focused(self.state.input_focused && !is_disabled)
+            .disabled(is_disabled);
+
+        frame.render_text_input_widget(widget, left_layout[2]);
+
+        // Right side: Help panel
+        self.render_local_help_panel(frame, main_layout[1], ctx)?;
+
+        // Footer
+        let footer_text = if self.state.repo_already_configured {
+            format!("{}: Back", self.get_key(ctx, crate::keymap::Action::Quit))
+        } else {
+            format!(
+                "{}: Validate & Save | {}: Back to mode selection",
+                self.get_key(ctx, crate::keymap::Action::Confirm),
+                self.get_key(ctx, crate::keymap::Action::Quit)
+            )
+        };
+        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
+
+        Ok(())
+    }
+
+    /// Render help panel for local setup
+    fn render_local_help_panel(&self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = theme();
+        let icons = self.icons(ctx);
+        if let Some(status) = &self.state.status_message {
+            let status_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Status")
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.success));
+            let status_para = Paragraph::new(status.as_str())
+                .block(status_block)
+                .wrap(Wrap { trim: true });
+            frame.render_widget(status_para, area);
+        } else if let Some(error) = &self.state.error_message {
+            let error_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Error")
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.error));
+            let error_para = Paragraph::new(error.as_str())
+                .block(error_block)
+                .wrap(Wrap { trim: true });
+            frame.render_widget(error_para, area);
+        } else if self.state.repo_already_configured {
+            // Show current configuration details when already configured
+            let path = self.state.local_repo_path_input.text();
+            let expanded_path = crate::git::expand_path(path);
+            let validation = crate::git::validate_local_repo(&expanded_path);
+
+            let remote_url = validation.remote_url.as_deref().unwrap_or("unknown");
+
+            let help_lines = vec![
+                Line::from(vec![Span::styled(
+                    "Current Configuration",
+                    Style::default().fg(t.success).add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Mode: ", Style::default().fg(t.primary)),
+                    Span::raw("Local Repository"),
+                ]),
+                Line::from(""),
+                Line::from(vec![Span::styled("Path: ", Style::default().fg(t.primary))]),
+                Line::from(format!("  {}", path)),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Remote: ",
+                    Style::default().fg(t.primary),
+                )]),
+                Line::from(format!("  {}", remote_url)),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Status: ", Style::default().fg(t.primary)),
+                    Span::styled(
+                        format!("{} Configured", icons.check()),
+                        Style::default().fg(t.success),
+                    ),
+                ]),
+            ];
+
+            let help_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!("{} Repository Info", icons.menu()))
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.success))
+                .border_type(BorderType::Rounded)
+                .padding(ratatui::widgets::Padding::new(1, 1, 0, 0));
+
+            let help_para = Paragraph::new(help_lines)
+                .block(help_block)
+                .wrap(Wrap { trim: true });
+            frame.render_widget(help_para, area);
+        } else {
+            let help_lines = vec![
+                Line::from(vec![Span::styled(
+                    "Repository Path",
+                    Style::default().fg(t.primary).add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(""),
+                Line::from("Enter the path to your cloned git repository."),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Requirements:",
+                    Style::default().fg(t.text_emphasis),
+                )]),
+                Line::from("• Must be a valid git repository"),
+                Line::from("• Must have a remote named 'origin'"),
+                Line::from("• Must be able to push to remote"),
+                Line::from(""),
+                Line::from(vec![Span::styled("Tips:", Style::default().fg(t.success))]),
+                Line::from("• Use ~ for home directory"),
+                Line::from("• SSH or HTTPS remotes both work"),
+                Line::from("• Ensure your SSH keys or"),
+                Line::from("  credentials are configured"),
+            ];
+
+            let help_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!("{} Help", icons.lightbulb()))
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.primary))
+                .border_type(BorderType::Rounded)
+                .padding(ratatui::widgets::Padding::new(1, 1, 0, 0));
+
+            let help_para = Paragraph::new(help_lines)
+                .block(help_block)
+                .wrap(Wrap { trim: true });
+            frame.render_widget(help_para, area);
+        }
+        Ok(())
+    }
+
+    fn render_help_panel(&self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = theme();
+        let icons = self.icons(ctx);
+        if let Some(status) = &self.state.status_message {
+            let status_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Status")
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.success));
+            let status_para = Paragraph::new(status.as_str())
+                .block(status_block)
+                .wrap(Wrap { trim: true });
+            frame.render_widget(status_para, area);
+        } else if let Some(error) = &self.state.error_message {
+            let error_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Error")
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.error));
+            let error_para = Paragraph::new(error.as_str())
+                .block(error_block)
+                .wrap(Wrap { trim: true });
+            frame.render_widget(error_para, area);
+        } else {
+            // Context-sensitive help based on focused field
+            // Pre-compute default repo name for use in help text
+            let default_repo_name = crate::config::default_repo_name();
+            let default_repo_name_text = format!("Default: {}", default_repo_name);
+
+            let (title, help_lines) = match self.state.focused_field {
+                GitHubAuthField::Token => (
+                    "GitHub Token",
+                    vec![
+                        "Your Personal Access Token (PAT) for GitHub authentication.",
+                        "",
+                        "How to create:",
+                        "1. Go to: github.com/settings/tokens",
+                        "2. Click: Generate new token (classic)",
+                        "3. Select scope: 'repo' (full control)",
+                        "4. Generate and copy the token",
+                        "",
+                        "Format:",
+                        "• Must start with 'ghp_'",
+                        "• Length: 40+ characters",
+                        "",
+                        "Security:",
+                        "• Stored in ~/.config/dotstate/config.toml",
+                        "• File permissions: 600 (owner only)",
+                        "• Never share your token!",
+                    ],
+                ),
+                GitHubAuthField::RepoName => (
+                    "Repository Name",
+                    vec![
+                        "The name of your dotfiles repository on GitHub.",
+                        "",
+                        "This repository will:",
+                        "• Store your configuration files",
+                        "• Be created if it doesn't exist",
+                        "• Sync across all your computers",
+                        "",
+                        &default_repo_name_text,
+                        "",
+                        "⚠️ Important for returning users:",
+                        "If you already have a repo with a different",
+                        "name, make sure to enter it here, otherwise",
+                        "a new repo with this name will be created.",
+                        "",
+                        "Requirements:",
+                        "• Letters, numbers, hyphens, underscores",
+                        "• No spaces or special characters",
+                        "• Must be unique to your GitHub account",
+                    ],
+                ),
+                GitHubAuthField::RepoLocation => (
+                    "Local Repository Path",
+                    vec![
+                        "Where dotfiles will be stored on your computer.",
+                        "",
+                        "This directory will contain:",
+                        "• Copies of your selected dotfiles",
+                        "• Git repository data (.git folder)",
+                        "• Profile-specific configurations",
+                        "",
+                        "Default: ~/.config/dotstate/storage",
+                        "",
+                        "Tips:",
+                        "• Use ~ for home directory",
+                        "• Path will be created if it doesn't exist",
+                        "• Should be in your home directory",
+                        "• Don't use system directories",
+                    ],
+                ),
+                GitHubAuthField::IsPrivate => (
+                    "Repository Visibility",
+                    vec![
+                        "Control who can see your dotfiles repository.",
+                        "",
+                        "Private Repository (Recommended):",
+                        "• Only you can access it",
+                        "• Keeps your configs confidential",
+                        "• May contain sensitive information",
+                        "• API tokens, SSH keys, etc. stay private",
+                        "",
+                        "Public Repository:",
+                        "• Anyone can view your dotfiles",
+                        "• Good for sharing configurations",
+                        "• ⚠️ Be careful with sensitive data!",
+                        "",
+                        "Toggle: Press Space",
+                    ],
+                ),
+            };
+
+            let help_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!("{} {}", icons.info(), title))
+                .border_type(BorderType::Rounded)
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.primary));
+            let help_para = Paragraph::new(help_lines.join("\n"))
+                .block(help_block)
+                .wrap(Wrap { trim: true })
+                .scroll((self.state.help_scroll as u16, 0));
+            frame.render_widget(help_para, area);
+        }
+        Ok(())
+    }
+
+    /// Render progress screen when processing GitHub setup
+    fn render_progress_screen(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = theme();
+
+        // Layout: Header, Content, Footer
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+
+        // Header
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "DotState - GitHub Setup",
+            "Setting up your GitHub repository...",
+        )?;
+
+        // Center the progress message
+        let progress_area = crate::utils::center_popup(content_chunk, 60, 15);
+
+        // Progress block
+        let progress_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title("Progress")
+            .title_alignment(Alignment::Center)
+            .border_style(Style::default().fg(t.primary))
+            .border_type(ratatui::widgets::BorderType::Rounded);
+
+        // Status message with styling
+        let status_text = if let Some(status) = &self.state.status_message {
+            status.clone()
+        } else {
+            "Processing...".to_string()
+        };
+
+        let status_para = Paragraph::new(status_text)
+            .block(progress_block)
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Center)
+            .style(t.text_style());
+
+        frame.render_widget(status_para, progress_area);
+
+        // Show error if any
+        if let Some(error) = &self.state.error_message {
+            let error_area = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(15), // Progress area
+                    Constraint::Length(8),  // Error area
+                ])
+                .split(content_chunk)[1];
+
+            let error_block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title("Error")
+                .title_alignment(Alignment::Center)
+                .border_style(Style::default().fg(t.error));
+            let error_para = Paragraph::new(error.as_str())
+                .block(error_block)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(t.error));
+            frame.render_widget(error_para, error_area);
+        }
+
+        // Footer
+        let footer_text = if self.state.error_message.is_some() {
+            "Press Esc to go back and fix the error".to_string()
+        } else if self
+            .state
+            .status_message
+            .as_ref()
+            .map(|s| s.contains("✅"))
+            .unwrap_or(false)
+        {
+            format!(
+                "Press {} to continue",
+                self.get_key(ctx, crate::keymap::Action::Confirm)
+            )
+        } else {
+            "Please wait...".to_string()
+        };
+        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
+
+        Ok(())
+    }
+
+    /// Render the GitHub setup form
+    fn render_github_form(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        let t = theme();
+
+        // Layout: Title/Description, Content, Footer
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+
+        // Header: Use common header component
+        let _ = Header::render(
+            frame,
+            header_chunk,
+            "DotState - GitHub Setup",
+            "Configure your GitHub repository for syncing dotfiles. All settings will be saved securely."
+        )?;
+
+        // Main content layout: instructions, fields on left, help on right
+        let main_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(60), // Instructions + Input fields
+                Constraint::Percentage(40), // Help panel
+            ])
+            .split(content_chunk);
+
+        // Left side: instructions and fields
+        let left_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(2)
+            .constraints([
+                Constraint::Length(3), // Instructions
+                Constraint::Length(1), // Spacer
+                Constraint::Length(3), // Token input
+                Constraint::Length(1), // Spacer
+                Constraint::Length(3), // Repo name input
+                Constraint::Length(2), // Reminder message (only shown for new installs)
+                Constraint::Length(1), // Spacer
+                Constraint::Length(3), // Repo location input
+                Constraint::Length(1), // Spacer
+                Constraint::Length(3), // Visibility toggle
+                Constraint::Min(0),    // Spacer
+            ])
+            .split(main_layout[0]);
+
+        // Instructions
+        let instructions_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.tertiary))
+            .border_type(BorderType::Rounded);
+        let instructions = Paragraph::new("Fill in the details below to set up your dotfiles repository. Use Tab to navigate between fields.")
+            .block(instructions_block)
+            .style(t.text_style())
+            .alignment(Alignment::Center);
+        frame.render_widget(instructions, left_layout[0]);
+
+        // Render each field with spacers
+        self.render_token_field(frame, left_layout[2], ctx)?;
+        self.render_repo_name_field(frame, left_layout[4], ctx)?;
+
+        // Show reminder message for new installs (when repo is not already configured)
+        if !self.state.repo_already_configured {
+            let reminder_text = "⚠️  If you already had a repo with a different name, make sure to enter it here, otherwise a new repo with this name will be created";
+            let reminder = Paragraph::new(reminder_text)
+                .style(Style::default().fg(t.warning))
+                .wrap(Wrap { trim: true });
+            frame.render_widget(reminder, left_layout[5]);
+        }
+
+        self.render_repo_location_field(frame, left_layout[7], ctx)?;
+        self.render_visibility_field(frame, left_layout[9], ctx)?;
+
+        // Right side: Context-sensitive help
+        self.render_help_panel(frame, main_layout[1], ctx)?;
+
+        // Footer
+        let footer_text = if self.state.repo_already_configured {
+            if self.state.is_editing_token {
+                format!(
+                    "{}: Save Token | {}: Cancel",
+                    self.get_key(ctx, crate::keymap::Action::Confirm),
+                    self.get_key(ctx, crate::keymap::Action::Quit)
+                )
+            } else {
+                format!(
+                    "{}: Update Token | {}: Back",
+                    self.get_key(ctx, crate::keymap::Action::Edit),
+                    self.get_key(ctx, crate::keymap::Action::Quit)
+                )
+            }
+        } else {
+            format!(
+                "{}: Next Field | {}: Previous | {}: Toggle | {}: Save & Create | {}: Cancel",
+                self.get_key(ctx, crate::keymap::Action::NextTab),
+                self.get_key(ctx, crate::keymap::Action::PrevTab),
+                self.get_key(ctx, crate::keymap::Action::ToggleSelect),
+                self.get_key(ctx, crate::keymap::Action::Confirm),
+                self.get_key(ctx, crate::keymap::Action::Cancel)
+            )
+        };
+        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
+
+        Ok(())
+    }
+
+    // Event handling methods
 
     /// Handle mode selection (Choosing mode).
     fn handle_mode_selection(
@@ -221,7 +1111,7 @@ impl GitHubAuthScreen {
             } else if !self.state.repo_already_configured {
                 // Full setup - validate and start setup
                 let token = self.state.token_input.text_trimmed().to_string();
-                let repo_name = self.state.repo_name_input.text_trimmed().to_string(); // Use input value
+                let repo_name = self.state.repo_name_input.text_trimmed().to_string();
 
                 // Validate token format
                 if !token.starts_with("ghp_") {
@@ -368,7 +1258,6 @@ impl GitHubAuthScreen {
         match action {
             Some(Action::Confirm) => {
                 // Processing is done, navigate based on profiles
-                // The app will handle profile selection setup
                 self.reset();
                 return Ok(ScreenAction::Navigate(crate::ui::Screen::MainMenu));
             }
@@ -391,6 +1280,79 @@ impl GitHubAuthScreen {
         if let Some(Action::Cancel | Action::Quit) = action {
             self.reset();
             return Ok(ScreenAction::Navigate(crate::ui::Screen::MainMenu));
+        }
+        Ok(ScreenAction::None)
+    }
+
+    /// Handle mouse events
+    fn handle_mouse_event(&mut self, event: Event) -> Result<ScreenAction> {
+        if let Event::Mouse(mouse) = event {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                let x = mouse.column;
+                let y = mouse.row;
+
+                // Handle mode selection screen
+                if matches!(self.state.setup_mode, SetupMode::Choosing) {
+                    for (rect, mode_index) in &self.mode_selection_areas {
+                        if x >= rect.x
+                            && x < rect.x + rect.width
+                            && y >= rect.y
+                            && y < rect.y + rect.height
+                        {
+                            self.state.mode_selection_index = *mode_index;
+                            self.mode_list_state.select(Some(*mode_index));
+                            return Ok(ScreenAction::Refresh);
+                        }
+                    }
+                    return Ok(ScreenAction::None);
+                }
+
+                // Handle local setup screen
+                if matches!(self.state.setup_mode, SetupMode::Local) {
+                    if self.is_click_in_area(self.local_repo_path_area, x, y) {
+                        if !self.state.repo_already_configured {
+                            self.state.input_focused = true;
+                            return Ok(ScreenAction::Refresh);
+                        }
+                    } else {
+                        self.state.input_focused = false;
+                        return Ok(ScreenAction::Refresh);
+                    }
+                    return Ok(ScreenAction::None);
+                }
+
+                // Handle GitHub setup screen
+                if self.is_click_in_area(self.token_area, x, y) {
+                    if !self.state.repo_already_configured || self.state.is_editing_token {
+                        self.state.focused_field = GitHubAuthField::Token;
+                        self.state.input_focused = true;
+                        return Ok(ScreenAction::Refresh);
+                    }
+                } else if self.is_click_in_area(self.repo_name_area, x, y) {
+                    if !self.state.repo_already_configured {
+                        self.state.focused_field = GitHubAuthField::RepoName;
+                        self.state.input_focused = true;
+                        return Ok(ScreenAction::Refresh);
+                    }
+                } else if self.is_click_in_area(self.repo_location_area, x, y) {
+                    if !self.state.repo_already_configured {
+                        self.state.focused_field = GitHubAuthField::RepoLocation;
+                        self.state.input_focused = true;
+                        return Ok(ScreenAction::Refresh);
+                    }
+                } else if self.is_click_in_area(self.visibility_area, x, y) {
+                    if !self.state.repo_already_configured {
+                        self.state.focused_field = GitHubAuthField::IsPrivate;
+                        self.state.input_focused = true;
+                        self.state.is_private = !self.state.is_private;
+                        return Ok(ScreenAction::Refresh);
+                    }
+                } else {
+                    // Click outside - unfocus
+                    self.state.input_focused = false;
+                    return Ok(ScreenAction::Refresh);
+                }
+            }
         }
         Ok(ScreenAction::None)
     }
@@ -440,10 +1402,34 @@ impl Default for GitHubAuthScreen {
 }
 
 impl Screen for GitHubAuthScreen {
-    fn render(&mut self, frame: &mut Frame, area: Rect, _ctx: &RenderContext) -> Result<()> {
-        // Sync state to component for rendering
-        *self.component.get_auth_state_mut() = self.state.clone();
-        self.component.render(frame, area)
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
+        // Clear the entire area first
+        frame.render_widget(Clear, area);
+
+        // Background - use Reset to inherit terminal's native background
+        let background = Block::default().style(Style::default().bg(Color::Reset));
+        frame.render_widget(background, area);
+
+        // If processing or in setup, show progress screen instead of input form
+        if matches!(
+            self.state.step,
+            GitHubAuthStep::Processing | GitHubAuthStep::SetupStep(_)
+        ) {
+            return self.render_progress_screen(frame, area, ctx);
+        }
+
+        // Check setup mode and render appropriate screen
+        match self.state.setup_mode {
+            SetupMode::Choosing => {
+                return self.render_mode_selection(frame, area, ctx);
+            }
+            SetupMode::Local => {
+                return self.render_local_setup(frame, area, ctx);
+            }
+            SetupMode::GitHub => {
+                return self.render_github_form(frame, area, ctx);
+            }
+        }
     }
 
     fn handle_event(&mut self, event: Event, ctx: &ScreenContext) -> Result<ScreenAction> {
@@ -484,15 +1470,7 @@ impl Screen for GitHubAuthScreen {
 
         // Handle mouse events
         if matches!(event, Event::Mouse(_)) {
-            // Sync state to component
-            *self.component.get_auth_state_mut() = self.state.clone();
-            let component_action = self.component.handle_event(event)?;
-            // Sync state back
-            self.state = self.component.get_auth_state().clone();
-
-            if component_action == crate::components::ComponentAction::Update {
-                return Ok(ScreenAction::Refresh);
-            }
+            return self.handle_mouse_event(event);
         }
 
         Ok(ScreenAction::None)
