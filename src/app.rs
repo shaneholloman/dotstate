@@ -1190,6 +1190,62 @@ impl App {
                     }
                 }
             }
+            ScreenAction::MoveToCommon {
+                file_index,
+                is_common,
+            } => {
+                let state = self.dotfile_selection_screen.get_state_mut();
+                if file_index < state.dotfiles.len() {
+                    let dotfile = &state.dotfiles[file_index];
+                    let relative_path = dotfile.relative_path.to_string_lossy().to_string();
+
+                    use crate::services::SyncService;
+                    // Note: is_common parameter tells us the CURRENT state of the file
+                    if is_common {
+                        // File is currently common -> Move FROM common TO profile
+                        match SyncService::move_from_common(&self.config, &relative_path) {
+                            Ok(_) => {
+                                info!("Moved {} from common to profile", relative_path);
+                                // Refresh list to update UI
+                                Self::scan_dotfiles_into(&self.config, state)?;
+                                // Try to maintain selection
+                                if let Some(idx) = state
+                                    .dotfiles
+                                    .iter()
+                                    .position(|d| d.relative_path.to_string_lossy() == relative_path)
+                                {
+                                    state.dotfile_list_state.select(Some(idx));
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to move from common: {}", e);
+                                state.status_message = Some(format!("Error: {}", e));
+                            }
+                        }
+                    } else {
+                        // File is currently profile -> Move FROM profile TO common
+                        match SyncService::move_to_common(&self.config, &relative_path) {
+                            Ok(_) => {
+                                info!("Moved {} to common", relative_path);
+                                // Refresh list to update UI
+                                Self::scan_dotfiles_into(&self.config, state)?;
+                                // Try to maintain selection
+                                if let Some(idx) = state
+                                    .dotfiles
+                                    .iter()
+                                    .position(|d| d.relative_path.to_string_lossy() == relative_path)
+                                {
+                                    state.dotfile_list_state.select(Some(idx));
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to move to common: {}", e);
+                                state.status_message = Some(format!("Error: {}", e));
+                            }
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }

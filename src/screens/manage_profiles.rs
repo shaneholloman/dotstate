@@ -55,6 +55,8 @@ pub struct ProfileManagerState {
     pub create_description_area: Option<Rect>,
     // Cached profiles to reduce disk I/O
     pub profiles: Vec<crate::utils::ProfileInfo>,
+    // Validation error message
+    pub error_message: Option<String>,
 }
 
 impl Default for ProfileManagerState {
@@ -72,6 +74,7 @@ impl Default for ProfileManagerState {
             create_name_area: None,
             create_description_area: None,
             profiles: Vec::new(),
+            error_message: None,
         }
     }
 }
@@ -220,7 +223,7 @@ impl ManageProfilesScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Profiles")
+                    .title(" Profiles ")
                     .border_style(focused_border_style()),
             )
             .highlight_style(t.highlight_style())
@@ -342,7 +345,7 @@ impl ManageProfilesScreen {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Profile Details")
+                        .title(" Profile Details ")
                         .border_type(BorderType::Rounded)
                         .border_style(unfocused_border_style())
                         .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)),
@@ -356,7 +359,7 @@ impl ManageProfilesScreen {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title("Profile Details")
+                            .title(" Profile Details ")
                             .border_type(BorderType::Rounded)
                             .border_style(unfocused_border_style())
                             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)),
@@ -390,6 +393,11 @@ impl ManageProfilesScreen {
             .constraints([
                 Constraint::Length(1), // Title (no border)
                 Constraint::Length(3), // Name input
+                Constraint::Length(if self.state.error_message.is_some() {
+                    1
+                } else {
+                    0
+                }), // Error message
                 Constraint::Length(3), // Description input
                 Constraint::Min(8),    // Copy from option (at least 8 lines, can grow)
                 Constraint::Min(0),    // Spacer
@@ -410,11 +418,19 @@ impl ManageProfilesScreen {
             .focused(self.state.create_focused_field == CreateField::Name);
         frame.render_text_input_widget(widget, chunks[1]);
 
+        // Error message
+        if let Some(msg) = &self.state.error_message {
+            let error_para = Paragraph::new(msg.as_str())
+                .style(Style::default().fg(Color::Red))
+                .alignment(Alignment::Center);
+            frame.render_widget(error_para, chunks[2]);
+        }
+
         // Description input
         let widget = TextInputWidget::new(&self.state.create_description_input)
             .title("Description (optional)")
             .focused(self.state.create_focused_field == CreateField::Description);
-        frame.render_text_input_widget(widget, chunks[2]);
+        frame.render_text_input_widget(widget, chunks[3]);
 
         // Copy from option - show list of profiles to select from
         let is_focused = self.state.create_focused_field == CreateField::CopyFrom;
@@ -429,11 +445,11 @@ impl ManageProfilesScreen {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Copy From")
+                        .title(" Copy From ")
                         .border_style(border_style),
                 )
                 .wrap(Wrap { trim: true });
-            frame.render_widget(copy_para, chunks[3]);
+            frame.render_widget(copy_para, chunks[4]);
         } else {
             // Create a list with "Start Blank" first, then profiles
             let mut items = Vec::new();
@@ -484,7 +500,7 @@ impl ManageProfilesScreen {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("Copy From")
+                        .title(" Copy From ")
                         .border_type(BorderType::Rounded)
                         .border_style(border_style),
                 )
@@ -502,12 +518,12 @@ impl ManageProfilesScreen {
             list_state.select(ui_selected_idx);
 
             // Calculate if we need a scrollbar (if items exceed visible area)
-            let visible_height = chunks[3].height.saturating_sub(2); // Subtract borders
+            let visible_height = chunks[4].height.saturating_sub(2); // Subtract borders
             let total_items = (self.state.profiles.len() + 1) as u16; // +1 for "Start Blank"
             let needs_scrollbar = total_items > visible_height;
 
             // Render the list
-            frame.render_stateful_widget(list, chunks[3], &mut list_state);
+            frame.render_stateful_widget(list, chunks[4], &mut list_state);
 
             // Render scrollbar if needed
             if needs_scrollbar {
@@ -521,7 +537,7 @@ impl ManageProfilesScreen {
                     .begin_symbol(Some("↑"))
                     .end_symbol(Some("↓"));
 
-                frame.render_stateful_widget(scrollbar, chunks[3], &mut scrollbar_state);
+                frame.render_stateful_widget(scrollbar, chunks[4], &mut scrollbar_state);
             }
         }
 
@@ -580,6 +596,11 @@ impl ManageProfilesScreen {
             .constraints([
                 Constraint::Length(1), // Title (no border)
                 Constraint::Length(3), // Input
+                Constraint::Length(if self.state.error_message.is_some() {
+                    1
+                } else {
+                    0
+                }), // Error message
                 Constraint::Min(0),    // Spacer
             ])
             .split(popup_area);
@@ -602,6 +623,14 @@ impl ManageProfilesScreen {
             .placeholder("Enter new profile name")
             .focused(true);
         frame.render_text_input_widget(widget, chunks[1]);
+
+        // Error message
+        if let Some(msg) = &self.state.error_message {
+            let error_para = Paragraph::new(msg.as_str())
+                .style(Style::default().fg(Color::Red))
+                .alignment(Alignment::Center);
+            frame.render_widget(error_para, chunks[2]);
+        }
 
         Ok(())
     }
@@ -820,6 +849,13 @@ impl Screen for ManageProfilesScreen {
                                         if !self.state.create_name_input.text().is_empty() {
                                             let name =
                                                 self.state.create_name_input.text().to_string();
+
+                                            // Validate reserved name
+                                            if name.eq_ignore_ascii_case("common") {
+                                                self.state.error_message = Some("Name 'common' is reserved".to_string());
+                                                return Ok(ScreenAction::Refresh);
+                                            }
+
                                             let description = if self
                                                 .state
                                                 .create_description_input
@@ -842,6 +878,7 @@ impl Screen for ManageProfilesScreen {
                                             self.state.create_name_input.clear();
                                             self.state.create_description_input.clear();
                                             self.state.create_focused_field = CreateField::Name;
+                                            self.state.error_message = None;
 
                                             return Ok(ScreenAction::CreateProfile {
                                                 name,
@@ -1004,14 +1041,21 @@ impl Screen for ManageProfilesScreen {
                                     }
                                     Action::Confirm => {
                                         if !self.state.rename_input.text().is_empty() {
+                                            let new_name = self.state.rename_input.text().to_string();
+
+                                            // Validate reserved name
+                                            if new_name.eq_ignore_ascii_case("common") {
+                                                self.state.error_message = Some("Name 'common' is reserved".to_string());
+                                                return Ok(ScreenAction::Refresh);
+                                            }
+
                                             if let Some(idx) = self.state.list_state.selected() {
                                                 let profiles = &self.state.profiles;
                                                 if let Some(profile) = profiles.get(idx) {
                                                     let old_name = profile.name.clone();
-                                                    let new_name =
-                                                        self.state.rename_input.text().to_string();
                                                     self.state.popup_type = ProfilePopupType::None;
                                                     self.state.rename_input.clear();
+                                                    self.state.error_message = None;
                                                     return Ok(ScreenAction::RenameProfile {
                                                         old_name,
                                                         new_name,

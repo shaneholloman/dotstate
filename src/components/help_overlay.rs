@@ -35,7 +35,7 @@ impl HelpOverlay {
         let title = format!(" Keyboard Shortcuts - {} Preset ", keymap.preset.name());
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(title)
+            .title(format!(" {} ", title))
             .title_alignment(Alignment::Center)
             .border_style(Style::default().fg(theme.primary));
 

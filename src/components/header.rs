@@ -30,7 +30,7 @@ impl Header {
             .borders(Borders::ALL)
             .border_style(t.border_focused_style())
             .border_type(BorderType::Rounded)
-            .title(title)
+            .title(format!(" {} ", title))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 0, 0));

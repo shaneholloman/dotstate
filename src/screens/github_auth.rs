@@ -199,7 +199,7 @@ impl GitHubAuthScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title("Repository Visibility")
+            .title(" Repository Visibility ")
             .title_alignment(Alignment::Left);
 
         // Store area for mouse support
@@ -281,7 +281,7 @@ impl GitHubAuthScreen {
             .borders(Borders::ALL)
             .border_style(focused_border_style())
             .border_type(BorderType::Rounded)
-            .title(format!("{} Choose Setup Method", icons.menu()))
+            .title(format!(" {} Choose Setup Method ", icons.menu()))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
@@ -399,7 +399,7 @@ impl GitHubAuthScreen {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.primary))
             .border_type(BorderType::Rounded)
-            .title(format!("{} {}", icons.lightbulb(), title))
+            .title(format!(" {} {} ", icons.lightbulb(), title))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
@@ -505,7 +505,7 @@ impl GitHubAuthScreen {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.tertiary))
             .border_type(BorderType::Rounded)
-            .title(format!("{} Setup Instructions", icons.menu()))
+            .title(format!(" {} Setup Instructions ", icons.menu()))
             .title_style(Style::default().fg(t.tertiary).add_modifier(Modifier::BOLD))
             .title_alignment(Alignment::Center);
 
@@ -560,7 +560,7 @@ impl GitHubAuthScreen {
             let status_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Status")
+                .title(" Status ")
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.success));
             let status_para = Paragraph::new(status.as_str())
@@ -571,7 +571,7 @@ impl GitHubAuthScreen {
             let error_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Error")
+                .title(" Error ")
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.error));
             let error_para = Paragraph::new(error.as_str())
@@ -617,7 +617,7 @@ impl GitHubAuthScreen {
 
             let help_block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!("{} Repository Info", icons.menu()))
+                .title(format!(" {} Repository Info ", icons.menu()))
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.success))
                 .border_type(BorderType::Rounded)
@@ -653,7 +653,7 @@ impl GitHubAuthScreen {
 
             let help_block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!("{} Help", icons.lightbulb()))
+                .title(format!(" {} Help ", icons.lightbulb()))
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.primary))
                 .border_type(BorderType::Rounded)
@@ -674,7 +674,7 @@ impl GitHubAuthScreen {
             let status_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Status")
+                .title(" Status ")
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.success));
             let status_para = Paragraph::new(status.as_str())
@@ -685,7 +685,7 @@ impl GitHubAuthScreen {
             let error_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Error")
+                .title(" Error ")
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.error));
             let error_para = Paragraph::new(error.as_str())
@@ -785,7 +785,7 @@ impl GitHubAuthScreen {
 
             let help_block = Block::default()
                 .borders(Borders::ALL)
-                .title(format!("{} {}", icons.info(), title))
+                .title(format!(" {} {} ", icons.info(), title))
                 .border_type(BorderType::Rounded)
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.primary));
@@ -825,7 +825,7 @@ impl GitHubAuthScreen {
         let progress_block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Progress")
+            .title(" Progress ")
             .title_alignment(Alignment::Center)
             .border_style(Style::default().fg(t.primary))
             .border_type(ratatui::widgets::BorderType::Rounded);
@@ -858,7 +858,7 @@ impl GitHubAuthScreen {
             let error_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title("Error")
+                .title(" Error ")
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(t.error));
             let error_para = Paragraph::new(error.as_str())
@@ -929,7 +929,7 @@ impl GitHubAuthScreen {
                 Constraint::Length(3), // Token input
                 Constraint::Length(1), // Spacer
                 Constraint::Length(3), // Repo name input
-                Constraint::Length(2), // Reminder message (only shown for new installs)
+                if !self.state.repo_already_configured { Constraint::Length(2) } else { Constraint::Length(0) }, // Reminder message (only shown for new installs)
                 Constraint::Length(1), // Spacer
                 Constraint::Length(3), // Repo location input
                 Constraint::Length(1), // Spacer
@@ -957,7 +957,7 @@ impl GitHubAuthScreen {
         if !self.state.repo_already_configured {
             let reminder_text = "⚠️  If you already had a repo with a different name, make sure to enter it here, otherwise a new repo with this name will be created";
             let reminder = Paragraph::new(reminder_text)
-                .style(Style::default().fg(t.warning))
+                .style(t.warning_style())
                 .wrap(Wrap { trim: true });
             frame.render_widget(reminder, left_layout[5]);
         }

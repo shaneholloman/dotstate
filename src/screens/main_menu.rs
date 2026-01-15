@@ -470,6 +470,13 @@ impl MainMenuScreen {
                     let index = item.to_index();
                     self.menu_state.select(Some(index));
                 }
+            } else {
+                // cycle back to last menu item
+                if let Some(item) = MenuItem::from_index(menu_count.len() - 1) {
+                    self.selected_item = item;
+                    let index = item.to_index();
+                    self.menu_state.select(Some(index));
+                }
             }
         }
     }
@@ -499,6 +506,13 @@ impl MainMenuScreen {
                 self.is_update_selected = true;
                 // Update menu_state to select the update item (which is at index menu_count)
                 self.menu_state.select(Some(menu_count));
+            }
+        } else {
+            // cycle back to first menu item
+            if let Some(item) = MenuItem::from_index(0) {
+                self.selected_item = item;
+                let index = item.to_index();
+                self.menu_state.select(Some(index));
             }
         }
     }
@@ -772,7 +786,7 @@ impl MainMenuScreen {
             .borders(Borders::ALL)
             .border_style(t.border_focused_style())
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(format!("{} Menu", self.icons.menu()))
+            .title(format!(" {} Menu ", self.icons.menu()))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center);
 
@@ -822,7 +836,7 @@ impl MainMenuScreen {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(color))
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(format!("{} What does this do?", icon))
+            .title(format!(" {} What does this do? ", icon))
             .title_style(Style::default().fg(color).add_modifier(Modifier::BOLD))
             .title_alignment(Alignment::Center)
             .padding(ratatui::widgets::Padding::new(1, 1, 1, 1));
@@ -847,7 +861,7 @@ impl MainMenuScreen {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(stats_color))
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .title(format!("{} Status", stats_icon))
+            .title(format!(" {} Status ", stats_icon))
             .title_style(
                 Style::default()
                     .fg(stats_color)

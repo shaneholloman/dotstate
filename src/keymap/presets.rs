@@ -71,6 +71,7 @@ fn standard_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("i", Action::Install),
         KeyBinding::new("ctrl+s", Action::Save),
         KeyBinding::new("b", Action::ToggleBackup),
+        KeyBinding::new("m", Action::Move),
         // Text editing
         KeyBinding::new("backspace", Action::Backspace),
         KeyBinding::new("delete", Action::DeleteChar),
@@ -127,6 +128,7 @@ fn vim_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("i", Action::Install),
         KeyBinding::new("ctrl+s", Action::Save),
         KeyBinding::new("b", Action::ToggleBackup),
+        KeyBinding::new("m", Action::Move),
         // Text editing
         KeyBinding::new("backspace", Action::Backspace),
         KeyBinding::new("x", Action::DeleteChar), // vim style delete char
@@ -188,6 +190,7 @@ fn emacs_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("i", Action::Install),
         KeyBinding::new("ctrl+s", Action::Save),
         KeyBinding::new("b", Action::ToggleBackup), // Use 'b' since Ctrl+B is MoveLeft in Emacs
+        KeyBinding::new("m", Action::Move),
         // Text editing
         KeyBinding::new("backspace", Action::Backspace),
         KeyBinding::new("ctrl+d", Action::DeleteChar), // Forward delete (Emacs standard)

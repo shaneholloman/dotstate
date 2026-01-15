@@ -131,7 +131,7 @@ impl Icons {
         match self.icon_set {
             IconSet::NerdFonts => "\u{f007}", //
             IconSet::Unicode => "👤",
-            IconSet::Ascii => "[USER]",
+            IconSet::Ascii => "[USR]",
         }
     }
 
@@ -226,7 +226,7 @@ impl Icons {
 
     pub fn check(&self) -> &'static str {
         match self.icon_set {
-            IconSet::NerdFonts => "\u{f00c}",
+            IconSet::NerdFonts => "\u{f42e}",
             IconSet::Unicode => "✓",
             IconSet::Ascii => "[x]",
         }
@@ -269,6 +269,22 @@ impl Icons {
             IconSet::NerdFonts => "\u{f1e6}", // Plug
             IconSet::Unicode => "🔌",
             IconSet::Ascii => "[CONN]",
+        }
+    }
+
+    pub fn circle_filled(&self) -> &'static str {
+        match self.icon_set {
+            IconSet::NerdFonts => "\u{f111}", // Circle
+            IconSet::Unicode => "●",
+            IconSet::Ascii => "[ ]",
+        }
+    }
+
+    pub fn circle_empty(&self) -> &'static str {
+        match self.icon_set {
+            IconSet::NerdFonts => "\u{f1db}", // Circle
+            IconSet::Unicode => "○",
+            IconSet::Ascii => "[ ]",
         }
     }
 }

@@ -157,7 +157,7 @@ impl SyncWithRemoteScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Progress")
+                    .title(" Progress ")
                     .title_alignment(Alignment::Center)
                     .border_style(focused_border_style())
                     .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
@@ -189,7 +189,7 @@ impl SyncWithRemoteScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("No Changes")
+                    .title(" No Changes ")
                     .title_alignment(Alignment::Center)
                     .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
             );
@@ -221,7 +221,7 @@ impl SyncWithRemoteScreen {
                     Block::default()
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .title("Sync Status")
+                        .title(" Sync Status ")
                         .title_alignment(Alignment::Center)
                         .padding(ratatui::widgets::Padding::new(2, 2, 2, 2)),
                 );
@@ -268,7 +268,7 @@ impl SyncWithRemoteScreen {
                     .border_style(focused_border_style())
                     .border_type(BorderType::Rounded)
                     .title(format!(
-                        "Changed Files ({})",
+                        " Changed Files ({}) ",
                         self.state.changed_files.len()
                     ))
                     .title_alignment(Alignment::Center)
@@ -319,7 +319,7 @@ impl SyncWithRemoteScreen {
             }
         } else {
             let empty_preview = Paragraph::new("Select a file to view changes")
-                .block(Block::default().borders(Borders::ALL).title("Preview"));
+                .block(Block::default().borders(Borders::ALL).title(" Preview "));
             frame.render_widget(empty_preview, preview_area);
         }
 

@@ -1197,7 +1197,7 @@ impl ManagePackagesScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Packages")
+                    .title(" Packages ")
                     .border_style(unfocused_border_style())
                     .padding(ratatui::widgets::Padding::new(1, 1, 1, 1)),
             )
@@ -1241,7 +1241,7 @@ impl ManagePackagesScreen {
                     Block::default()
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded)
-                        .title("Packages")
+                        .title(" Packages ")
                         .border_style(focused_border_style()),
                 )
                 .highlight_style(t.highlight_style())
@@ -1275,7 +1275,7 @@ impl ManagePackagesScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Package Details"),
+                    .title(" Package Details "),
             )
             .wrap(Wrap { trim: true });
 
@@ -1510,7 +1510,7 @@ impl ManagePackagesScreen {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title("Package Manager")
+            .title(" Package Manager ")
             .border_style(
                 if self.state.add_focused_field == AddPackageField::Manager {
                     focused_border_style()
@@ -1626,7 +1626,7 @@ impl ManagePackagesScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Delete Package"),
+                    .title(" Delete Package "),
             )
             .wrap(Wrap { trim: true })
             .alignment(Alignment::Center);
@@ -1717,7 +1717,7 @@ impl ManagePackagesScreen {
                         Block::default()
                             .borders(Borders::ALL)
                             .border_type(BorderType::Rounded)
-                            .title("Output"),
+                            .title(" Output "),
                     )
                     .wrap(Wrap { trim: true })
                     .style(t.text_style());
@@ -1768,7 +1768,7 @@ impl ManagePackagesScreen {
                         Block::default()
                             .borders(Borders::ALL)
                             .border_type(BorderType::Rounded)
-                            .title("Summary"),
+                            .title(" Summary "),
                     )
                     .wrap(Wrap { trim: true })
                     .style(t.text_style());
@@ -1836,7 +1836,7 @@ impl ManagePackagesScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Package Manager")
+                    .title(" Package Manager ")
                     .title_alignment(Alignment::Center)
                     .style(t.background_style()),
             )
@@ -1870,7 +1870,7 @@ impl ManagePackagesScreen {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title("Packages to Install")
+                    .title(" Packages to Install ")
                     .border_style(t.border_style()),
             );
             frame.render_widget(list, chunks[3]);

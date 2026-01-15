@@ -180,7 +180,7 @@ impl FilePreview {
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
-                                .title(preview_title)
+                                .title(format!(" {} ", preview_title))
                                 .border_type(BorderType::Rounded)
                                 .title_alignment(Alignment::Center)
                                 .border_style(border_style),
@@ -206,7 +206,7 @@ impl FilePreview {
                     let preview = Paragraph::new(error_text).block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title(preview_title)
+                            .title(format!(" {} ", preview_title))
                             .border_type(BorderType::Rounded)
                             .title_alignment(Alignment::Center)
                             .border_style(border_style),
@@ -219,7 +219,7 @@ impl FilePreview {
             let preview = Paragraph::new(dir_text).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(preview_title)
+                    .title(format!(" {} ", preview_title))
                     .border_type(BorderType::Rounded)
                     .title_alignment(Alignment::Center)
                     .border_style(border_style),
@@ -230,7 +230,7 @@ impl FilePreview {
             let preview = Paragraph::new(path_text).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(preview_title)
+                    .title(format!(" {} ", preview_title))
                     .border_type(BorderType::Rounded)
                     .title_alignment(Alignment::Center)
                     .border_style(border_style),

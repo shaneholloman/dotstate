@@ -65,6 +65,8 @@ pub enum Action {
     CheckStatus,
     /// Install selected item
     Install,
+    /// Move selected item to common
+    Move,
 
     // ============ Text editing ============
     /// Delete character before cursor
@@ -122,6 +124,7 @@ impl Action {
             Action::Edit => "Edit",
             Action::Create => "Create new",
             Action::Search => "Search",
+            Action::Move => "Move",
             Action::Refresh => "Refresh",
             Action::Sync => "Sync with remote",
             Action::CheckStatus => "Check status",
@@ -166,6 +169,7 @@ impl Action {
             | Action::Create
             | Action::Search
             | Action::Refresh
+            | Action::Move
             | Action::Sync
             | Action::CheckStatus
             | Action::Install => "Actions",
