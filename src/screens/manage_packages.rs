@@ -193,15 +193,13 @@ impl ManagePackagesScreen {
 
                         if exists {
                             state.package_statuses[index] = PackageStatus::Installed;
+                        } else if !PackageManagerImpl::is_manager_installed(&pkg_manager) {
+                            state.package_statuses[index] = PackageStatus::Error(format!(
+                                "Package not found and package manager '{:?}' is not installed",
+                                pkg_manager
+                            ));
                         } else {
-                            if !PackageManagerImpl::is_manager_installed(&pkg_manager) {
-                                state.package_statuses[index] = PackageStatus::Error(format!(
-                                    "Package not found and package manager '{:?}' is not installed",
-                                    pkg_manager
-                                ));
-                            } else {
-                                state.package_statuses[index] = PackageStatus::NotInstalled;
-                            }
+                            state.package_statuses[index] = PackageStatus::NotInstalled;
                         }
                     }
                     Err(e) => {

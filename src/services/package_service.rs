@@ -102,7 +102,7 @@ impl PackageService {
                 // Otherwise (manager check or custom check), it is true.
                 let used_fallback = check_cmd
                     .as_ref()
-                    .map_or(false, |cmd| !cmd.starts_with("which "));
+                    .is_some_and(|cmd| !cmd.starts_with("which "));
 
                 debug!(
                     "Package {} found (used_fallback: {})",
