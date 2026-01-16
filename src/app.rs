@@ -370,7 +370,7 @@ impl App {
                     .map(|p| p.packages.clone())
                     .unwrap_or_default();
 
-                self.manage_packages_screen.update_packages(packages);
+                self.manage_packages_screen.update_packages(packages, &self.config.active_profile);
             } else if self.last_screen == Some(Screen::ManagePackages) {
                 // We just left ManagePackages - clear installation state to prevent it from showing elsewhere
                 self.manage_packages_screen.reset_state();
@@ -878,9 +878,9 @@ impl App {
                 // Load packages from active profile into screen state
                 if let Ok(Some(active_profile)) = self.get_active_profile_info() {
                     self.manage_packages_screen
-                        .update_packages(active_profile.packages);
+                        .update_packages(active_profile.packages, &self.config.active_profile);
                 } else {
-                    self.manage_packages_screen.update_packages(Vec::new());
+                    self.manage_packages_screen.update_packages(Vec::new(), &self.config.active_profile);
                 }
             }
             _ => {}
@@ -2022,7 +2022,7 @@ impl App {
             );
             // Initialize package checking state
             self.manage_packages_screen
-                .update_packages(switch_result.packages);
+                .update_packages(switch_result.packages, target_profile_name);
             self.manage_packages_screen.start_checking();
         }
 
@@ -2084,7 +2084,7 @@ impl App {
             );
             // Initialize package checking state
             self.manage_packages_screen
-                .update_packages(activation_result.packages);
+                .update_packages(activation_result.packages, profile_name);
             self.manage_packages_screen.start_checking();
         }
 

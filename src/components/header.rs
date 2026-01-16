@@ -24,6 +24,7 @@ impl Header {
         title: &str,
         description: &str,
     ) -> Result<u16, anyhow::Error> {
+        let app_version = env!("CARGO_PKG_VERSION");
         let t = theme();
         // Main header block with theme border, padding, and title
         let header_block = Block::default()
@@ -33,6 +34,7 @@ impl Header {
             .title(format!(" {} ", title))
             .title_style(t.title_style())
             .title_alignment(Alignment::Center)
+            .title_bottom(Line::from(format!("v{}", app_version)).left_aligned().style(t.muted_style()))
             .padding(ratatui::widgets::Padding::new(1, 1, 0, 0));
 
         // Get the inner area (inside borders and padding)

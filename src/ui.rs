@@ -224,6 +224,8 @@ pub struct PackageManagerState {
     // Delete popup state
     pub delete_confirm_input: crate::utils::TextInput,
     pub delete_index: Option<usize>,
+    pub cache: crate::utils::package_cache::PackageCache,
+    pub active_profile: String,
 }
 
 /// Package popup types
@@ -288,6 +290,8 @@ impl Default for PackageManagerState {
             installation_step: InstallationStep::NotStarted,
             installation_output: Vec::new(),
             installation_delay_until: None,
+            cache: crate::utils::package_cache::PackageCache::default(),
+            active_profile: String::new(),
         }
     }
 }

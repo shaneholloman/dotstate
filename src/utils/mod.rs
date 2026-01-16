@@ -13,6 +13,7 @@ pub mod sync_validation;
 pub mod syntax_theme;
 pub mod text;
 pub mod text_input;
+pub mod package_cache;
 
 // Export utilities that are used
 pub use backup_manager::BackupManager;

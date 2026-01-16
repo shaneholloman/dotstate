@@ -42,14 +42,24 @@ impl ManagePackagesScreen {
         &mut self.state
     }
 
-    pub fn update_packages(&mut self, packages: Vec<Package>) {
-        // Only update if different to avoid resetting checking status unnecessarily
-        // Actually, we should force update if we are entering the screen?
-        // Let's just update and resize statuses.
+    pub fn update_packages(&mut self, packages: Vec<Package>, active_profile: &str) {
         self.state.packages = packages;
-        if self.state.package_statuses.len() != self.state.packages.len() {
-            self.state.package_statuses = vec![PackageStatus::Unknown; self.state.packages.len()];
+        self.state.active_profile = active_profile.to_string();
+
+        // Initialize statuses from cache
+        let mut statuses = Vec::with_capacity(self.state.packages.len());
+        for package in &self.state.packages {
+            if let Some(entry) = self.state.cache.get_status(active_profile, &package.name) {
+                if entry.installed {
+                    statuses.push(PackageStatus::Installed);
+                } else {
+                    statuses.push(PackageStatus::NotInstalled);
+                }
+            } else {
+                statuses.push(PackageStatus::Unknown);
+            }
         }
+        self.state.package_statuses = statuses;
     }
 
     pub fn reset_state(&mut self) {
@@ -63,8 +73,8 @@ impl ManagePackagesScreen {
         state.is_checking = true;
         state.checking_index = None;
         state.checking_delay_until = Some(std::time::Instant::now() + Duration::from_millis(100));
-        // Reset statuses to Unknown if we are re-checking
-        state.package_statuses = vec![PackageStatus::Unknown; state.packages.len()];
+        // Don't reset statuses here - they are initialized by update_packages (potentially from cache)
+        // Only packages with Unknown status will be checked by process_package_check_step
     }
 
     pub fn start_installing_missing_packages(&mut self) {
@@ -162,22 +172,40 @@ impl ManagePackagesScreen {
                 let package = &state.packages[index];
                 debug!("Checking package: {} (index: {})", package.name, index);
 
-                match PackageInstaller::check_exists(package) {
-                    Ok((true, _)) => {
-                        state.package_statuses[index] = PackageStatus::Installed;
-                    }
-                    Ok((false, _)) => {
-                        if !PackageManagerImpl::is_manager_installed(&package.manager) {
-                            state.package_statuses[index] = PackageStatus::Error(format!(
-                                "Package not found and package manager '{:?}' is not installed",
-                                package.manager
-                            ));
+                let check_result = PackageInstaller::check_exists(package);
+                let pkg_name = package.name.clone();
+                let pkg_manager = package.manager.clone();
+
+                match check_result {
+                    Ok((exists, _used_fallback)) => {
+                        // Update cache
+                        if !state.active_profile.is_empty() {
+                            if let Err(e) = state.cache.update_status(
+                                &state.active_profile,
+                                &pkg_name,
+                                exists,
+                                None,
+                                None,
+                            ) {
+                                warn!("Failed to update package cache: {}", e);
+                            }
+                        }
+
+                        if exists {
+                            state.package_statuses[index] = PackageStatus::Installed;
                         } else {
-                            state.package_statuses[index] = PackageStatus::NotInstalled;
+                            if !PackageManagerImpl::is_manager_installed(&pkg_manager) {
+                                state.package_statuses[index] = PackageStatus::Error(format!(
+                                    "Package not found and package manager '{:?}' is not installed",
+                                    pkg_manager
+                                ));
+                            } else {
+                                state.package_statuses[index] = PackageStatus::NotInstalled;
+                            }
                         }
                     }
                     Err(e) => {
-                        error!("Error checking package {}: {}", package.name, e);
+                        error!("Error checking package {}: {}", pkg_name, e);
                         state.package_statuses[index] = PackageStatus::Error(e.to_string());
                     }
                 }
@@ -297,6 +325,19 @@ impl ManagePackagesScreen {
                                         if *package_index < state.package_statuses.len() {
                                             state.package_statuses[*package_index] =
                                                 PackageStatus::Installed;
+                                        }
+
+                                        // Update cache
+                                        if !state.active_profile.is_empty() {
+                                            if let Err(e) = state.cache.update_status(
+                                                &state.active_profile,
+                                                package_name,
+                                                true,
+                                                None,
+                                                Some("Successfully installed".to_string()),
+                                            ) {
+                                                warn!("Failed to update package cache: {}", e);
+                                            }
                                         }
                                     } else {
                                         let err_msg =
@@ -886,8 +927,10 @@ impl ManagePackagesScreen {
                             PackageService::add_package(repo_path, active_profile, package)?
                         };
 
-                        self.update_packages(packages);
+                        self.update_packages(packages, active_profile);
                         self.reset_state();
+                        // Trigger check for the new/updated package (which will be Unknown status)
+                        self.state.is_checking = true;
                         return Ok(ScreenAction::Refresh);
                     }
                     return Ok(ScreenAction::Refresh);
@@ -1134,7 +1177,7 @@ impl ManagePackagesScreen {
                                 &config.active_profile,
                                 idx,
                             )?;
-                            self.update_packages(packages);
+                            self.update_packages(packages, &config.active_profile);
                             self.reset_state();
                             return Ok(ScreenAction::Refresh);
                         }
