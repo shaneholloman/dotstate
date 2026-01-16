@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-
+- **Package Check Status**: Show the status of package checks in the UI and remember the status for each package
+- **File Manager**: Show details of the folder contents in the file manager
 ### Changed
-
+- **Theme**: Unify border styles and add to themes
 ### Fixed
+- **Package Manager**: Fix check all packages command
 
 ---
 ## [0.2.5] - 2026-01-16
