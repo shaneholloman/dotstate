@@ -8,9 +8,7 @@ use crate::components::header::Header;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
 use crate::styles::{theme as ui_theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::{Screen as ScreenId, SyncWithRemoteState};
-use crate::utils::{
-    create_split_layout, create_standard_layout, focused_border_style,
-};
+use crate::utils::{create_split_layout, create_standard_layout, focused_border_style};
 use anyhow::Result;
 use crossterm::event::Event;
 use ratatui::layout::{Alignment, Rect};
@@ -110,7 +108,12 @@ impl SyncWithRemoteScreen {
     }
 
     /// Render the result popup
-    fn render_result_popup(&self, frame: &mut Frame, area: Rect, config: &crate::config::Config) -> Result<()> {
+    fn render_result_popup(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        config: &crate::config::Config,
+    ) -> Result<()> {
         use crate::components::dialog::{Dialog, DialogVariant};
 
         let result_text = self
@@ -127,7 +130,11 @@ impl SyncWithRemoteScreen {
         let footer_text = format!("{}: Close", k(crate::keymap::Action::Confirm));
 
         let dialog = Dialog::new(
-            if is_error { "Sync Error" } else { "Sync Result" },
+            if is_error {
+                "Sync Error"
+            } else {
+                "Sync Result"
+            },
             &result_text,
         )
         .height(50)

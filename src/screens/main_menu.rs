@@ -952,7 +952,9 @@ impl MainMenuScreen {
                 };
                 c.keymap.footer_navigation(theme_name)
             })
-            .unwrap_or_else(|| "↑↓: Navigate | Enter: Select | q: Back | ?: Help | t: Theme".to_string());
+            .unwrap_or_else(|| {
+                "↑↓: Navigate | Enter: Select | q: Back | ?: Help | t: Theme".to_string()
+            });
         let _ = Footer::render(frame, footer_chunk, &footer_text)?;
 
         Ok(())

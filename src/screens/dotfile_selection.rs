@@ -3,10 +3,10 @@
 //! This screen handles selecting and managing dotfiles for syncing.
 //! It owns all state and rendering logic (self-contained screen).
 
+use crate::components::dialog::{Dialog, DialogVariant};
 use crate::components::file_preview::FilePreview;
 use crate::components::footer::Footer;
 use crate::components::header::Header;
-use crate::components::dialog::{Dialog, DialogVariant};
 use crate::config::Config;
 use crate::file_manager::Dotfile;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
@@ -1612,7 +1612,6 @@ impl DotfileSelectionScreen {
     }
 
     fn render_move_confirm(&self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
-
         let dotfile_name = if let Some(idx) = self.state.confirm_move {
             if idx < self.state.dotfiles.len() {
                 self.state.dotfiles[idx].relative_path.display().to_string()
@@ -1704,7 +1703,6 @@ impl DotfileSelectionScreen {
         area: Rect,
         config: &Config,
     ) -> Result<()> {
-
         let dotfile_name = if let Some(idx) = self.state.confirm_move {
             if idx < self.state.dotfiles.len() {
                 self.state.dotfiles[idx].relative_path.display().to_string()
@@ -1767,7 +1765,6 @@ impl DotfileSelectionScreen {
         area: Rect,
         config: &Config,
     ) -> Result<()> {
-
         let dotfile_name = if let Some(idx) = self.state.confirm_move {
             if idx < self.state.dotfiles.len() {
                 self.state.dotfiles[idx].relative_path.display().to_string()

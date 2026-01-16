@@ -5,9 +5,7 @@ use crate::keymap::{Action, Keymap};
 use crate::screens::{RenderContext, Screen, ScreenAction, ScreenContext};
 use crate::styles::{theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::Screen as ScreenId;
-use crate::utils::{
-    create_standard_layout, focused_border_style, unfocused_border_style,
-};
+use crate::utils::{create_standard_layout, focused_border_style, unfocused_border_style};
 use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
@@ -566,26 +564,27 @@ impl ManageProfilesScreen {
             .find(|p| p.name == config.active_profile);
         let target_profile = selected_idx.and_then(|idx| self.state.profiles.get(idx));
 
-        let (title, content) = if let (Some(current), Some(target)) = (current_profile, target_profile) {
-            (
-                "Switch Profile",
-                format!(
-                    "Current: {} ({} files)\n\
+        let (title, content) =
+            if let (Some(current), Some(target)) = (current_profile, target_profile) {
+                (
+                    "Switch Profile",
+                    format!(
+                        "Current: {} ({} files)\n\
                     Target: {} ({} files)\n\n\
                     This will:\n\
                     • Remove symlinks for current profile\n\
                     • Create symlinks for target profile\n\
                     • Backup existing files (if backups are enabled)\n\n\
                     Continue?",
-                    current.name,
-                    current.synced_files.len(),
-                    target.name,
-                    target.synced_files.len()
+                        current.name,
+                        current.synced_files.len(),
+                        target.name,
+                        target.synced_files.len()
+                    ),
                 )
-            )
-        } else {
-            ("Error", "Invalid profile selection".to_string())
-        };
+            } else {
+                ("Error", "Invalid profile selection".to_string())
+            };
 
         let k = |a| config.keymap.get_key_display_for_action(a);
         let footer_text = format!(
@@ -596,7 +595,11 @@ impl ManageProfilesScreen {
 
         let dialog = Dialog::new(title, &content)
             .height(40)
-            .variant(if title == "Error" { DialogVariant::Error } else { DialogVariant::Default })
+            .variant(if title == "Error" {
+                DialogVariant::Error
+            } else {
+                DialogVariant::Default
+            })
             .footer(&footer_text);
         frame.render_widget(dialog, area);
 
@@ -623,7 +626,7 @@ impl ManageProfilesScreen {
         let result = Popup::new()
             .width(60)
             .height(35)
-            .title(&format!("Rename Profile: {}", profile_name))
+            .title(format!("Rename Profile: {}", profile_name))
             .dim_background(true)
             .footer(&footer_text)
             .render(frame, area);

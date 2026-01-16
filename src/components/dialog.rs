@@ -139,7 +139,10 @@ impl<'a> Dialog<'a> {
             let suggested_width = title_len.max(footer_len) + 20;
 
             // Clamp between min and max, and don't exceed available width
-            suggested_width.clamp(self.min_width, self.max_width.min(area.width.saturating_sub(4)))
+            suggested_width.clamp(
+                self.min_width,
+                self.max_width.min(area.width.saturating_sub(4)),
+            )
         };
 
         // Calculate minimum required height for the modal
@@ -157,7 +160,9 @@ impl<'a> Dialog<'a> {
 
         // Calculate modal height
         let modal_height = (area.height as f32 * (self.height_percent as f32 / 100.0)) as u16;
-        let modal_height = modal_height.max(min_total_height).min(area.height.saturating_sub(2));
+        let modal_height = modal_height
+            .max(min_total_height)
+            .min(area.height.saturating_sub(2));
 
         // Center the modal
         let popup_x = area.x + (area.width.saturating_sub(modal_width)) / 2;
@@ -185,13 +190,13 @@ impl<'a> Dialog<'a> {
         let constraints = if has_footer {
             vec![
                 Constraint::Length(title_height),
-                Constraint::Min(min_content_height),    // Content block (flexible)
+                Constraint::Min(min_content_height), // Content block (flexible)
                 Constraint::Length(footer_height),
             ]
         } else {
             vec![
                 Constraint::Length(title_height),
-                Constraint::Min(min_content_height),    // Content block (flexible)
+                Constraint::Min(min_content_height), // Content block (flexible)
             ]
         };
 

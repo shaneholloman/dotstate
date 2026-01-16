@@ -12,9 +12,7 @@ use crate::ui::{
 use crate::utils::package_installer::PackageInstaller;
 use crate::utils::package_manager::PackageManagerImpl;
 use crate::utils::profile_manifest::{Package, PackageManager};
-use crate::utils::{
-    create_standard_layout, focused_border_style, unfocused_border_style,
-};
+use crate::utils::{create_standard_layout, focused_border_style, unfocused_border_style};
 use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
@@ -195,7 +193,10 @@ impl ManagePackagesScreen {
             // "Check All" sets checking_index to None initially, so STEP 2 handles it.
             // So if checking_index was Some when we entered STEP 1, we're done after checking it.
             state.is_checking = false;
-            info!("Finished checking selected package at index {}", checked_index);
+            info!(
+                "Finished checking selected package at index {}",
+                checked_index
+            );
             return Ok(());
         }
 
@@ -1621,10 +1622,7 @@ impl ManagePackagesScreen {
         );
 
         let k = |a| config.keymap.get_key_display_for_action(a);
-        let footer_text = format!(
-            "{}: Cancel",
-            k(crate::keymap::Action::Quit)
-        );
+        let footer_text = format!("{}: Cancel", k(crate::keymap::Action::Quit));
 
         let dialog_height = 35;
         let dialog = Dialog::new("Delete Package", &content)
