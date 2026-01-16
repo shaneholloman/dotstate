@@ -117,13 +117,19 @@ impl Keymap {
         format!("{:?}", action)
     }
 
+    /// Generate theme key hint with the given theme type name
+    pub fn theme_key_hint(theme_type_name: &str) -> String {
+        format!("Theme: {} (t)", theme_type_name)
+    }
+
     /// Generate footer text for common navigation screens
-    pub fn footer_navigation(&self) -> String {
+    pub fn footer_navigation(&self, theme_type_name: &str) -> String {
         format!(
-            "{}: Navigate | {}: Select | {}: Back | ?: Help",
+            "{}: Navigate | {}: Select | {}: Back | ?: Help | {}",
             self.navigation_display(),
             self.confirm_display(),
-            self.quit_display()
+            self.quit_display(),
+            Self::theme_key_hint(theme_type_name)
         )
     }
 }

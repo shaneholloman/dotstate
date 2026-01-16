@@ -943,8 +943,16 @@ impl MainMenuScreen {
         let footer_text = self
             .config
             .as_ref()
-            .map(|c| c.keymap.footer_navigation())
-            .unwrap_or_else(|| "↑↓: Navigate | Enter: Select | q: Back | ?: Help".to_string());
+            .map(|c| {
+                let t = theme();
+                let theme_name = match t.theme_type {
+                    crate::styles::ThemeType::Dark => "dark",
+                    crate::styles::ThemeType::Light => "light",
+                    crate::styles::ThemeType::NoColor => "nocolor",
+                };
+                c.keymap.footer_navigation(theme_name)
+            })
+            .unwrap_or_else(|| "↑↓: Navigate | Enter: Select | q: Back | ?: Help | t: Theme".to_string());
         let _ = Footer::render(frame, footer_chunk, &footer_text)?;
 
         Ok(())
