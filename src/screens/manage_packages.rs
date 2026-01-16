@@ -215,12 +215,6 @@ impl ManagePackagesScreen {
             let checked_index = index;
             state.checking_index = None;
 
-            // If we were checking a specific package (checking_index was Some),
-            // this means "Check Selected" was triggered. After checking it,
-            // we should stop and not continue to check other Unknown packages.
-            // "Check All" sets checking_index to None initially, so STEP 2 handles it.
-            // So if checking_index was Some when we entered STEP 1, we're done after checking it.
-            state.is_checking = false;
             info!(
                 "Finished checking selected package at index {}",
                 checked_index
