@@ -142,7 +142,7 @@ impl Theme {
             error: Color::Red,
 
             // Text colors
-            text: Color::White,
+            text: Color::Reset,
             text_muted: Color::DarkGray,
             text_dimmed: Color::Cyan,
             text_emphasis: Color::Yellow,
@@ -175,7 +175,7 @@ impl Theme {
             error: Color::Red,
 
             // Text colors - dark text on light background
-            text: Color::Black,
+            text: Color::Reset,
             text_muted: Color::DarkGray,
             text_dimmed: Color::Cyan,
             text_emphasis: Color::Blue,

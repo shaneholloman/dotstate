@@ -18,7 +18,7 @@ use crate::utils::{
 };
 use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 
@@ -1929,6 +1929,16 @@ impl Screen for DotfileSelectionScreen {
                 if key.kind == KeyEventKind::Press {
                     // Check for Tab/NextTab to switch focus
                     if let Some(action) = ctx.config.keymap.get_action(key.code, key.modifiers) {
+                        // Generalized input filtering
+                        if !crate::utils::TextInput::is_action_allowed_when_focused(&action) {
+                            if let KeyCode::Char(c) = key.code {
+                                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+                                    self.state.file_browser_path_input.insert_char(c);
+                                    return Ok(ScreenAction::Refresh);
+                                }
+                            }
+                        }
+
                         use crate::keymap::Action;
                         if matches!(action, Action::NextTab) {
                             self.state.focus = DotfileSelectionFocus::FileBrowserList;
@@ -1946,6 +1956,17 @@ impl Screen for DotfileSelectionScreen {
         if self.state.adding_custom_file && !self.state.file_browser_mode {
             if let Event::Key(key) = event {
                 if key.kind == KeyEventKind::Press {
+                    if let Some(action) = ctx.config.keymap.get_action(key.code, key.modifiers) {
+                         // Generalized input filtering
+                        if !crate::utils::TextInput::is_action_allowed_when_focused(&action) {
+                            if let KeyCode::Char(c) = key.code {
+                                if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+                                    self.state.custom_file_input.insert_char(c);
+                                    return Ok(ScreenAction::Refresh);
+                                }
+                            }
+                        }
+                    }
                     return self.handle_custom_file_input(key.code, ctx.config);
                 }
             }

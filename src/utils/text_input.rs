@@ -177,6 +177,29 @@ impl TextInput {
         // Fall back to raw key handling
         self.handle_key(key_code)
     }
+    /// Check if an action is safe to process when a text input is focused.
+    ///
+    /// Returns true if the action is "safe" (like navigation or text editing) and should
+    /// be processed even when the input has focus.
+    /// Returns false if the action should be suppressed (like 'Quit' bound to 'q') so that
+    /// the key can be treated as text input.
+    pub fn is_action_allowed_when_focused(action: &Action) -> bool {
+        matches!(
+            action,
+            // Navigation between fields or exiting input
+            Action::Cancel          // Esc
+            | Action::Confirm       // Enter
+            | Action::NextTab       // Tab
+            | Action::PrevTab       // Shift+Tab
+            // Text editing actions
+            | Action::MoveLeft
+            | Action::MoveRight
+            | Action::Home
+            | Action::End
+            | Action::Backspace
+            | Action::DeleteChar
+        )
+    }
 }
 
 /// Handle text input for a single character insertion
@@ -513,5 +536,20 @@ mod tests {
         let input: TextInput = Default::default();
         assert_eq!(input.text(), "");
         assert_eq!(input.cursor(), 0);
+    }
+    #[test]
+    fn test_is_action_allowed_when_focused() {
+        // Allowed actions
+        assert!(TextInput::is_action_allowed_when_focused(&Action::Cancel));
+        assert!(TextInput::is_action_allowed_when_focused(&Action::Confirm));
+        assert!(TextInput::is_action_allowed_when_focused(&Action::NextTab));
+        assert!(TextInput::is_action_allowed_when_focused(&Action::Backspace));
+        assert!(TextInput::is_action_allowed_when_focused(&Action::MoveLeft));
+
+        // Blocked actions (should be suppressed for typing)
+        assert!(!TextInput::is_action_allowed_when_focused(&Action::Quit));
+        assert!(!TextInput::is_action_allowed_when_focused(&Action::Help));
+        assert!(!TextInput::is_action_allowed_when_focused(&Action::Delete)); // List delete
+        assert!(!TextInput::is_action_allowed_when_focused(&Action::Edit));
     }
 }

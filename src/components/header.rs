@@ -36,7 +36,7 @@ impl Header {
             .title_alignment(Alignment::Center)
             .title_bottom(
                 Line::from(format!("v{}", app_version))
-                    .left_aligned()
+                    .right_aligned()
                     .style(t.muted_style()),
             )
             .padding(ratatui::widgets::Padding::new(1, 1, 0, 0));

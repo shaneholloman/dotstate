@@ -775,6 +775,56 @@ impl ManagePackagesScreen {
         let state = &mut self.state;
 
         if let Some(action) = action {
+            // Generalized input filtering
+            if !crate::utils::TextInput::is_action_allowed_when_focused(&action) {
+                if let KeyCode::Char(c) = key.code {
+                    if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+                         match state.add_focused_field {
+                            AddPackageField::Name => {
+                                state.add_name_input.insert_char(c);
+                            }
+                            AddPackageField::Description => {
+                                state.add_description_input.insert_char(c);
+                            }
+                            AddPackageField::PackageName => {
+                                // Before inserting the new character, check if binary name should be auto-updated
+                                // Get the current suggestion (before the new char)
+                                let old_suggestion = PackageManagerImpl::suggest_binary_name(
+                                    state.add_package_name_input.text(),
+                                );
+                                let should_auto_update = state.add_binary_name_input.text().is_empty()
+                                    || state.add_binary_name_input.text() == old_suggestion;
+
+                                state.add_package_name_input.insert_char(c);
+
+                                // Update binary name suggestion if user hasn't manually edited it
+                                if should_auto_update {
+                                    let new_suggestion = PackageManagerImpl::suggest_binary_name(
+                                        state.add_package_name_input.text(),
+                                    );
+                                    state.add_binary_name_input =
+                                        crate::utils::TextInput::with_text(new_suggestion);
+                                }
+                            }
+                            AddPackageField::BinaryName => {
+                                state.add_binary_name_input.insert_char(c);
+                            }
+                            AddPackageField::InstallCommand => {
+                                state.add_install_command_input.insert_char(c);
+                            }
+                            AddPackageField::ExistenceCheck => {
+                                state.add_existence_check_input.insert_char(c);
+                            }
+                            AddPackageField::ManagerCheck => {
+                                state.add_manager_check_input.insert_char(c);
+                            }
+                            _ => {}
+                        }
+                        return Ok(ScreenAction::Refresh);
+                    }
+                }
+            }
+
             match action {
                 Action::Cancel => {
                     self.reset_state();
