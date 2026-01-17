@@ -52,6 +52,8 @@ pub enum ThemeType {
     Light,
     /// Disable all UI colors (equivalent to `NO_COLOR=1` / `--no-colors`)
     NoColor,
+    /// Fixed colors regardless of Terminal color presets, RGB values only
+    Fixed,
 }
 
 impl FromStr for ThemeType {
@@ -60,6 +62,7 @@ impl FromStr for ThemeType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s.to_lowercase().as_str() {
             "light" => ThemeType::Light,
+            "fixed" => ThemeType::Fixed,
             "nocolor" | "no-color" | "no_color" => ThemeType::NoColor,
             _ => ThemeType::Dark,
         })
@@ -123,6 +126,40 @@ impl Theme {
             ThemeType::Dark => Self::dark(),
             ThemeType::Light => Self::light(),
             ThemeType::NoColor => Self::no_color(),
+            ThemeType::Fixed => Self::fixed(),
+        }
+    }
+
+    /// Fixed theme - unified color palette
+    pub fn fixed() -> Self {
+        Self {
+            theme_type: ThemeType::Fixed,
+
+            // Primary colors - balanced mid-tones for visibility on light/dark
+            primary: Color::Rgb(0, 150, 200),    // Cerulean Blue
+            secondary: Color::Rgb(170, 50, 170), // Medium Orchid
+            tertiary: Color::Rgb(60, 100, 200),  // Steel Blue
+
+            // Semantic colors
+            success: Color::Rgb(40, 160, 60), // Jungle Green
+            warning: Color::Rgb(200, 130, 0), // Dark Orange
+            error: Color::Rgb(200, 40, 40),   // Fire Brick
+
+            // Text colors
+            text: Color::Reset, // Adapt to terminal default (Black on White / White on Black)
+            text_muted: Color::Rgb(128, 128, 128), // Gray works on both
+            text_dimmed: Color::Rgb(100, 100, 100),
+            text_emphasis: Color::Rgb(220, 140, 0), // Match warning/orange
+
+            // UI colors
+            border: Color::Rgb(100, 100, 100),       // Dark Gray
+            border_focused: Color::Rgb(0, 150, 200), // Match primary
+            highlight_bg: Color::Rgb(60, 60, 60), // Dark gray for selection (assuming text becomes white-ish or readable)
+            background: Color::Reset,
+
+            border_type: BorderType::Plain,
+            border_focused_type: BorderType::Thick,
+            dialog_border_type: BorderType::Double,
         }
     }
 
@@ -148,8 +185,8 @@ impl Theme {
             text_emphasis: Color::Yellow,
 
             // UI colors
-            border: Color::DarkGray,
-            border_focused: Color::Cyan,
+            border: Color::Cyan,
+            border_focused: Color::LightBlue,
             highlight_bg: Color::DarkGray,
             background: Color::Reset,
 

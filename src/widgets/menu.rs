@@ -144,6 +144,17 @@ impl StatefulWidget for Menu {
             let style = Style::default().fg(fg_color).bg(bg_color);
             let bold_style = style.add_modifier(Modifier::BOLD);
 
+            // Icon style
+            let icon_fg_color = if !item.enabled {
+                t.text_muted
+            } else {
+                t.primary
+            };
+            let icon_style = Style::default()
+                .fg(icon_fg_color)
+                .bg(bg_color)
+                .add_modifier(Modifier::BOLD);
+
             // Line 1: Empty padding (with background color if selected)
             let border_char = if is_selected { "▌" } else { " " };
             let padding_line = Line::from(vec![
@@ -194,7 +205,7 @@ impl StatefulWidget for Menu {
                 }
 
                 // Add content
-                content_spans.push(Span::styled(format!("{} ", item.icon), bold_style));
+                content_spans.push(Span::styled(format!("{} ", item.icon), icon_style));
                 content_spans.push(Span::styled(
                     &item.text,
                     if is_selected { bold_style } else { style },
@@ -227,7 +238,7 @@ impl StatefulWidget for Menu {
                 }
 
                 // Icon and text
-                content_spans.push(Span::styled(format!("{} ", item.icon), bold_style));
+                content_spans.push(Span::styled(format!("{} ", item.icon), icon_style));
                 content_spans.push(Span::styled(
                     &item.text,
                     if is_selected { bold_style } else { style },

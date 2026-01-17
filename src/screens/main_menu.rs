@@ -949,6 +949,7 @@ impl MainMenuScreen {
                     crate::styles::ThemeType::Dark => "dark",
                     crate::styles::ThemeType::Light => "light",
                     crate::styles::ThemeType::NoColor => "nocolor",
+                    crate::styles::ThemeType::Fixed => "fixed",
                 };
                 c.keymap.footer_navigation(theme_name)
             })

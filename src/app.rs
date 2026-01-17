@@ -295,7 +295,7 @@ impl App {
         Ok(())
     }
 
-    /// Cycle through themes: dark -> light -> nocolor -> dark
+    /// Cycle through themes: dark -> light -> nocolor -> fixed -> dark
     fn cycle_theme(&mut self) -> Result<()> {
         use crate::styles::ThemeType;
 
@@ -304,10 +304,13 @@ impl App {
             .theme
             .parse::<ThemeType>()
             .unwrap_or(ThemeType::Dark);
+
+        // Cycle through themes: dark -> light -> nocolor -> fixed -> dark
         let next_theme = match current_theme {
             ThemeType::Dark => ThemeType::Light,
             ThemeType::Light => ThemeType::NoColor,
-            ThemeType::NoColor => ThemeType::Dark,
+            ThemeType::NoColor => ThemeType::Fixed,
+            ThemeType::Fixed => ThemeType::Dark,
         };
 
         // Update config
@@ -315,6 +318,7 @@ impl App {
             ThemeType::Dark => "dark".to_string(),
             ThemeType::Light => "light".to_string(),
             ThemeType::NoColor => "nocolor".to_string(),
+            ThemeType::Fixed => "fixed".to_string(),
         };
 
         // Update NO_COLOR environment variable based on theme
@@ -324,7 +328,7 @@ impl App {
                 std::env::set_var("NO_COLOR", "1");
                 info!("NO_COLOR environment variable set");
             }
-            ThemeType::Dark | ThemeType::Light => {
+            ThemeType::Dark | ThemeType::Light | ThemeType::Fixed => {
                 // Unset NO_COLOR to allow colors
                 // Note: Some libraries may have already checked NO_COLOR at startup,
                 // but unsetting it allows future checks to see colors are enabled

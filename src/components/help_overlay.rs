@@ -66,7 +66,7 @@ impl HelpOverlay {
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Switch preset: ", Style::default().fg(theme.text_muted)),
+                Span::styled("Switch preset: ", Style::default().fg(theme.text_dimmed)),
                 Span::styled(
                     if current_preset == crate::keymap::KeymapPreset::Standard {
                         "[Standard]"
@@ -77,7 +77,7 @@ impl HelpOverlay {
                         .fg(if current_preset == crate::keymap::KeymapPreset::Standard {
                             theme.primary
                         } else {
-                            theme.text_muted
+                            theme.text_dimmed
                         })
                         .add_modifier(if current_preset == crate::keymap::KeymapPreset::Standard {
                             Modifier::BOLD
@@ -96,7 +96,7 @@ impl HelpOverlay {
                         .fg(if current_preset == crate::keymap::KeymapPreset::Vim {
                             theme.primary
                         } else {
-                            theme.text_muted
+                            theme.text_dimmed
                         })
                         .add_modifier(if current_preset == crate::keymap::KeymapPreset::Vim {
                             Modifier::BOLD
@@ -115,7 +115,7 @@ impl HelpOverlay {
                         .fg(if current_preset == crate::keymap::KeymapPreset::Emacs {
                             theme.primary
                         } else {
-                            theme.text_muted
+                            theme.text_dimmed
                         })
                         .add_modifier(if current_preset == crate::keymap::KeymapPreset::Emacs {
                             Modifier::BOLD
@@ -125,15 +125,15 @@ impl HelpOverlay {
                 ),
             ]),
             Line::from(vec![
-                Span::styled("Press ", Style::default().fg(theme.text_muted)),
+                Span::styled("Press ", Style::default().fg(theme.text_dimmed)),
                 Span::styled("1", Style::default().fg(theme.text_emphasis)),
-                Span::styled(" / ", Style::default().fg(theme.text_muted)),
+                Span::styled(" / ", Style::default().fg(theme.text_dimmed)),
                 Span::styled("2", Style::default().fg(theme.text_emphasis)),
-                Span::styled(" / ", Style::default().fg(theme.text_muted)),
+                Span::styled(" / ", Style::default().fg(theme.text_dimmed)),
                 Span::styled("3", Style::default().fg(theme.text_emphasis)),
                 Span::styled(
                     " to switch, or any other key to close",
-                    Style::default().fg(theme.text_muted),
+                    Style::default().fg(theme.text_dimmed),
                 ),
             ]),
         ];
@@ -189,7 +189,7 @@ impl HelpOverlay {
             config_path
         );
         let footer = Paragraph::new(footer_text)
-            .style(Style::default().fg(theme.text_muted))
+            .style(Style::default().fg(theme.text_dimmed))
             .alignment(Alignment::Center);
         frame.render_widget(footer, chunks[2]);
 
