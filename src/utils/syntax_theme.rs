@@ -28,6 +28,8 @@ use syntect::highlighting::{Theme, ThemeSet};
 pub fn get_syntax_theme(theme_set: &ThemeSet, theme_type: ThemeType) -> &Theme {
     let preferred_names = match theme_type {
         ThemeType::Light => vec!["base16-ocean.light", "Solarized (light)", "GitHub"],
+        ThemeType::SolarizedDark => vec!["Solarized (dark)", "base16-ocean.dark"],
+        ThemeType::SolarizedLight => vec!["Solarized (light)", "base16-ocean.light"],
         ThemeType::Dark | ThemeType::NoColor | ThemeType::Fixed => vec![
             "base16-ocean.dark",
             "base16-eighties.dark",
@@ -93,5 +95,16 @@ mod tests {
         let theme = get_syntax_theme(&theme_set, ThemeType::NoColor);
         // NoColor should fall back to dark theme preferences
         assert!(!theme.name.as_ref().is_none_or(|n| n.is_empty()));
+    }
+
+    #[test]
+    fn test_get_syntax_theme_solarized() {
+        let theme_set = ThemeSet::load_defaults();
+
+        let theme_dark = get_syntax_theme(&theme_set, ThemeType::SolarizedDark);
+        assert!(!theme_dark.name.as_ref().is_none_or(|n| n.is_empty()));
+
+        let theme_light = get_syntax_theme(&theme_set, ThemeType::SolarizedLight);
+        assert!(!theme_light.name.as_ref().is_none_or(|n| n.is_empty()));
     }
 }

@@ -55,6 +55,10 @@ pub enum ThemeType {
     NoColor,
     /// Fixed colors regardless of Terminal color presets, RGB values only
     Fixed,
+    /// Solarized Dark theme
+    SolarizedDark,
+    /// Solarized Light theme
+    SolarizedLight,
 }
 
 impl FromStr for ThemeType {
@@ -64,6 +68,8 @@ impl FromStr for ThemeType {
         Ok(match s.to_lowercase().as_str() {
             "light" => ThemeType::Light,
             "fixed" => ThemeType::Fixed,
+            "solarized-dark" | "solarized_dark" | "solarized" => ThemeType::SolarizedDark,
+            "solarized-light" | "solarized_light" => ThemeType::SolarizedLight,
             "nocolor" | "no-color" | "no_color" => ThemeType::NoColor,
             _ => ThemeType::Dark,
         })
@@ -130,6 +136,8 @@ impl Theme {
             ThemeType::Light => Self::light(),
             ThemeType::NoColor => Self::no_color(),
             ThemeType::Fixed => Self::fixed(),
+            ThemeType::SolarizedDark => Self::solarized_dark(),
+            ThemeType::SolarizedLight => Self::solarized_light(),
         }
     }
 
@@ -161,7 +169,103 @@ impl Theme {
             background: Color::Rgb(20, 20, 20),
             dim_bg: Color::Rgb(40, 40, 40),
 
-            border_type: BorderType::Plain,
+            border_type: BorderType::Rounded,
+            border_focused_type: BorderType::Thick,
+            dialog_border_type: BorderType::Double,
+        }
+    }
+
+    /// Solarized Dark theme
+    pub fn solarized_dark() -> Self {
+        Self {
+            theme_type: ThemeType::SolarizedDark,
+
+            // Solarized Palette (Dark)
+            // Base03  #002b36 (Background)
+            // Base02  #073642 (Background Highlights)
+            // Base01  #586e75 (Content Emphasis)
+            // Base00  #657b83 (Content)
+            // Base0   #839496 (Content)
+            // Base1   #93a1a1 (Content Emphasis)
+            // Base2   #eee8d5 (Background Highlights - unused in dark)
+            // Base3   #fdf6e3 (Background - unused in dark)
+            // Yellow  #b58900
+            // Orange  #cb4b16
+            // Red     #dc322f
+            // Magenta #d33682
+            // Violet  #6c71c4
+            // Blue    #268bd2
+            // Cyan    #2aa198
+            // Green   #859900
+
+            // Primary colors
+            primary: Color::Rgb(38, 139, 210),    // Blue
+            secondary: Color::Rgb(108, 113, 196), // Violet
+            tertiary: Color::Rgb(42, 161, 152),   // Cyan
+
+            // Semantic colors
+            success: Color::Rgb(133, 153, 0), // Green
+            warning: Color::Rgb(181, 137, 0), // Yellow
+            error: Color::Rgb(220, 50, 47),   // Red
+
+            // Text colors
+            text: Color::Rgb(131, 148, 150),          // Base0
+            text_muted: Color::Rgb(88, 110, 117),     // Base01
+            text_dimmed: Color::Rgb(7, 54, 66),       // Base02
+            text_emphasis: Color::Rgb(147, 161, 161), // Base1
+
+            // UI colors
+            border: Color::Rgb(88, 110, 117),         // Base01
+            border_focused: Color::Rgb(38, 139, 210), // Blue
+            highlight_bg: Color::Rgb(7, 54, 66),      // Base02
+            background: Color::Rgb(0, 43, 54),        // Base03
+            dim_bg: Color::Rgb(7, 54, 66),            // Base02
+
+            border_type: BorderType::Rounded,
+            border_focused_type: BorderType::Thick,
+            dialog_border_type: BorderType::Double,
+        }
+    }
+
+    /// Solarized Light theme
+    pub fn solarized_light() -> Self {
+        Self {
+            theme_type: ThemeType::SolarizedLight,
+
+            // Solarized Palette (Light)
+            // Base3   #fdf6e3 (Background)
+            // Base2   #eee8d5 (Background Highlights)
+            // Base1   #93a1a1 (Content Emphasis)
+            // Base0   #839496 (Content)
+            // Base00  #657b83 (Content)
+            // Base01  #586e75 (Content Emphasis)
+            // Base02  #073642 (Background Highlights - unused in light)
+            // Base03  #002b36 (Background - unused in light)
+
+            // Primary colors
+            primary: Color::Rgb(38, 139, 210),    // Blue
+            secondary: Color::Rgb(108, 113, 196), // Violet
+            tertiary: Color::Rgb(42, 161, 152),   // Cyan
+
+            // Semantic colors
+            success: Color::Rgb(133, 153, 0), // Green
+            warning: Color::Rgb(203, 75, 22), // Orange (better visibility on light)
+            error: Color::Rgb(220, 50, 47),   // Red
+
+            // Text colors
+            text: Color::Rgb(101, 123, 131),         // Base00
+            text_muted: Color::Rgb(147, 161, 161),   // Base1
+            text_dimmed: Color::Rgb(238, 232, 213),  // Base2
+            text_emphasis: Color::Rgb(88, 110, 117), // Base01
+
+            // UI colors
+            border: Color::Rgb(147, 161, 161),        // Base1
+            border_focused: Color::Rgb(38, 139, 210), // Blue
+            highlight_bg: Color::Rgb(238, 232, 213),  // Base2
+            background: Color::Rgb(253, 246, 227),    // Base3
+            dim_bg: Color::Rgb(238, 232, 213),        // Base2
+
+            border_type: BorderType::Rounded,
             border_focused_type: BorderType::Thick,
             dialog_border_type: BorderType::Double,
         }
@@ -406,6 +510,26 @@ mod tests {
         assert_eq!("nocolor".parse::<ThemeType>().unwrap(), ThemeType::NoColor);
         assert_eq!("no-color".parse::<ThemeType>().unwrap(), ThemeType::NoColor);
         assert_eq!("no_color".parse::<ThemeType>().unwrap(), ThemeType::NoColor);
+        assert_eq!(
+            "solarized-dark".parse::<ThemeType>().unwrap(),
+            ThemeType::SolarizedDark
+        );
+        assert_eq!(
+            "solarized_dark".parse::<ThemeType>().unwrap(),
+            ThemeType::SolarizedDark
+        );
+        assert_eq!(
+            "solarized".parse::<ThemeType>().unwrap(),
+            ThemeType::SolarizedDark
+        );
+        assert_eq!(
+            "solarized-light".parse::<ThemeType>().unwrap(),
+            ThemeType::SolarizedLight
+        );
+        assert_eq!(
+            "solarized_light".parse::<ThemeType>().unwrap(),
+            ThemeType::SolarizedLight
+        );
     }
 
     #[test]

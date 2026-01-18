@@ -948,6 +948,8 @@ impl MainMenuScreen {
                 let theme_name = match t.theme_type {
                     crate::styles::ThemeType::Dark => "dark",
                     crate::styles::ThemeType::Light => "light",
+                    crate::styles::ThemeType::SolarizedDark => "solarized-dark",
+                    crate::styles::ThemeType::SolarizedLight => "solarized-light",
                     crate::styles::ThemeType::NoColor => "nocolor",
                     crate::styles::ThemeType::Fixed => "fixed",
                 };

@@ -305,10 +305,12 @@ impl App {
             .parse::<ThemeType>()
             .unwrap_or(ThemeType::Dark);
 
-        // Cycle through themes: dark -> light -> nocolor -> fixed -> dark
+        // Cycle through themes: dark -> light -> solarized-dark -> solarized-light -> nocolor -> fixed -> dark
         let next_theme = match current_theme {
             ThemeType::Dark => ThemeType::Light,
-            ThemeType::Light => ThemeType::NoColor,
+            ThemeType::Light => ThemeType::SolarizedDark,
+            ThemeType::SolarizedDark => ThemeType::SolarizedLight,
+            ThemeType::SolarizedLight => ThemeType::NoColor,
             ThemeType::NoColor => ThemeType::Fixed,
             ThemeType::Fixed => ThemeType::Dark,
         };
@@ -317,6 +319,8 @@ impl App {
         self.config.theme = match next_theme {
             ThemeType::Dark => "dark".to_string(),
             ThemeType::Light => "light".to_string(),
+            ThemeType::SolarizedDark => "solarized-dark".to_string(),
+            ThemeType::SolarizedLight => "solarized-light".to_string(),
             ThemeType::NoColor => "nocolor".to_string(),
             ThemeType::Fixed => "fixed".to_string(),
         };
@@ -328,7 +332,11 @@ impl App {
                 std::env::set_var("NO_COLOR", "1");
                 info!("NO_COLOR environment variable set");
             }
-            ThemeType::Dark | ThemeType::Light | ThemeType::Fixed => {
+            ThemeType::Dark
+            | ThemeType::Light
+            | ThemeType::SolarizedDark
+            | ThemeType::SolarizedLight
+            | ThemeType::Fixed => {
                 // Unset NO_COLOR to allow colors
                 // Note: Some libraries may have already checked NO_COLOR at startup,
                 // but unsetting it allows future checks to see colors are enabled

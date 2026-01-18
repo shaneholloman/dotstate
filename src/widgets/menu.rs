@@ -249,7 +249,7 @@ impl StatefulWidget for Menu {
                     content_spans.push(Span::styled(
                         format!(" ({})", info),
                         Style::default()
-                            .fg(t.text_dimmed)
+                            .fg(t.text_muted)
                             .bg(bg_color)
                             .add_modifier(Modifier::ITALIC),
                     ));
