@@ -7,14 +7,15 @@ use crate::components::dialog::{Dialog, DialogVariant};
 use crate::components::file_preview::FilePreview;
 use crate::components::footer::Footer;
 use crate::components::header::Header;
+use crate::components::{FileBrowser, FileBrowserResult};
 use crate::config::Config;
 use crate::file_manager::Dotfile;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
 use crate::styles::{theme as ui_theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::Screen as ScreenId;
 use crate::utils::{
-    center_popup, create_split_layout, create_standard_layout, focused_border_style,
-    list_navigation::ListStateExt, unfocused_border_style, TextInput,
+    create_split_layout, create_standard_layout, focused_border_style, unfocused_border_style,
+    TextInput,
 };
 use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
@@ -27,7 +28,7 @@ use ratatui::widgets::{
     ScrollbarState, StatefulWidget, Wrap,
 };
 use ratatui::Frame;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
 
@@ -118,6 +119,8 @@ impl Default for DotfileSelectionState {
 /// Dotfile selection screen controller.
 pub struct DotfileSelectionScreen {
     state: DotfileSelectionState,
+    /// File browser component
+    file_browser: FileBrowser,
 }
 
 impl DotfileSelectionScreen {
@@ -125,6 +128,7 @@ impl DotfileSelectionScreen {
     pub fn new() -> Self {
         Self {
             state: DotfileSelectionState::default(),
+            file_browser: FileBrowser::new(),
         }
     }
 
@@ -222,81 +226,6 @@ impl DotfileSelectionScreen {
         }
     }
 
-    /// Handle file browser input (when typing in path field).
-    fn handle_file_browser_input(&mut self, key_code: KeyCode) -> Result<ScreenAction> {
-        if !self.state.file_browser_path_focused
-            || self.state.focus != DotfileSelectionFocus::FileBrowserInput
-        {
-            return Ok(ScreenAction::None);
-        }
-
-        match key_code {
-            KeyCode::Char(c) => {
-                self.state.file_browser_path_input.insert_char(c);
-            }
-            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                self.state.file_browser_path_input.handle_key(key_code);
-            }
-            KeyCode::Backspace => {
-                self.state.file_browser_path_input.backspace();
-            }
-            KeyCode::Delete => {
-                self.state.file_browser_path_input.delete();
-            }
-            KeyCode::Enter => {
-                // Load path from input
-                let path_str = self.state.file_browser_path_input.text_trimmed();
-                if !path_str.is_empty() {
-                    let full_path = crate::utils::expand_path(path_str);
-
-                    if full_path.exists() {
-                        if full_path.is_dir() {
-                            self.state.file_browser_path = full_path.clone();
-                            self.state.file_browser_path_input.set_text(
-                                self.state.file_browser_path.to_string_lossy().to_string(),
-                            );
-                            self.state.file_browser_list_state.select(Some(0));
-                            self.state.focus = DotfileSelectionFocus::FileBrowserList;
-                            return Ok(ScreenAction::RefreshFileBrowser);
-                        } else {
-                            // It's a file - sync it directly
-                            let home_dir = crate::utils::get_home_dir();
-                            let relative_path = full_path
-                                .strip_prefix(&home_dir)
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_else(|_| full_path.to_string_lossy().to_string());
-
-                            // Close browser
-                            self.state.file_browser_mode = false;
-                            self.state.adding_custom_file = false;
-                            self.state.file_browser_path_input.clear();
-                            self.state.focus = DotfileSelectionFocus::FilesList;
-
-                            return Ok(ScreenAction::AddCustomFileToSync {
-                                full_path,
-                                relative_path,
-                            });
-                        }
-                    }
-                }
-            }
-            KeyCode::Tab => {
-                self.state.file_browser_path_focused = false;
-                self.state.focus = DotfileSelectionFocus::FileBrowserList;
-            }
-            KeyCode::Esc => {
-                // Close file browser modal
-                self.state.file_browser_mode = false;
-                self.state.adding_custom_file = false;
-                self.state.file_browser_path_input.clear();
-                self.state.focus = DotfileSelectionFocus::FilesList;
-            }
-            _ => {}
-        }
-
-        Ok(ScreenAction::None)
-    }
-
     /// Handle custom file input (legacy mode, less common).
     fn handle_custom_file_input(
         &mut self,
@@ -385,209 +314,6 @@ impl DotfileSelectionScreen {
                 self.state.focus = DotfileSelectionFocus::FilesList;
             }
             _ => {}
-        }
-
-        Ok(ScreenAction::None)
-    }
-
-    /// Handle file browser list navigation and selection.
-    fn handle_file_browser_list(
-        &mut self,
-        key_code: KeyCode,
-        config: &Config,
-    ) -> Result<ScreenAction> {
-        let action = config
-            .keymap
-            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
-        use crate::keymap::Action;
-
-        if let Some(action) = action {
-            match action {
-                Action::MoveUp => {
-                    self.state.file_browser_list_state.select_previous();
-                }
-                Action::MoveDown => {
-                    self.state.file_browser_list_state.select_next();
-                }
-                Action::Confirm => {
-                    if let Some(idx) = self.state.file_browser_list_state.selected() {
-                        if idx < self.state.file_browser_entries.len() {
-                            let entry = self.state.file_browser_entries[idx].clone();
-
-                            // Handle special entries
-                            if entry == Path::new("..") {
-                                // Go to parent directory
-                                if let Some(parent) = self.state.file_browser_path.parent() {
-                                    self.state.file_browser_path = parent.to_path_buf();
-                                    self.state.file_browser_path_input.set_text(
-                                        self.state.file_browser_path.to_string_lossy().to_string(),
-                                    );
-                                    self.state.file_browser_list_state.select(Some(0));
-                                    return Ok(ScreenAction::RefreshFileBrowser);
-                                }
-                            } else if entry == Path::new(".") {
-                                // Add current folder
-                                let current_folder = self.state.file_browser_path.clone();
-                                let home_dir = crate::utils::get_home_dir();
-                                let relative_path = current_folder
-                                    .strip_prefix(&home_dir)
-                                    .map(|p| p.to_string_lossy().to_string())
-                                    .unwrap_or_else(|_| {
-                                        current_folder.to_string_lossy().to_string()
-                                    });
-
-                                // Validate
-                                let repo_path = &config.repo_path;
-                                let (is_safe, reason) =
-                                    crate::utils::is_safe_to_add(&current_folder, repo_path);
-                                if !is_safe {
-                                    self.state.status_message = Some(format!(
-                                            "Error: {}. Path: {}",
-                                            reason.unwrap_or_else(
-                                                || "Cannot add this folder".to_string()
-                                            ),
-                                            current_folder.display()
-                                        ));
-                                    return Ok(ScreenAction::None);
-                                }
-
-                                // Check if git repo
-                                if crate::utils::is_git_repo(&current_folder) {
-                                    self.state.status_message = Some(format!(
-                                        "Error: Cannot sync a git repository. Path: {}",
-                                        current_folder.display()
-                                    ));
-                                    return Ok(ScreenAction::None);
-                                }
-
-                                // Show confirmation modal
-                                self.state.show_custom_file_confirm = true;
-                                self.state.custom_file_confirm_path = Some(current_folder);
-                                self.state.custom_file_confirm_relative = Some(relative_path);
-                                self.state.file_browser_mode = false;
-                                self.state.adding_custom_file = false;
-                                self.state.file_browser_path_input.clear();
-                                self.state.focus = DotfileSelectionFocus::FilesList;
-                            } else {
-                                // Regular file or directory
-                                let full_path = if entry.is_absolute() {
-                                    entry.clone()
-                                } else {
-                                    self.state.file_browser_path.join(&entry)
-                                };
-
-                                if full_path.is_dir() {
-                                    // Navigate into directory
-                                    self.state.file_browser_path = full_path.clone();
-                                    self.state
-                                        .file_browser_path_input
-                                        .set_text(full_path.to_string_lossy().to_string());
-                                    self.state.file_browser_list_state.select(Some(0));
-                                    return Ok(ScreenAction::RefreshFileBrowser);
-                                } else if full_path.is_file() {
-                                    // Sync file directly
-                                    let home_dir = crate::utils::get_home_dir();
-                                    let relative_path = full_path
-                                        .strip_prefix(&home_dir)
-                                        .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|_| {
-                                            full_path.to_string_lossy().to_string()
-                                        });
-
-                                    // Close browser
-                                    self.state.file_browser_mode = false;
-                                    self.state.adding_custom_file = false;
-                                    self.state.file_browser_path_input.clear();
-                                    self.state.focus = DotfileSelectionFocus::FilesList;
-
-                                    return Ok(ScreenAction::AddCustomFileToSync {
-                                        full_path,
-                                        relative_path,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                Action::NextTab => {
-                    self.state.focus = DotfileSelectionFocus::FileBrowserPreview;
-                    self.state.file_browser_path_focused = false;
-                }
-                Action::PageUp => {
-                    self.state
-                        .file_browser_list_state
-                        .page_up(10, self.state.file_browser_entries.len());
-                }
-                Action::PageDown => {
-                    self.state
-                        .file_browser_list_state
-                        .page_down(10, self.state.file_browser_entries.len());
-                }
-                Action::GoToTop => {
-                    self.state.file_browser_list_state.select_first();
-                }
-                Action::GoToEnd => {
-                    self.state.file_browser_list_state.select_last();
-                }
-                Action::Cancel | Action::Quit => {
-                    // Close file browser
-                    self.state.file_browser_mode = false;
-                    self.state.adding_custom_file = false;
-                    self.state.focus = DotfileSelectionFocus::FilesList;
-                }
-                _ => {}
-            }
-        }
-
-        Ok(ScreenAction::None)
-    }
-
-    /// Handle file browser preview navigation.
-    fn handle_file_browser_preview(
-        &mut self,
-        key_code: KeyCode,
-        config: &Config,
-    ) -> Result<ScreenAction> {
-        let action = config
-            .keymap
-            .get_action(key_code, crossterm::event::KeyModifiers::NONE);
-        use crate::keymap::Action;
-
-        if let Some(action) = action {
-            match action {
-                Action::MoveUp | Action::ScrollUp => {
-                    self.state.file_browser_preview_scroll =
-                        self.state.file_browser_preview_scroll.saturating_sub(1);
-                }
-                Action::MoveDown | Action::ScrollDown => {
-                    self.state.file_browser_preview_scroll =
-                        self.state.file_browser_preview_scroll.saturating_add(1);
-                }
-                Action::PageUp => {
-                    self.state.file_browser_preview_scroll =
-                        self.state.file_browser_preview_scroll.saturating_sub(20);
-                }
-                Action::PageDown => {
-                    self.state.file_browser_preview_scroll =
-                        self.state.file_browser_preview_scroll.saturating_add(20);
-                }
-                Action::GoToTop => {
-                    self.state.file_browser_preview_scroll = 0;
-                }
-                Action::GoToEnd => {
-                    self.state.file_browser_preview_scroll = 10000; // Will be clamped during render
-                }
-                Action::NextTab => {
-                    self.state.focus = DotfileSelectionFocus::FileBrowserInput;
-                    self.state.file_browser_path_focused = true;
-                }
-                Action::Cancel | Action::Quit => {
-                    self.state.file_browser_mode = false;
-                    self.state.adding_custom_file = false;
-                    self.state.focus = DotfileSelectionFocus::FilesList;
-                }
-                _ => {}
-            }
         }
 
         Ok(ScreenAction::None)
@@ -755,16 +481,8 @@ impl DotfileSelectionScreen {
                 Action::Create => {
                     // Open file browser
                     self.state.adding_custom_file = true;
-                    self.state.file_browser_mode = true;
-                    self.state.file_browser_path = crate::utils::get_home_dir();
-                    self.state.file_browser_selected = 0;
-                    self.state
-                        .file_browser_path_input
-                        .set_text(self.state.file_browser_path.to_string_lossy().to_string());
-                    self.state.file_browser_path_focused = false;
-                    self.state.file_browser_preview_scroll = 0;
-                    self.state.focus = DotfileSelectionFocus::FileBrowserList;
-                    return Ok(ScreenAction::RefreshFileBrowser);
+                    self.file_browser.open(crate::utils::get_home_dir());
+                    return Ok(ScreenAction::None);
                 }
                 Action::ToggleBackup => {
                     self.state.backup_enabled = !self.state.backup_enabled;
@@ -877,239 +595,6 @@ impl DotfileSelectionScreen {
         }
 
         Ok(ScreenAction::None)
-    }
-    #[allow(clippy::too_many_arguments)] // Render function needs all these parameters
-    fn render_file_browser(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        footer_chunk: Rect,
-        config: &Config,
-        syntax_set: &SyntaxSet,
-        theme: &Theme,
-    ) -> Result<()> {
-        // Create popup area (centered, 80% width, 70% height)
-        let popup_area = center_popup(area, 80, 70);
-
-        // Clear the popup area first (this is the key to making it a popup)
-        frame.render_widget(Clear, popup_area);
-
-        // File browser overlay - with path input field
-        let browser_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Current path display
-                Constraint::Length(3), // Path input field
-                Constraint::Min(0),    // File list and preview
-                Constraint::Length(2), // Footer (1 for border, 1 for text)
-            ])
-            .split(popup_area);
-
-        // Current path display
-        let path_display =
-            Paragraph::new(self.state.file_browser_path.to_string_lossy().to_string()).block(
-                Block::default()
-                    // .borders(Borders::ALL)
-                    .title(" Current Directory ")
-                    .title_alignment(Alignment::Center)
-                    .title_style(crate::styles::theme().title_style())
-                    .style(crate::styles::theme().background_style()),
-            );
-        frame.render_widget(path_display, browser_chunks[0]);
-
-        // Path input field
-        let widget = TextInputWidget::new(&self.state.file_browser_path_input)
-            .title("Path Input")
-            .focused(self.state.file_browser_path_focused);
-        frame.render_text_input_widget(widget, browser_chunks[1]);
-
-        // Split list and preview
-        let list_preview_chunks = create_split_layout(browser_chunks[2], &[50, 50]);
-
-        // Create list items
-        let t = ui_theme();
-        let items: Vec<ListItem> = self
-            .state
-            .file_browser_entries
-            .iter()
-            .map(|path| {
-                let is_dir = if path == Path::new("..") {
-                    true
-                } else {
-                    let full_path = if path.is_absolute() {
-                        path.to_path_buf()
-                    } else {
-                        self.state.file_browser_path.join(path)
-                    };
-                    full_path.is_dir()
-                };
-
-                let name = if path == Path::new("..") {
-                    ".. (parent)".to_string()
-                } else if path == Path::new(".") {
-                    ". (add this folder)".to_string()
-                } else {
-                    path.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| path.to_string_lossy().to_string())
-                };
-
-                let icons = crate::icons::Icons::from_config(config);
-                let prefix = if is_dir {
-                    format!("{} ", icons.folder())
-                } else {
-                    format!("{} ", icons.file())
-                };
-                let display = format!("{}{}", prefix, name);
-                let style = t.text_style();
-
-                ListItem::new(display).style(style)
-            })
-            .collect();
-
-        // Update scrollbar state
-        let total_items = self.state.file_browser_entries.len();
-        let selected_index = self.state.file_browser_list_state.selected().unwrap_or(0);
-        self.state.file_browser_scrollbar = self
-            .state
-            .file_browser_scrollbar
-            .content_length(total_items)
-            .position(selected_index);
-
-        // Add focus indicator to file browser list
-        let list_title = " Select File or Directory (Enter to load path) ";
-        let list_border_style = if self.state.focus == DotfileSelectionFocus::FileBrowserList {
-            focused_border_style().bg(t.background)
-        } else {
-            unfocused_border_style().bg(t.background)
-        };
-
-        let list =
-            List::new(items)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(list_title)
-                        .border_type(ui_theme().border_type(
-                            self.state.focus == DotfileSelectionFocus::FileBrowserList,
-                        ))
-                        .title_alignment(Alignment::Center)
-                        .border_style(list_border_style)
-                        .style(t.background_style()),
-                )
-                .highlight_style(t.highlight_style())
-                .highlight_symbol(LIST_HIGHLIGHT_SYMBOL);
-
-        StatefulWidget::render(
-            list,
-            list_preview_chunks[0],
-            frame.buffer_mut(),
-            &mut self.state.file_browser_list_state,
-        );
-
-        // Render scrollbar
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓")),
-            list_preview_chunks[0],
-            &mut self.state.file_browser_scrollbar,
-        );
-
-        // Preview panel
-        if let Some(selected_index) = self.state.file_browser_list_state.selected() {
-            if selected_index < self.state.file_browser_entries.len() {
-                let selected = &self.state.file_browser_entries[selected_index];
-                let full_path = if selected == Path::new("..") {
-                    self.state
-                        .file_browser_path
-                        .parent()
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or_else(|| PathBuf::from("/"))
-                } else if selected == Path::new(".") {
-                    // Current folder
-                    self.state.file_browser_path.clone()
-                } else if selected.is_absolute() {
-                    selected.to_path_buf()
-                } else {
-                    self.state.file_browser_path.join(selected)
-                };
-
-                let is_focused = self.state.focus == DotfileSelectionFocus::FileBrowserPreview;
-                let preview_title = "Preview";
-
-                FilePreview::render(
-                    frame,
-                    list_preview_chunks[1],
-                    &full_path,
-                    self.state.file_browser_preview_scroll,
-                    is_focused,
-                    Some(preview_title),
-                    None,
-                    syntax_set,
-                    theme,
-                )?;
-            } else {
-                let empty_preview = Paragraph::new("No selection")
-                    .style(t.muted_style())
-                    .alignment(Alignment::Center)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_type(t.border_type(false))
-                            .title(" Preview ")
-                            .title_alignment(Alignment::Center)
-                            .style(t.background_style()),
-                    );
-                frame.render_widget(empty_preview, list_preview_chunks[1]);
-            }
-        } else {
-            let empty_preview = Paragraph::new("No selection")
-                .style(t.muted_style())
-                .alignment(Alignment::Center)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(t.border_type(false))
-                        .title(" Preview ")
-                        .title_alignment(Alignment::Center)
-                        .style(t.background_style()),
-                );
-            frame.render_widget(empty_preview, list_preview_chunks[1]);
-        }
-
-        // Footer for file browser (inside popup)
-        if browser_chunks.len() > 3 && browser_chunks[3].height > 0 {
-            let footer_block = Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(t.text_muted))
-                .style(t.background_style());
-            let footer_inner = footer_block.inner(browser_chunks[3]);
-            let k = |a| config.keymap.get_key_display_for_action(a);
-            let footer_text = format!(
-                "{}: Switch Focus | {}: Navigate List | {}: Load Path | {}: Cancel",
-                k(crate::keymap::Action::NextTab),
-                config.keymap.navigation_display(),
-                k(crate::keymap::Action::Confirm),
-                k(crate::keymap::Action::Cancel)
-            );
-            let footer = Paragraph::new(footer_text)
-                .style(Style::default().fg(t.text))
-                .alignment(Alignment::Center);
-            frame.render_widget(footer_block, browser_chunks[3]);
-            frame.render_widget(footer, footer_inner);
-        }
-
-        // Also render main footer (outside popup, at bottom of screen)
-        let k = |a| config.keymap.get_key_display_for_action(a);
-        let footer_text = format!(
-            "File Browser Active - {}: Cancel",
-            k(crate::keymap::Action::Quit)
-        );
-        let _ = Footer::render(frame, footer_chunk, &footer_text)?;
-
-        Ok(())
     }
 
     fn render_custom_file_input(
@@ -1877,17 +1362,8 @@ impl Screen for DotfileSelectionScreen {
             "Add or remove files to your repository. You can also add custom files. We have automatically detected some common dotfiles for you."
         )?;
 
-        // Check if file browser is active - render as popup (instead of main content)
-        if self.state.file_browser_mode {
-            self.render_file_browser(
-                frame,
-                area,
-                footer_chunk,
-                ctx.config,
-                ctx.syntax_set,
-                ctx.syntax_theme,
-            )?;
-        } else if self.state.adding_custom_file {
+        // Render main content (either custom file input or dotfile list)
+        if self.state.adding_custom_file && !self.file_browser.is_open() {
             self.render_custom_file_input(frame, content_chunk, footer_chunk, ctx.config)?;
         } else {
             // Render main dotfile list content
@@ -1899,6 +1375,12 @@ impl Screen for DotfileSelectionScreen {
                 ctx.syntax_set,
                 ctx.syntax_theme,
             )?;
+        }
+
+        // Render file browser as overlay on top (Popup handles dimming)
+        if self.file_browser.is_open() {
+            self.file_browser
+                .render(frame, area, ctx.config, ctx.syntax_set, ctx.syntax_theme)?;
         }
 
         // Render modals on top of the content (not instead of it)
@@ -1932,42 +1414,34 @@ impl Screen for DotfileSelectionScreen {
             return Ok(ScreenAction::None);
         }
 
-        // 2. File browser input mode
-        if self.state.file_browser_mode
-            && self.state.file_browser_path_focused
-            && self.state.focus == DotfileSelectionFocus::FileBrowserInput
-        {
-            if let Event::Key(key) = event {
-                if key.kind == KeyEventKind::Press {
-                    // Check for Tab/NextTab to switch focus
-                    if let Some(action) = ctx.config.keymap.get_action(key.code, key.modifiers) {
-                        // Generalized input filtering
-                        if !crate::utils::TextInput::is_action_allowed_when_focused(&action) {
-                            if let KeyCode::Char(c) = key.code {
-                                if !key.modifiers.intersects(
-                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                                ) {
-                                    self.state.file_browser_path_input.insert_char(c);
-                                    return Ok(ScreenAction::Refresh);
-                                }
-                            }
-                        }
-
-                        use crate::keymap::Action;
-                        if matches!(action, Action::NextTab) {
-                            self.state.focus = DotfileSelectionFocus::FileBrowserList;
-                            self.state.file_browser_path_focused = false;
-                            return Ok(ScreenAction::None);
-                        }
-                    }
-                    return self.handle_file_browser_input(key.code);
+        // 2. File browser mode - delegate to component
+        if self.file_browser.is_open() {
+            let result = self.file_browser.handle_event(event, ctx.config)?;
+            match result {
+                FileBrowserResult::None | FileBrowserResult::RefreshNeeded => {
+                    return Ok(ScreenAction::None);
+                }
+                FileBrowserResult::Cancelled => {
+                    self.state.adding_custom_file = false;
+                    self.state.focus = DotfileSelectionFocus::FilesList;
+                    return Ok(ScreenAction::None);
+                }
+                FileBrowserResult::Selected {
+                    full_path,
+                    relative_path,
+                } => {
+                    self.state.adding_custom_file = false;
+                    self.state.focus = DotfileSelectionFocus::FilesList;
+                    return Ok(ScreenAction::AddCustomFileToSync {
+                        full_path,
+                        relative_path,
+                    });
                 }
             }
-            return Ok(ScreenAction::None);
         }
 
         // 3. Custom file input mode (legacy)
-        if self.state.adding_custom_file && !self.state.file_browser_mode {
+        if self.state.adding_custom_file && !self.file_browser.is_open() {
             if let Event::Key(key) = event {
                 if key.kind == KeyEventKind::Press {
                     if let Some(action) = ctx.config.keymap.get_action(key.code, key.modifiers) {
@@ -1992,32 +1466,15 @@ impl Screen for DotfileSelectionScreen {
         // 4. Normal navigation based on focus
         if let Event::Key(key) = event {
             if key.kind == KeyEventKind::Press {
-                if self.state.file_browser_mode {
-                    // File browser mode navigation
-                    match self.state.focus {
-                        DotfileSelectionFocus::FileBrowserList => {
-                            return self.handle_file_browser_list(key.code, ctx.config);
-                        }
-                        DotfileSelectionFocus::FileBrowserPreview => {
-                            return self.handle_file_browser_preview(key.code, ctx.config);
-                        }
-                        DotfileSelectionFocus::FileBrowserInput => {
-                            // Shouldn't reach here as input mode is handled above
-                            return self.handle_file_browser_input(key.code);
-                        }
-                        _ => {}
+                // Normal mode navigation
+                match self.state.focus {
+                    DotfileSelectionFocus::FilesList => {
+                        return self.handle_dotfile_list(key.code, ctx.config);
                     }
-                } else {
-                    // Normal mode navigation
-                    match self.state.focus {
-                        DotfileSelectionFocus::FilesList => {
-                            return self.handle_dotfile_list(key.code, ctx.config);
-                        }
-                        DotfileSelectionFocus::Preview => {
-                            return self.handle_preview(key.code, ctx.config);
-                        }
-                        _ => {}
+                    DotfileSelectionFocus::Preview => {
+                        return self.handle_preview(key.code, ctx.config);
                     }
+                    _ => {}
                 }
             }
         }
@@ -2026,9 +1483,8 @@ impl Screen for DotfileSelectionScreen {
     }
 
     fn is_input_focused(&self) -> bool {
-        if self.state.file_browser_mode {
-            self.state.file_browser_path_focused
-                && self.state.focus == DotfileSelectionFocus::FileBrowserInput
+        if self.file_browser.is_open() {
+            self.file_browser.is_input_focused()
         } else if self.state.adding_custom_file {
             self.state.custom_file_focused
         } else {
