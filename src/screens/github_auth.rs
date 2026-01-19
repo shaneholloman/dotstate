@@ -918,12 +918,20 @@ impl GitHubAuthScreen {
             ])
             .split(content_chunk);
 
+        // Render setup form block
+        let setup_block = Block::bordered()
+            .title(" Setup Form ")
+            .border_style(Style::default().fg(t.primary))
+            .border_type(theme().border_type(false));
+        let setup_area = setup_block.inner(main_layout[0]);
+        frame.render_widget(setup_block, main_layout[0]);
+
         // Left side: instructions and fields
         let left_layout = Layout::default()
             .direction(Direction::Vertical)
-            .margin(2)
+            .margin(1) // Reduced margin inside the block
             .constraints([
-                Constraint::Length(3), // Instructions
+                Constraint::Length(4), // Instructions (height increased for block border?)
                 Constraint::Length(1), // Spacer
                 Constraint::Length(3), // Token input
                 Constraint::Length(1), // Spacer
@@ -939,7 +947,7 @@ impl GitHubAuthScreen {
                 Constraint::Length(3), // Visibility toggle
                 Constraint::Min(0),    // Spacer
             ])
-            .split(main_layout[0]);
+            .split(setup_area);
 
         // Instructions
         let instructions_block = Block::default()
@@ -958,7 +966,7 @@ impl GitHubAuthScreen {
 
         // Show reminder message for new installs (when repo is not already configured)
         if !self.state.repo_already_configured {
-            let reminder_text = "⚠️  If you already had a repo with a different name, make sure to enter it here, otherwise a new repo with this name will be created";
+            let reminder_text = " ⚠️  If you already had a repo with a different name, make sure to enter it here, otherwise a new repo with this name will be created";
             let reminder = Paragraph::new(reminder_text)
                 .style(t.warning_style())
                 .wrap(Wrap { trim: true });
