@@ -909,15 +909,17 @@ impl App {
             }
 
             Screen::ManagePackages => {
-                // reset state if needed?
-                // self.manage_packages_screen.reset_state();
-                // Load packages from active profile into screen state
-                if let Ok(Some(active_profile)) = self.get_active_profile_info() {
-                    self.manage_packages_screen
-                        .update_packages(active_profile.packages, &self.config.active_profile);
-                } else {
-                    self.manage_packages_screen
-                        .update_packages(Vec::new(), &self.config.active_profile);
+                // Only update packages if the profile has changed, to avoid interrupting
+                // any background checks or clearing state unnecessarily.
+                if self.config.active_profile != self.manage_packages_screen.state.active_profile {
+                    // Load packages from active profile into screen state
+                    if let Ok(Some(active_profile)) = self.get_active_profile_info() {
+                        self.manage_packages_screen
+                            .update_packages(active_profile.packages, &self.config.active_profile);
+                    } else {
+                        self.manage_packages_screen
+                            .update_packages(Vec::new(), &self.config.active_profile);
+                    }
                 }
             }
             _ => {}
