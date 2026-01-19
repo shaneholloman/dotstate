@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+## [0.2.10] - 2025-01-19
+
 ### Changed
 - **CLI**: Enhanced doctor command with comprehensive diagnostics:
   - Added version check (shows if updates are available)
@@ -22,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Sync Service**: Fixed `move_to_common` and `move_from_common` to use SymlinkManager instead of raw symlinks, ensuring proper symlink tracking
 
----
 ## [0.2.9] - 2026-01-19
 ### Added
 - **CLI**: Add doctor command to check for issues with the dotstate configuration
