@@ -20,7 +20,7 @@ use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, 
 use ratatui::layout::{Alignment, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph, Wrap
+    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
 use ratatui::Frame;
 
@@ -978,7 +978,6 @@ impl GitHubAuthScreen {
             let reminder_text = "⚠️  If you already had a repo with a different name, make sure to enter it here, otherwise a new repo with this name will be created";
             let reminder = Paragraph::new(reminder_text)
                 .style(t.warning_style())
-
                 .block(Block::default().padding(Padding::proportional(1)))
                 .wrap(Wrap { trim: false });
             frame.render_widget(reminder, left_layout[5]);

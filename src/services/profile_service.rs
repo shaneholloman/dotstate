@@ -442,10 +442,10 @@ impl ProfileService {
         // Also activate common files
         let common_files = Self::get_common_files(repo_path)?;
         if !common_files.is_empty() {
-             info!("Backfilling common files...");
-             if let Err(e) = symlink_mgr.activate_common_files(&common_files) {
-                 warn!("Failed to activate some common files: {}", e);
-             }
+            info!("Backfilling common files...");
+            if let Err(e) = symlink_mgr.activate_common_files(&common_files) {
+                warn!("Failed to activate some common files: {}", e);
+            }
         }
 
         Ok(activation_result)

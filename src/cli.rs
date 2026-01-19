@@ -610,7 +610,7 @@ impl Cli {
             symlink_mgr.activate_profile(&active_profile_name, &active_profile_files)?;
 
         // Also activate common files if any exist
-        let common_files: Vec<String> = manifest.get_common_files().into_iter().cloned().collect();
+        let common_files: Vec<String> = manifest.get_common_files().to_vec();
         if !common_files.is_empty() {
             let common_operations = symlink_mgr.activate_common_files(&common_files)?;
             operations.extend(common_operations);
@@ -723,31 +723,50 @@ impl Cli {
 
     fn cmd_doctor(fix: bool) -> Result<()> {
         let config_path = crate::utils::get_config_path();
-        let config = Config::load_or_create(&config_path).context("Failed to load configuration")?;
+        let config =
+            Config::load_or_create(&config_path).context("Failed to load configuration")?;
 
         if !config.is_repo_configured() {
-             eprintln!("❌ Repository not configured. Please run 'dotstate' to set up repository.");
-             std::process::exit(1);
+            eprintln!("❌ Repository not configured. Please run 'dotstate' to set up repository.");
+            std::process::exit(1);
         }
 
         let mut doctor = crate::utils::doctor::Doctor::new(config, fix);
         let results = doctor.run_diagnostics()?;
 
         // Calculate summary
-        let passed = results.iter().filter(|r| matches!(r.status, crate::utils::doctor::ValidationStatus::Pass)).count();
-        let warnings = results.iter().filter(|r| matches!(r.status, crate::utils::doctor::ValidationStatus::Warning)).count();
-        let errors = results.iter().filter(|r| matches!(r.status, crate::utils::doctor::ValidationStatus::Error)).count();
+        let passed = results
+            .iter()
+            .filter(|r| matches!(r.status, crate::utils::doctor::ValidationStatus::Pass))
+            .count();
+        let warnings = results
+            .iter()
+            .filter(|r| matches!(r.status, crate::utils::doctor::ValidationStatus::Warning))
+            .count();
+        let errors = results
+            .iter()
+            .filter(|r| matches!(r.status, crate::utils::doctor::ValidationStatus::Error))
+            .count();
         let fixed = results.iter().filter(|r| r.fixable && fix).count();
 
         println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        println!("Summary: {} passed, {} warnings, {} errors", passed, warnings, errors);
+        println!(
+            "Summary: {} passed, {} warnings, {} errors",
+            passed, warnings, errors
+        );
         if fix {
-             println!("         Auto-fix attempt completed ({} issues addressed)", fixed);
+            println!(
+                "         Auto-fix attempt completed ({} issues addressed)",
+                fixed
+            );
         } else {
-             let fixable_count = results.iter().filter(|r| r.fixable && r.status != crate::utils::doctor::ValidationStatus::Pass).count();
-             if fixable_count > 0 {
-                 println!("\n💡 {} issues can be auto-fixed with --fix", fixable_count);
-             }
+            let fixable_count = results
+                .iter()
+                .filter(|r| r.fixable && r.status != crate::utils::doctor::ValidationStatus::Pass)
+                .count();
+            if fixable_count > 0 {
+                println!("\n💡 {} issues can be auto-fixed with --fix", fixable_count);
+            }
         }
 
         if errors > 0 {

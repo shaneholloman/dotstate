@@ -191,7 +191,10 @@ impl SymlinkManager {
         self.tracking.active_profile = profile_name.to_string();
         for op in &operations {
             // Track both Success AND Skipped (Skipped = symlink already correct, still ours)
-            if matches!(op.status, OperationStatus::Success | OperationStatus::Skipped(_)) {
+            if matches!(
+                op.status,
+                OperationStatus::Success | OperationStatus::Skipped(_)
+            ) {
                 // Check if already tracked (avoid duplicates)
                 let already_tracked = self.tracking.symlinks.iter().any(|s| s.target == op.target);
                 if !already_tracked {
@@ -295,7 +298,8 @@ impl SymlinkManager {
 
                         if resolved.starts_with(&common_path) {
                             // Check if we already processed this in tracked symlinks
-                            let already_processed = operations.iter().any(|op| op.target == target_path);
+                            let already_processed =
+                                operations.iter().any(|op| op.target == target_path);
 
                             if !already_processed {
                                 info!("Found untracked common symlink: {:?}", target_path);
@@ -1500,9 +1504,16 @@ impl SymlinkManager {
             let operation = self.create_symlink(&source, &target, file)?;
 
             // Track both Success AND Skipped (Skipped = symlink already correct, still ours)
-            if matches!(operation.status, OperationStatus::Success | OperationStatus::Skipped(_)) {
+            if matches!(
+                operation.status,
+                OperationStatus::Success | OperationStatus::Skipped(_)
+            ) {
                 // Check if already tracked (avoid duplicates)
-                let already_tracked = self.tracking.symlinks.iter().any(|s| s.target == operation.target);
+                let already_tracked = self
+                    .tracking
+                    .symlinks
+                    .iter()
+                    .any(|s| s.target == operation.target);
                 if !already_tracked {
                     self.tracking.symlinks.push(TrackedSymlink {
                         target: operation.target.clone(),

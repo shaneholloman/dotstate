@@ -55,68 +55,75 @@ impl Doctor {
     }
 
     fn fix_issues(&mut self) -> Result<()> {
-         // Filter for fixable issues
-         let fixable: Vec<ValidationResult> = self.results.iter()
-             .filter(|r| r.fixable && r.status != ValidationStatus::Pass)
-             .cloned()
-             .collect();
+        // Filter for fixable issues
+        let fixable: Vec<ValidationResult> = self
+            .results
+            .iter()
+            .filter(|r| r.fixable && r.status != ValidationStatus::Pass)
+            .cloned()
+            .collect();
 
-         if fixable.is_empty() {
-             return Ok(());
-         }
+        if fixable.is_empty() {
+            return Ok(());
+        }
 
-         println!("\n🔧 Attempting to fix {} issues...", fixable.len());
+        println!("\n🔧 Attempting to fix {} issues...", fixable.len());
 
-         for issue in fixable {
-             if let Some(action) = &issue.fix_action {
-                 match action.as_str() {
-                     "Sync activation state" => {
+        for issue in fixable {
+            if let Some(action) = &issue.fix_action {
+                match action.as_str() {
+                    "Sync activation state" => {
                         // If config says active but tracking doesn't, we trust tracking (inactive)
-                         // OR we try to activate?
-                         // Safer to just mark config as inactive to match reality
-                         println!("   Applying fix: Sync activation state...");
-                         let mut config = self.config.clone();
-                         config.profile_activated = false;
-                         config.save(&crate::utils::get_config_path())?;
-                         println!("   ✅ Config updated to match tracking state (inactive)");
-                     },
-                     "Clean up missing symlinks from tracking" => {
-                         println!("   Applying fix: Cleaning up missing symlinks...");
-                         let mut symlink_mgr = SymlinkManager::new(self.config.repo_path.clone())?;
-                         // Reload tracking
-                         // Only keep symlinks that exist or point to valid locations?
-                         // Ideally SymlinkManager would have a 'prune' method.
-                         // For now, we manually filter.
-                         symlink_mgr.tracking.symlinks.retain(|s| s.target.exists() || s.target.symlink_metadata().is_ok());
-                         symlink_mgr.save_tracking()?;
-                         println!("   ✅ Removed zombie entries from tracking file");
-                     },
-                     "Re-activate profile" => {
-                         println!("   Applying fix: Re-activating profile to restore missing links...");
-                         // Use ProfileService to activate
-                         use crate::services::ProfileService;
+                        // OR we try to activate?
+                        // Safer to just mark config as inactive to match reality
+                        println!("   Applying fix: Sync activation state...");
+                        let mut config = self.config.clone();
+                        config.profile_activated = false;
+                        config.save(&crate::utils::get_config_path())?;
+                        println!("   ✅ Config updated to match tracking state (inactive)");
+                    }
+                    "Clean up missing symlinks from tracking" => {
+                        println!("   Applying fix: Cleaning up missing symlinks...");
+                        let mut symlink_mgr = SymlinkManager::new(self.config.repo_path.clone())?;
+                        // Reload tracking
+                        // Only keep symlinks that exist or point to valid locations?
+                        // Ideally SymlinkManager would have a 'prune' method.
+                        // For now, we manually filter.
+                        symlink_mgr
+                            .tracking
+                            .symlinks
+                            .retain(|s| s.target.exists() || s.target.symlink_metadata().is_ok());
+                        symlink_mgr.save_tracking()?;
+                        println!("   ✅ Removed zombie entries from tracking file");
+                    }
+                    "Re-activate profile" => {
+                        println!(
+                            "   Applying fix: Re-activating profile to restore missing links..."
+                        );
+                        // Use ProfileService to activate
+                        use crate::services::ProfileService;
 
-                         if !self.config.active_profile.is_empty() {
-                             match ProfileService::activate_profile(
-                                 &self.config.repo_path,
-                                 &self.config.active_profile,
-                                 false // Disable backup for repair
-                             ) {
-                                 Ok(_) => println!("   ✅ Profile re-activated successfully"),
-                                 Err(e) => println!("   ❌ Failed to re-activate profile: {}", e),
-                             }
-                         } else {
-                             println!("   ⚠️  Cannot re-activate: No active profile set");
-                         }
-                     },
-                     _ => {
-                         println!("   ⚠️  Fix not implemented for: {}", action);
-                     }
-                 }
-             }
-         }
+                        if !self.config.active_profile.is_empty() {
+                            match ProfileService::activate_profile(
+                                &self.config.repo_path,
+                                &self.config.active_profile,
+                                false, // Disable backup for repair
+                            ) {
+                                Ok(_) => println!("   ✅ Profile re-activated successfully"),
+                                Err(e) => println!("   ❌ Failed to re-activate profile: {}", e),
+                            }
+                        } else {
+                            println!("   ⚠️  Cannot re-activate: No active profile set");
+                        }
+                    }
+                    _ => {
+                        println!("   ⚠️  Fix not implemented for: {}", action);
+                    }
+                }
+            }
+        }
 
-         Ok(())
+        Ok(())
     }
 
     fn add_result(
@@ -148,24 +155,34 @@ impl Doctor {
 
         let config_path = crate::utils::get_config_path();
         if config_path.exists() {
-            self.add_result("Config", "Configuration file exists", ValidationStatus::Pass, None);
+            self.add_result(
+                "Config",
+                "Configuration file exists",
+                ValidationStatus::Pass,
+                None,
+            );
         } else {
             self.add_result(
                 "Config",
                 "Configuration file missing",
                 ValidationStatus::Error,
-                None
+                None,
             );
         }
 
         if self.config.repo_path.exists() {
-            self.add_result("Config", "Repository path exists", ValidationStatus::Pass, None);
+            self.add_result(
+                "Config",
+                "Repository path exists",
+                ValidationStatus::Pass,
+                None,
+            );
         } else {
             self.add_result(
                 "Config",
                 &format!("Repository path not found: {:?}", self.config.repo_path),
                 ValidationStatus::Error,
-                None // User intervention required usually
+                None, // User intervention required usually
             );
         }
 
@@ -178,9 +195,12 @@ impl Doctor {
         if self.config.profile_activated {
             self.add_result(
                 "Activation",
-                &format!("Profile '{}' is marked as active in config", self.config.active_profile),
+                &format!(
+                    "Profile '{}' is marked as active in config",
+                    self.config.active_profile
+                ),
                 ValidationStatus::Pass,
-                None
+                None,
             );
 
             // Check if tracking file agrees
@@ -190,26 +210,33 @@ impl Doctor {
                     "Activation",
                     "Tracking file matches active profile",
                     ValidationStatus::Pass,
-                    None
+                    None,
                 );
             } else if symlink_mgr.tracking.active_profile.is_empty() {
                 self.add_result(
                     "Activation",
                     "Config says active, but tracking file says inactive",
                     ValidationStatus::Warning,
-                    Some("Sync activation state".to_string())
+                    Some("Sync activation state".to_string()),
                 );
             } else {
                 self.add_result(
                     "Activation",
-                    &format!("Profile mismatch: Config='{}', Tracking='{}'",
-                        self.config.active_profile, symlink_mgr.tracking.active_profile),
+                    &format!(
+                        "Profile mismatch: Config='{}', Tracking='{}'",
+                        self.config.active_profile, symlink_mgr.tracking.active_profile
+                    ),
                     ValidationStatus::Warning,
-                    None
+                    None,
                 );
             }
         } else {
-            self.add_result("Activation", "No profile currently active", ValidationStatus::Pass, None);
+            self.add_result(
+                "Activation",
+                "No profile currently active",
+                ValidationStatus::Pass,
+                None,
+            );
         }
 
         Ok(())
@@ -223,20 +250,27 @@ impl Doctor {
             Ok(manifest) => {
                 self.add_result(
                     "Manifest",
-                    &format!("Manifest loaded ({} profiles, {} common files)",
-                        manifest.profiles.len(), manifest.common.synced_files.len()),
+                    &format!(
+                        "Manifest loaded ({} profiles, {} common files)",
+                        manifest.profiles.len(),
+                        manifest.common.synced_files.len()
+                    ),
                     ValidationStatus::Pass,
-                    None
+                    None,
                 );
 
                 // Check active profile exists
                 if !self.config.active_profile.is_empty() {
-                    if let Some(profile) = manifest.profiles.iter().find(|p| p.name == self.config.active_profile) {
+                    if let Some(profile) = manifest
+                        .profiles
+                        .iter()
+                        .find(|p| p.name == self.config.active_profile)
+                    {
                         self.add_result(
                             "Manifest",
                             "Active profile exists in manifest",
                             ValidationStatus::Pass,
-                            None
+                            None,
                         );
 
                         // Check actual files exist in storage
@@ -252,34 +286,44 @@ impl Doctor {
                         if missing_files.is_empty() {
                             self.add_result(
                                 "Manifest",
-                                &format!("All {} profile files exist in storage", profile.synced_files.len()),
+                                &format!(
+                                    "All {} profile files exist in storage",
+                                    profile.synced_files.len()
+                                ),
                                 ValidationStatus::Pass,
-                                None
+                                None,
                             );
                         } else {
                             self.add_result(
                                 "Manifest",
-                                &format!("{} files missing from storage: {:?}", missing_files.len(), missing_files),
+                                &format!(
+                                    "{} files missing from storage: {:?}",
+                                    missing_files.len(),
+                                    missing_files
+                                ),
                                 ValidationStatus::Error,
-                                None
+                                None,
                             );
                         }
                     } else {
                         self.add_result(
                             "Manifest",
-                            &format!("Active profile '{}' not found in manifest", self.config.active_profile),
+                            &format!(
+                                "Active profile '{}' not found in manifest",
+                                self.config.active_profile
+                            ),
                             ValidationStatus::Error,
-                            None
+                            None,
                         );
                     }
                 }
-            },
+            }
             Err(e) => {
                 self.add_result(
                     "Manifest",
                     &format!("Failed to load manifest: {}", e),
                     ValidationStatus::Error,
-                    None
+                    None,
                 );
             }
         }
@@ -298,14 +342,14 @@ impl Doctor {
                     "Tracking",
                     "No symlinks tracked specifically, but profile is active",
                     ValidationStatus::Warning,
-                    Some("Re-scan symlinks".to_string())
+                    Some("Re-scan symlinks".to_string()),
                 );
             } else {
                 self.add_result(
                     "Tracking",
                     &format!("{} files tracked", symlink_mgr.tracking.symlinks.len()),
                     ValidationStatus::Pass,
-                    None
+                    None,
                 );
 
                 // Check for orphan symlinks (tracked but not existing)
@@ -319,16 +363,19 @@ impl Doctor {
                 if missing_symlinks > 0 {
                     self.add_result(
                         "Tracking",
-                        &format!("{} tracked symlinks are missing from disk", missing_symlinks),
+                        &format!(
+                            "{} tracked symlinks are missing from disk",
+                            missing_symlinks
+                        ),
                         ValidationStatus::Warning,
-                        Some("Clean up missing symlinks from tracking".to_string())
+                        Some("Clean up missing symlinks from tracking".to_string()),
                     );
                 } else {
                     self.add_result(
                         "Tracking",
                         "All tracked symlinks exist on disk",
                         ValidationStatus::Pass,
-                        None
+                        None,
                     );
                 }
 
@@ -337,10 +384,14 @@ impl Doctor {
                     let mut expected_files = HashSet::new();
 
                     // Add active profile files
-                    if let Some(profile) = manifest.profiles.iter().find(|p| p.name == self.config.active_profile) {
-                         for file in &profile.synced_files {
-                             expected_files.insert(file.clone());
-                         }
+                    if let Some(profile) = manifest
+                        .profiles
+                        .iter()
+                        .find(|p| p.name == self.config.active_profile)
+                    {
+                        for file in &profile.synced_files {
+                            expected_files.insert(file.clone());
+                        }
                     }
 
                     // Add common files
@@ -354,8 +405,7 @@ impl Doctor {
                         let is_tracked = symlink_mgr.tracking.symlinks.iter().any(|s|
                             // Simple check: does the source path end with the expected filename?
                             // Better: reconstruct source path and compare
-                            s.source.ends_with(&expected)
-                        );
+                            s.source.ends_with(&expected));
 
                         if !is_tracked {
                             untracked_files.push(expected);
@@ -363,18 +413,22 @@ impl Doctor {
                     }
 
                     if !untracked_files.is_empty() {
-                         self.add_result(
+                        self.add_result(
                             "Tracking",
-                            &format!("{} expected files are NOT tracked (including: {:?})", untracked_files.len(), untracked_files.first().unwrap_or(&String::new())),
+                            &format!(
+                                "{} expected files are NOT tracked (including: {:?})",
+                                untracked_files.len(),
+                                untracked_files.first().unwrap_or(&String::new())
+                            ),
                             ValidationStatus::Error,
-                            Some("Re-activate profile".to_string())
+                            Some("Re-activate profile".to_string()),
                         );
                     } else {
                         self.add_result(
                             "Tracking",
                             "All expected files (profile + common) are tracked",
                             ValidationStatus::Pass,
-                            None
+                            None,
                         );
                     }
                 }
@@ -384,9 +438,12 @@ impl Doctor {
             if !symlink_mgr.tracking.symlinks.is_empty() {
                 self.add_result(
                     "Tracking",
-                     &format!("{} files tracked but no profile is active", symlink_mgr.tracking.symlinks.len()),
-                     ValidationStatus::Warning,
-                     None
+                    &format!(
+                        "{} files tracked but no profile is active",
+                        symlink_mgr.tracking.symlinks.len()
+                    ),
+                    ValidationStatus::Warning,
+                    None,
                 );
             }
         }
@@ -402,7 +459,7 @@ impl Doctor {
 
             // remote check
             let remote_output = Command::new("git")
-                .args(&["remote", "-v"])
+                .args(["remote", "-v"])
                 .current_dir(&self.config.repo_path)
                 .output();
 
@@ -410,32 +467,39 @@ impl Doctor {
                 Ok(output) if output.status.success() => {
                     let remote_str = String::from_utf8_lossy(&output.stdout);
                     if remote_str.trim().is_empty() {
-                         self.add_result("Git", "No remote configured", ValidationStatus::Warning, None);
+                        self.add_result(
+                            "Git",
+                            "No remote configured",
+                            ValidationStatus::Warning,
+                            None,
+                        );
                     } else {
-                         // Parse origin
-                         let origin = remote_str.lines()
-                             .find(|l| l.contains("origin") && l.contains("(fetch)"))
-                             .map(|l| l.split_whitespace().nth(1).unwrap_or(""));
+                        // Parse origin
+                        let origin = remote_str
+                            .lines()
+                            .find(|l| l.contains("origin") && l.contains("(fetch)"))
+                            .map(|l| l.split_whitespace().nth(1).unwrap_or(""));
 
-                         if let Some(url) = origin {
-                             self.add_result(
-                                 "Git",
-                                 &format!("Remote 'origin': {}", url),
-                                 ValidationStatus::Pass, None
+                        if let Some(url) = origin {
+                            self.add_result(
+                                "Git",
+                                &format!("Remote 'origin': {}", url),
+                                ValidationStatus::Pass,
+                                None,
                             );
 
                             // Try network check only if connectivity seems available
                             // Skipping actual network call for now to keep doctor fast/safe
                             // Typically verify-remote would be separate
-                         }
+                        }
                     }
-                },
+                }
                 _ => {}
             }
 
             // Status check
             let status_output = Command::new("git")
-                .args(&["status", "--porcelain"])
+                .args(["status", "--porcelain"])
                 .current_dir(&self.config.repo_path)
                 .output();
 
@@ -447,15 +511,19 @@ impl Doctor {
                         "Git",
                         &format!("{} uncommitted changes", changes),
                         ValidationStatus::Warning,
-                        None
+                        None,
                     );
                 } else {
                     self.add_result("Git", "Working tree clean", ValidationStatus::Pass, None);
                 }
             }
-
         } else {
-             self.add_result("Git", "Not a git repository", ValidationStatus::Warning, None);
+            self.add_result(
+                "Git",
+                "Not a git repository",
+                ValidationStatus::Warning,
+                None,
+            );
         }
 
         Ok(())
@@ -469,14 +537,19 @@ impl Doctor {
         match fs::write(&test_file, "test") {
             Ok(_) => {
                 let _ = fs::remove_file(&test_file);
-                self.add_result("Permissions", "Repository is writable", ValidationStatus::Pass, None);
-            },
+                self.add_result(
+                    "Permissions",
+                    "Repository is writable",
+                    ValidationStatus::Pass,
+                    None,
+                );
+            }
             Err(e) => {
                 self.add_result(
                     "Permissions",
                     &format!("Repository not writable: {}", e),
                     ValidationStatus::Error,
-                    None
+                    None,
                 );
             }
         }
