@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::fs;
 use std::process::Command;
 
@@ -89,6 +90,24 @@ impl Doctor {
                          symlink_mgr.tracking.symlinks.retain(|s| s.target.exists() || s.target.symlink_metadata().is_ok());
                          symlink_mgr.save_tracking()?;
                          println!("   ✅ Removed zombie entries from tracking file");
+                     },
+                     "Re-activate profile" => {
+                         println!("   Applying fix: Re-activating profile to restore missing links...");
+                         // Use ProfileService to activate
+                         use crate::services::ProfileService;
+
+                         if !self.config.active_profile.is_empty() {
+                             match ProfileService::activate_profile(
+                                 &self.config.repo_path,
+                                 &self.config.active_profile,
+                                 false // Disable backup for repair
+                             ) {
+                                 Ok(_) => println!("   ✅ Profile re-activated successfully"),
+                                 Err(e) => println!("   ❌ Failed to re-activate profile: {}", e),
+                             }
+                         } else {
+                             println!("   ⚠️  Cannot re-activate: No active profile set");
+                         }
                      },
                      _ => {
                          println!("   ⚠️  Fix not implemented for: {}", action);
@@ -312,6 +331,63 @@ impl Doctor {
                         None
                     );
                 }
+
+                // Check for missing expected files (manifest vs tracking)
+                if let Ok(manifest) = ProfileManifest::load(&self.config.repo_path) {
+                    let mut expected_files = HashSet::new();
+
+                    // Add active profile files
+                    if let Some(profile) = manifest.profiles.iter().find(|p| p.name == self.config.active_profile) {
+                         for file in &profile.synced_files {
+                             expected_files.insert(file.clone());
+                         }
+                    }
+
+                    // Add common files
+                    for file in &manifest.common.synced_files {
+                        expected_files.insert(file.clone());
+                    }
+
+                    // Check which expected files are NOT tracked
+                    let mut untracked_files = Vec::new();
+                    for expected in expected_files {
+                        let is_tracked = symlink_mgr.tracking.symlinks.iter().any(|s|
+                            // Simple check: does the source path end with the expected filename?
+                            // Better: reconstruct source path and compare
+                            s.source.ends_with(&expected)
+                        );
+
+                        if !is_tracked {
+                            untracked_files.push(expected);
+                        }
+                    }
+
+                    if !untracked_files.is_empty() {
+                         self.add_result(
+                            "Tracking",
+                            &format!("{} expected files are NOT tracked (including: {:?})", untracked_files.len(), untracked_files.first().unwrap_or(&String::new())),
+                            ValidationStatus::Error,
+                            Some("Re-activate profile".to_string())
+                        );
+                    } else {
+                        self.add_result(
+                            "Tracking",
+                            "All expected files (profile + common) are tracked",
+                            ValidationStatus::Pass,
+                            None
+                        );
+                    }
+                }
+            }
+        } else {
+            // No profile active
+            if !symlink_mgr.tracking.symlinks.is_empty() {
+                self.add_result(
+                    "Tracking",
+                     &format!("{} files tracked but no profile is active", symlink_mgr.tracking.symlinks.len()),
+                     ValidationStatus::Warning,
+                     None
+                );
             }
         }
 

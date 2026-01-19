@@ -3,7 +3,6 @@
 //! This module provides a service layer for profile-related operations,
 //! abstracting the details of the profile management from the UI layer.
 
-use crate::file_manager::copy_dir_all;
 use crate::utils::profile_manifest::{Package, ProfileInfo};
 use crate::utils::symlink_manager::{OperationStatus, SymlinkManager};
 use crate::utils::{sanitize_profile_name, validate_profile_name, ProfileManifest};
@@ -164,7 +163,7 @@ impl ProfileService {
 
                         // Copy file or directory
                         if source_file.is_dir() {
-                            copy_dir_all(&source_file, &dest_file)?;
+                            crate::file_manager::copy_dir_all(&source_file, &dest_file)?;
                         } else {
                             std::fs::copy(&source_file, &dest_file)?;
                         }
@@ -187,6 +186,12 @@ impl ProfileService {
 
         info!("Created profile: {}", sanitized_name);
         Ok(sanitized_name)
+    }
+
+    /// Get list of common files from manifest
+    pub fn get_common_files(repo_path: &Path) -> Result<Vec<String>> {
+        let manifest = Self::load_manifest(repo_path)?;
+        Ok(manifest.common.synced_files)
     }
 
     /// Switch to a different profile.
@@ -412,7 +417,7 @@ impl ProfileService {
             SymlinkManager::new_with_backup(repo_path.to_path_buf(), backup_enabled)?;
 
         // Activate profile (this will create symlinks and sync files)
-        match symlink_mgr.activate_profile(profile_name, &files_to_sync) {
+        let activation_result = match symlink_mgr.activate_profile(profile_name, &files_to_sync) {
             Ok(operations) => {
                 let success_count = operations
                     .iter()
@@ -432,7 +437,18 @@ impl ProfileService {
                 error!("Failed to activate profile '{}': {}", profile_name, e);
                 Err(anyhow::anyhow!("Failed to activate profile: {}", e))
             }
+        }?;
+
+        // Also activate common files
+        let common_files = Self::get_common_files(repo_path)?;
+        if !common_files.is_empty() {
+             info!("Backfilling common files...");
+             if let Err(e) = symlink_mgr.activate_common_files(&common_files) {
+                 warn!("Failed to activate some common files: {}", e);
+             }
         }
+
+        Ok(activation_result)
     }
 
     /// Ensure all files in the active profile have their symlinks created.
