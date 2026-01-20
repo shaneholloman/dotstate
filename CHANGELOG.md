@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Package Manager**: Automatically prompt to install newly added packages if they are not already installed on the system
+- **Package Manager**: Import packages from system package managers (Homebrew, Pacman, APT) with `Shift+I`. Discovers explicitly installed packages and allows multi-select import with filtering. Discovery runs asynchronously with animated spinner, and results are cached for 5 minutes
 
 ### Changed
 - **Package Manager**: Deleted packages are now removed from the status cache
@@ -19,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Package Manager**: Fixed installation dialogs rendering without background dimming by ensuring main content is rendered first
 - **Package Manager**: Fixed validation errors showing as full-screen dialogs instead of inline in the add/edit popup
 - **Package Manager**: Prevent duplicate packages by validating binary name uniqueness
+- **Package Manager**: Fixed import popup showing blank screen during discovery by deferring discovery until after loading UI renders
+- **Package Manager**: Fixed Space key being captured by filter input in import popup instead of toggling package selection
+- **Keymap**: Fixed Shift+key bindings not working on terminals that send uppercase characters without SHIFT modifier
 
 ---
 ## [0.2.10] - 2025-01-19

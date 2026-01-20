@@ -69,6 +69,7 @@ fn standard_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("s", Action::CheckStatus),
         KeyBinding::new("shift+s", Action::Sync),
         KeyBinding::new("i", Action::Install),
+        KeyBinding::new("shift+i", Action::Import),
         KeyBinding::new("ctrl+s", Action::Save),
         KeyBinding::new("b", Action::ToggleBackup),
         KeyBinding::new("m", Action::Move),
@@ -126,6 +127,7 @@ fn vim_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("s", Action::CheckStatus),
         KeyBinding::new("shift+s", Action::Sync),
         KeyBinding::new("i", Action::Install),
+        KeyBinding::new("shift+i", Action::Import),
         KeyBinding::new("ctrl+s", Action::Save),
         KeyBinding::new("b", Action::ToggleBackup),
         KeyBinding::new("m", Action::Move),
@@ -188,6 +190,7 @@ fn emacs_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl+x s", Action::Sync), // Note: multi-key not supported yet
         KeyBinding::new("s", Action::CheckStatus),
         KeyBinding::new("i", Action::Install),
+        KeyBinding::new("shift+i", Action::Import),
         KeyBinding::new("ctrl+s", Action::Save),
         KeyBinding::new("b", Action::ToggleBackup), // Use 'b' since Ctrl+B is MoveLeft in Emacs
         KeyBinding::new("m", Action::Move),

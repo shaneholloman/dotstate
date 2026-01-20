@@ -115,7 +115,7 @@ impl ManagePackagesScreen {
         keymap.get_action(key, modifiers)
     }
 
-    /// Process periodic tasks (package checking, installation monitoring)
+    /// Process periodic tasks (package checking, installation monitoring, import discovery)
     /// Returns ScreenAction::Refresh if a redraw is needed
     pub fn tick(&mut self) -> Result<ScreenAction> {
         let mut needs_redraw = false;
@@ -135,14 +135,18 @@ impl ManagePackagesScreen {
             }
         }
 
-        // 2. Process Installation (Stub for now, will implement logic similar to app.rs)
+        // 2. Process Installation
         if !matches!(self.state.installation_step, InstallationStep::NotStarted) {
-            // In app.rs, process_installation_step handled the async receiver
-            // We need to move that logic here or trigger it.
-            // For now, let's just claim redraw if installing implementation details are moved here.
-            // Wait, app.rs had `process_installation_step` which polled the receiver.
-            // We need to port 'process_installation_step' logic here.
             self.process_installation_step()?;
+            needs_redraw = true;
+        }
+
+        // 3. Process Import Discovery (async polling)
+        if self.state.import_loading {
+            // Tick the spinner animation
+            self.state.import_spinner_tick = self.state.import_spinner_tick.wrapping_add(1);
+            // Poll async discovery (non-blocking)
+            self.poll_import_discovery();
             needs_redraw = true;
         }
 
@@ -499,13 +503,13 @@ impl Screen for ManagePackagesScreen {
         } else {
             let k = |a| config.keymap.get_key_display_for_action(a);
             format!(
-                "{}: Navigate | {}: Add | {}: Edit | {}: Delete | {}: Check All | {}: Check Selected | {}: Install Missing | {}: Back",
+                "{}: Navigate | {}: Add | {}: Import | {}: Edit | {}: Delete | {}: Check | {}: Install | {}: Back",
                 config.keymap.navigation_display(),
                 k(crate::keymap::Action::Create),
+                k(crate::keymap::Action::Import),
                 k(crate::keymap::Action::Edit),
                 k(crate::keymap::Action::Delete),
                 k(crate::keymap::Action::Refresh),
-                k(crate::keymap::Action::CheckStatus),
                 k(crate::keymap::Action::Install),
                 k(crate::keymap::Action::Cancel)
             )
@@ -580,6 +584,9 @@ impl Screen for ManagePackagesScreen {
                     }
                     return Ok(ScreenAction::None);
                 }
+                PackagePopupType::Import => {
+                    return self.handle_import_popup_event(key, config);
+                }
                 PackagePopupType::None => {
                     // Normal list navigation
                     if let Some(action) = self.get_action(key.code, key.modifiers, &config.keymap) {
@@ -594,7 +601,10 @@ impl Screen for ManagePackagesScreen {
     fn is_input_focused(&self) -> bool {
         matches!(
             self.state.popup_type,
-            PackagePopupType::Add | PackagePopupType::Edit | PackagePopupType::Delete
+            PackagePopupType::Add
+                | PackagePopupType::Edit
+                | PackagePopupType::Delete
+                | PackagePopupType::Import
         )
     }
 }
@@ -713,6 +723,12 @@ impl ManagePackagesScreen {
                     return Ok(ScreenAction::Refresh);
                 }
             }
+            Action::Import => {
+                if state.popup_type == PackagePopupType::None && !state.is_checking {
+                    self.start_import()?;
+                    return Ok(ScreenAction::Refresh);
+                }
+            }
             _ => {}
         }
         Ok(ScreenAction::None)
@@ -786,6 +802,111 @@ impl ManagePackagesScreen {
             state.add_focused_field = AddPackageField::Name;
         }
         Ok(())
+    }
+
+    fn start_import(&mut self) -> Result<()> {
+        use crate::utils::PackageDiscoveryService;
+
+        let state = &mut self.state;
+        state.popup_type = PackagePopupType::Import;
+        state.import_selected.clear();
+        state.import_filter.clear();
+        state.import_spinner_tick = 0;
+
+        // Check if we have cached results from the last 5 minutes
+        const CACHE_DURATION_SECS: u64 = 300; // 5 minutes
+        let cache_valid = state.import_discovered_at.is_some_and(|at| {
+            at.elapsed().as_secs() < CACHE_DURATION_SECS && !state.import_discovered.is_empty()
+        });
+
+        if cache_valid {
+            // Use cached results - just reset selection state
+            state.import_loading = false;
+            state.import_discovery_rx = None;
+            if !state.import_discovered.is_empty() {
+                state.import_list_state.select(Some(0));
+            }
+        } else {
+            // Need to discover - spawn async discovery
+            state.import_discovered.clear();
+            state.import_list_state = ratatui::widgets::ListState::default();
+            state.import_loading = true;
+            state.import_source = None;
+            state.import_discovery_rx = Some(PackageDiscoveryService::discover_async());
+        }
+        Ok(())
+    }
+
+    /// Poll the async discovery receiver for updates (non-blocking)
+    fn poll_import_discovery(&mut self) -> bool {
+        use crate::utils::DiscoveryStatus;
+        use std::sync::mpsc::TryRecvError;
+        use std::time::Instant;
+
+        let rx = match self.state.import_discovery_rx.as_ref() {
+            Some(rx) => rx,
+            None => return false,
+        };
+
+        match rx.try_recv() {
+            Ok(status) => {
+                match status {
+                    DiscoveryStatus::Started(source) => {
+                        self.state.import_source = Some(source);
+                    }
+                    DiscoveryStatus::Complete { source, packages } => {
+                        self.state.import_source = Some(source);
+
+                        // Filter out packages that are already added (by binary name)
+                        let existing_binaries: std::collections::HashSet<String> = self
+                            .state
+                            .packages
+                            .iter()
+                            .map(|p| p.binary_name.to_lowercase())
+                            .collect();
+
+                        self.state.import_discovered = packages
+                            .into_iter()
+                            .filter(|p| {
+                                let binary = p
+                                    .binary_name
+                                    .as_ref()
+                                    .unwrap_or(&p.package_name)
+                                    .to_lowercase();
+                                !existing_binaries.contains(&binary)
+                            })
+                            .collect();
+
+                        if !self.state.import_discovered.is_empty() {
+                            self.state.import_list_state.select(Some(0));
+                        }
+
+                        // Cache the discovery timestamp
+                        self.state.import_discovered_at = Some(Instant::now());
+                        self.state.import_loading = false;
+                        self.state.import_discovery_rx = None;
+                    }
+                    DiscoveryStatus::Failed { source, error } => {
+                        self.state.import_source = Some(source);
+                        warn!("Failed to discover packages: {}", error);
+                        self.state.import_loading = false;
+                        self.state.import_discovery_rx = None;
+                    }
+                    DiscoveryStatus::NoSourcesAvailable => {
+                        self.state.import_loading = false;
+                        self.state.import_discovery_rx = None;
+                    }
+                }
+                true // Got a message
+            }
+            Err(TryRecvError::Empty) => false, // No message yet
+            Err(TryRecvError::Disconnected) => {
+                // Thread finished without sending Complete
+                self.state.import_loading = false;
+                self.state.import_discovery_rx = None;
+                true
+            }
+        }
     }
 
     fn handle_add_edit_popup_event(
@@ -1342,6 +1463,206 @@ impl ManagePackagesScreen {
 
         Ok(ScreenAction::None)
     }
+
+    fn handle_import_popup_event(
+        &mut self,
+        key: crossterm::event::KeyEvent,
+        config: &Config,
+    ) -> Result<ScreenAction> {
+        let action = config.keymap.get_action(key.code, key.modifiers);
+
+        // Handle actions FIRST (before character input)
+        if let Some(action) = action {
+            match action {
+                Action::Cancel | Action::Quit => {
+                    self.state.popup_type = PackagePopupType::None;
+                    // Don't clear import_discovered - keep it cached
+                    self.state.import_selected.clear();
+                    self.state.import_filter.clear();
+                    return Ok(ScreenAction::Refresh);
+                }
+                Action::MoveUp => {
+                    let filtered = self.get_filtered_import_packages();
+                    if !filtered.is_empty() {
+                        let current = self.state.import_list_state.selected().unwrap_or(0);
+                        let new_idx = if current == 0 {
+                            filtered.len() - 1
+                        } else {
+                            current - 1
+                        };
+                        self.state.import_list_state.select(Some(new_idx));
+                    }
+                    return Ok(ScreenAction::Refresh);
+                }
+                Action::MoveDown => {
+                    let filtered = self.get_filtered_import_packages();
+                    if !filtered.is_empty() {
+                        let current = self.state.import_list_state.selected().unwrap_or(0);
+                        let new_idx = (current + 1) % filtered.len();
+                        self.state.import_list_state.select(Some(new_idx));
+                    }
+                    return Ok(ScreenAction::Refresh);
+                }
+                Action::ToggleSelect => {
+                    // Toggle selection of current item
+                    let filtered = self.get_filtered_import_packages();
+                    if let Some(filtered_idx) = self.state.import_list_state.selected() {
+                        if let Some(&original_idx) = filtered.get(filtered_idx) {
+                            if self.state.import_selected.contains(&original_idx) {
+                                self.state.import_selected.remove(&original_idx);
+                            } else {
+                                self.state.import_selected.insert(original_idx);
+                            }
+                        }
+                    }
+                    return Ok(ScreenAction::Refresh);
+                }
+                Action::SelectAll => {
+                    // Select all filtered items
+                    let filtered = self.get_filtered_import_packages();
+                    for &idx in &filtered {
+                        self.state.import_selected.insert(idx);
+                    }
+                    return Ok(ScreenAction::Refresh);
+                }
+                Action::DeselectAll => {
+                    self.state.import_selected.clear();
+                    return Ok(ScreenAction::Refresh);
+                }
+                Action::Confirm => {
+                    // Import selected packages
+                    if !self.state.import_selected.is_empty() {
+                        return self.import_selected_packages(config);
+                    }
+                }
+                Action::Backspace => {
+                    self.state.import_filter.backspace();
+                    // Reset selection when filter changes
+                    if !self.get_filtered_import_packages().is_empty() {
+                        self.state.import_list_state.select(Some(0));
+                    } else {
+                        self.state.import_list_state.select(None);
+                    }
+                    return Ok(ScreenAction::Refresh);
+                }
+                _ => {}
+            }
+        }
+
+        // Handle character input for filter (AFTER actions, exclude Space since it's ToggleSelect)
+        if let KeyCode::Char(c) = key.code {
+            // Only handle if no modifiers (except shift for uppercase)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+            {
+                // Space is reserved for ToggleSelect
+                if c != ' ' {
+                    self.state.import_filter.insert_char(c);
+                    // Reset list selection when filter changes
+                    if !self.get_filtered_import_packages().is_empty() {
+                        self.state.import_list_state.select(Some(0));
+                    } else {
+                        self.state.import_list_state.select(None);
+                    }
+                    return Ok(ScreenAction::Refresh);
+                }
+            }
+        }
+
+        Ok(ScreenAction::None)
+    }
+
+    fn get_filtered_import_packages(&self) -> Vec<usize> {
+        let filter = self.state.import_filter.text().to_lowercase();
+        self.state
+            .import_discovered
+            .iter()
+            .enumerate()
+            .filter(|(_, pkg)| {
+                if filter.is_empty() {
+                    return true;
+                }
+                pkg.package_name.to_lowercase().contains(&filter)
+                    || pkg
+                        .binary_name
+                        .as_ref()
+                        .map(|b| b.to_lowercase().contains(&filter))
+                        .unwrap_or(false)
+            })
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    fn import_selected_packages(&mut self, config: &Config) -> Result<ScreenAction> {
+        let source = match self.state.import_source {
+            Some(s) => s,
+            None => return Ok(ScreenAction::Refresh),
+        };
+
+        let manager = source.to_package_manager();
+
+        // Collect packages to import
+        let packages_to_import: Vec<_> = self
+            .state
+            .import_selected
+            .iter()
+            .filter_map(|&idx| self.state.import_discovered.get(idx).cloned())
+            .collect();
+
+        // Add each package
+        for discovered in packages_to_import {
+            let binary_name = discovered
+                .binary_name
+                .clone()
+                .unwrap_or_else(|| discovered.package_name.clone());
+
+            let package = PackageService::create_package(PackageCreationParams {
+                name: &discovered.package_name,
+                description: &discovered.description.unwrap_or_default(),
+                manager: manager.clone(),
+                is_custom: false,
+                package_name: &discovered.package_name,
+                binary_name: &binary_name,
+                install_command: "",
+                existence_check: "",
+                manager_check: "",
+            });
+
+            match PackageService::add_package(&config.repo_path, &config.active_profile, package) {
+                Ok(packages) => {
+                    self.update_packages(packages, &config.active_profile);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to import package {}: {}",
+                        discovered.package_name, e
+                    );
+                }
+            }
+        }
+
+        // Remove imported packages from discovered list (so they don't show again)
+        // Keep the rest for caching
+        let imported_indices: std::collections::HashSet<usize> =
+            self.state.import_selected.iter().copied().collect();
+        self.state.import_discovered = self
+            .state
+            .import_discovered
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !imported_indices.contains(i))
+            .map(|(_, p)| p.clone())
+            .collect();
+
+        // Close popup and trigger check
+        self.state.popup_type = PackagePopupType::None;
+        self.state.import_selected.clear();
+        self.state.import_filter.clear();
+        self.state.is_checking = true;
+
+        Ok(ScreenAction::Refresh)
+    }
 }
 
 // Rendering methods inlined from PackageManagerComponent
@@ -1628,6 +1949,9 @@ impl ManagePackagesScreen {
             }
             PackagePopupType::InstallMissing => {
                 self.render_install_missing_popup(frame, area, config)?;
+            }
+            PackagePopupType::Import => {
+                self.render_import_popup(frame, area, config)?;
             }
             PackagePopupType::None => return Ok(()),
         }
@@ -2126,6 +2450,146 @@ impl ManagePackagesScreen {
             .variant(DialogVariant::Warning)
             .footer(&footer_text);
         frame.render_widget(dialog, area);
+
+        Ok(())
+    }
+
+    fn render_import_popup(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        config: &Config,
+    ) -> Result<()> {
+        use crate::components::Popup;
+
+        let t = theme();
+
+        // Create popup
+        let result = Popup::new()
+            .width(70)
+            .height(80)
+            .dim_background(true)
+            .render(frame, area);
+        let popup_area = result.content_area;
+
+        // Layout: Title, Filter, List, Footer
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Title + source
+                Constraint::Length(3), // Filter input
+                Constraint::Min(10),   // List
+                Constraint::Length(2), // Footer
+            ])
+            .split(popup_area);
+
+        // Title
+        let source_name = self
+            .state
+            .import_source
+            .map(|s| s.display_name())
+            .unwrap_or("System");
+        let title = format!("Import Packages from {}", source_name);
+        let title_para = Paragraph::new(title)
+            .alignment(Alignment::Center)
+            .style(t.title_style());
+        frame.render_widget(title_para, chunks[0]);
+
+        // Filter input
+        let widget = TextInputWidget::new(&self.state.import_filter)
+            .title("Filter")
+            .placeholder("Type to filter packages...")
+            .focused(true);
+        frame.render_text_input_widget(widget, chunks[1]);
+
+        // List of packages
+        let filtered = self.get_filtered_import_packages();
+
+        if self.state.import_loading {
+            // Spinner animation frames
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let spinner = spinner_frames[self.state.import_spinner_tick % spinner_frames.len()];
+
+            // Center the loading message vertically
+            let list_area = chunks[2];
+            let center_y = list_area.y + list_area.height / 2 - 1;
+            let centered_area = Rect::new(list_area.x, center_y, list_area.width, 3);
+
+            let loading_text = format!(
+                "{} Discovering packages...\n\nThis may take a moment",
+                spinner
+            );
+            let loading = Paragraph::new(loading_text)
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(t.text_muted));
+            frame.render_widget(loading, centered_area);
+        } else if self.state.import_discovered.is_empty() {
+            let message = if self.state.import_source.is_none() {
+                "No supported package managers found on this system."
+            } else {
+                "No packages found to import.\nAll installed packages may already be added."
+            };
+            let empty = Paragraph::new(message)
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(t.text_muted));
+            frame.render_widget(empty, chunks[2]);
+        } else if filtered.is_empty() {
+            let empty = Paragraph::new("No packages match the filter.")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(t.text_muted));
+            frame.render_widget(empty, chunks[2]);
+        } else {
+            let items: Vec<ListItem> = filtered
+                .iter()
+                .map(|&idx| {
+                    let pkg = &self.state.import_discovered[idx];
+                    let is_selected = self.state.import_selected.contains(&idx);
+                    let checkbox = if is_selected { "[x]" } else { "[ ]" };
+                    let binary_info = pkg
+                        .binary_name
+                        .as_ref()
+                        .filter(|b| *b != &pkg.package_name)
+                        .map(|b| format!(" ({})", b))
+                        .unwrap_or_default();
+
+                    let text = format!("{} {}{}", checkbox, pkg.package_name, binary_info);
+                    let style = if is_selected {
+                        Style::default().fg(t.success)
+                    } else {
+                        Style::default().fg(t.text)
+                    };
+                    ListItem::new(text).style(style)
+                })
+                .collect();
+
+            let list = List::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(focused_border_style())
+                        .title(format!(
+                            " {} packages ({} selected) ",
+                            filtered.len(),
+                            self.state.import_selected.len()
+                        )),
+                )
+                .highlight_style(Style::default().bg(t.highlight_bg).fg(t.text))
+                .highlight_symbol(crate::styles::LIST_HIGHLIGHT_SYMBOL);
+
+            frame.render_stateful_widget(list, chunks[2], &mut self.state.import_list_state);
+        }
+
+        // Footer
+        let k = |a| config.keymap.get_key_display_for_action(a);
+        let footer_text = format!(
+            "{}: Toggle | {}: All | {}: None | {}: Import | {}: Cancel",
+            k(crate::keymap::Action::ToggleSelect),
+            k(crate::keymap::Action::SelectAll),
+            k(crate::keymap::Action::DeselectAll),
+            k(crate::keymap::Action::Confirm),
+            k(crate::keymap::Action::Cancel)
+        );
+        Footer::render(frame, chunks[3], &footer_text)?;
 
         Ok(())
     }

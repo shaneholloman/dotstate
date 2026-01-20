@@ -66,15 +66,21 @@ impl KeyBinding {
     }
 }
 
-/// Normalize Shift+character: uppercase Char with SHIFT becomes lowercase Char with SHIFT
-/// This handles terminal behavior where Shift+G sends Char('G') + SHIFT instead of Char('g') + SHIFT
+/// Normalize Shift+character for consistent matching.
+///
+/// This handles terminal behavior variations:
+/// - Some terminals send Char('G') + SHIFT for Shift+G
+/// - Some terminals send Char('G') + NONE for Shift+G (just uppercase, no modifier)
+///
+/// We normalize both to Char('g') + SHIFT for consistent matching.
 fn normalize_shift_char(code: KeyCode, modifiers: KeyModifiers) -> (KeyCode, KeyModifiers) {
-    if modifiers.contains(KeyModifiers::SHIFT) {
-        if let KeyCode::Char(c) = code {
-            if c.is_uppercase() {
-                // Convert uppercase to lowercase but keep SHIFT modifier
-                return (KeyCode::Char(c.to_ascii_lowercase()), modifiers);
-            }
+    if let KeyCode::Char(c) = code {
+        if c.is_ascii_uppercase() {
+            // Uppercase letter - treat as shift+lowercase regardless of whether SHIFT modifier is present
+            // This handles terminals that don't send SHIFT modifier with uppercase letters
+            let mut new_modifiers = modifiers;
+            new_modifiers.insert(KeyModifiers::SHIFT);
+            return (KeyCode::Char(c.to_ascii_lowercase()), new_modifiers);
         }
     }
     (code, modifiers)
@@ -287,29 +293,38 @@ mod tests {
 
     #[test]
     fn test_shift_g_matches() {
-        // Test that Shift+G (Char('G') + SHIFT) matches "shift+g" binding
+        // Test that Shift+G matches "shift+g" binding in all terminal variants
         let binding = KeyBinding::new("shift+g", Action::GoToEnd);
+        // Terminal sends Char('G') + SHIFT
         assert!(binding.matches(KeyCode::Char('G'), KeyModifiers::SHIFT));
+        // Terminal sends Char('g') + SHIFT
         assert!(binding.matches(KeyCode::Char('g'), KeyModifiers::SHIFT));
+        // Terminal sends Char('G') + NONE (some terminals don't include SHIFT modifier)
+        assert!(binding.matches(KeyCode::Char('G'), KeyModifiers::NONE));
+        // Lowercase without shift should NOT match
         assert!(!binding.matches(KeyCode::Char('g'), KeyModifiers::NONE));
-        assert!(!binding.matches(KeyCode::Char('G'), KeyModifiers::NONE));
     }
 
     #[test]
     fn test_normalize_shift_char() {
-        // Test normalization function
+        // Test normalization function - uppercase with SHIFT
         let (code, modifiers) = normalize_shift_char(KeyCode::Char('G'), KeyModifiers::SHIFT);
         assert_eq!(code, KeyCode::Char('g'));
         assert_eq!(modifiers, KeyModifiers::SHIFT);
 
-        // Non-uppercase should not be affected
+        // Lowercase with SHIFT should not change case
         let (code, modifiers) = normalize_shift_char(KeyCode::Char('g'), KeyModifiers::SHIFT);
         assert_eq!(code, KeyCode::Char('g'));
         assert_eq!(modifiers, KeyModifiers::SHIFT);
 
-        // Non-shift should not be affected
+        // Uppercase WITHOUT SHIFT should add SHIFT modifier (handles terminals that omit it)
         let (code, modifiers) = normalize_shift_char(KeyCode::Char('G'), KeyModifiers::NONE);
-        assert_eq!(code, KeyCode::Char('G'));
+        assert_eq!(code, KeyCode::Char('g'));
+        assert_eq!(modifiers, KeyModifiers::SHIFT);
+
+        // Lowercase without SHIFT should not be affected
+        let (code, modifiers) = normalize_shift_char(KeyCode::Char('g'), KeyModifiers::NONE);
+        assert_eq!(code, KeyCode::Char('g'));
         assert_eq!(modifiers, KeyModifiers::NONE);
     }
 }

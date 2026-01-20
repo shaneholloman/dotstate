@@ -4,6 +4,7 @@ pub mod layout;
 pub mod list_navigation;
 pub mod move_to_common_validation;
 pub mod package_cache;
+pub mod package_discovery;
 pub mod package_installer;
 pub mod package_manager;
 pub mod path;
@@ -36,3 +37,8 @@ pub use style::{
 pub use symlink_manager::SymlinkManager;
 pub use syntax_theme::get_current_syntax_theme;
 pub use text_input::TextInput;
+
+// Package discovery
+pub use package_discovery::{
+    DiscoveredPackage, DiscoverySource, DiscoveryStatus, PackageDiscoveryService,
+};

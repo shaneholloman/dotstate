@@ -65,6 +65,8 @@ pub enum Action {
     CheckStatus,
     /// Install selected item
     Install,
+    /// Import from external source
+    Import,
     /// Move selected item to common
     Move,
 
@@ -129,6 +131,7 @@ impl Action {
             Action::Sync => "Sync with remote",
             Action::CheckStatus => "Check status",
             Action::Install => "Install",
+            Action::Import => "Import from system",
             Action::Backspace => "Backspace",
             Action::DeleteChar => "Delete character",
             Action::NextTab => "Next field",
@@ -172,7 +175,8 @@ impl Action {
             | Action::Move
             | Action::Sync
             | Action::CheckStatus
-            | Action::Install => "Actions",
+            | Action::Install
+            | Action::Import => "Actions",
 
             Action::Backspace | Action::DeleteChar => "Text Editing",
 

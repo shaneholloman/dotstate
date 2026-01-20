@@ -229,6 +229,16 @@ pub struct PackageManagerState {
     pub delete_index: Option<usize>,
     pub cache: crate::utils::package_cache::PackageCache,
     pub active_profile: String,
+    // Import popup state
+    pub import_discovered: Vec<crate::utils::DiscoveredPackage>,
+    pub import_selected: std::collections::HashSet<usize>, // Selected indices
+    pub import_filter: crate::utils::TextInput,
+    pub import_list_state: ListState,
+    pub import_loading: bool,
+    pub import_source: Option<crate::utils::DiscoverySource>,
+    pub import_discovered_at: Option<std::time::Instant>, // Cache timestamp
+    pub import_spinner_tick: usize,                       // For spinner animation
+    pub import_discovery_rx: Option<std::sync::mpsc::Receiver<crate::utils::DiscoveryStatus>>, // Async discovery
 }
 
 /// Package popup types
@@ -239,6 +249,7 @@ pub enum PackagePopupType {
     Edit,
     Delete,
     InstallMissing, // Prompt to install missing packages
+    Import,         // Import packages from system
 }
 
 /// Package status
@@ -296,6 +307,15 @@ impl Default for PackageManagerState {
             installation_delay_until: None,
             cache: crate::utils::package_cache::PackageCache::default(),
             active_profile: String::new(),
+            import_discovered: Vec::new(),
+            import_selected: std::collections::HashSet::new(),
+            import_filter: crate::utils::TextInput::new(),
+            import_list_state: ListState::default(),
+            import_loading: false,
+            import_source: None,
+            import_discovered_at: None,
+            import_spinner_tick: 0,
+            import_discovery_rx: None,
         }
     }
 }
