@@ -8,23 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Package Manager**: Automatically prompt to install newly added packages if they are not already installed on the system
-- **Package Manager**: Import packages from package managers (Homebrew, Pacman, APT, DNF, Yum, Snap, Cargo, npm, pip, gem) with `Shift+I`. Features tabbed interface to switch between sources with `←/→`, multi-select with filtering, async discovery with spinner animation, and per-source caching (5 minutes)
+- **Package Manager**: Import packages from installed package managers with `Shift+I`. Supports Homebrew, Pacman, APT, DNF, Yum, Snap, Cargo, npm, pip, and gem with a tabbed interface, multi-select filtering, and result caching
+- **Package Manager**: Prompt to install newly added packages if not already installed
 
 ### Changed
-- **Package Manager**: Deleted packages are now removed from the status cache
-- **Package Manager**: Newly added packages always get a fresh status check, ignoring any stale cache entries
+- **Sync**: Now uses git rebase instead of merge when pulling remote changes, resulting in cleaner linear commit history
+- **Package Manager**: Improved status cache management for added/deleted packages
 
 ### Fixed
-- **Sync**: Fixed sync creating unnecessary merge commits when pulling remote changes. Now uses proper git rebase instead of merge, resulting in a clean linear commit history
-- **Sync**: Fixed "cannot push non-fastforwardable reference" error after rebase by properly updating the branch reference to point to the rebased HEAD
-- **Package Manager**: Fixed race condition where successful package installations were incorrectly reported as both success and failure with "Installation thread disconnected" error
-- **Package Manager**: Fixed installation dialogs rendering without background dimming by ensuring main content is rendered first
-- **Package Manager**: Fixed validation errors showing as full-screen dialogs instead of inline in the add/edit popup
-- **Package Manager**: Prevent duplicate packages by validating binary name uniqueness
-- **Package Manager**: Fixed import popup showing blank screen during discovery by deferring discovery until after loading UI renders
-- **Package Manager**: Fixed Space key being captured by filter input in import popup instead of toggling package selection
-- **Keymap**: Fixed Shift+key bindings not working on terminals that send uppercase characters without SHIFT modifier
+- **Sync**: Fixed various issues with rebase workflow (branch reference updates, detached HEAD state)
+- **Package Manager**: Fixed installation reliability and UI rendering issues
+- **Keymap**: Fixed Shift+key bindings on terminals that send uppercase characters
 
 ---
 ## [0.2.10] - 2025-01-19

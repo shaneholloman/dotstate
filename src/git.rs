@@ -849,6 +849,9 @@ impl GitManager {
                 "Update branch after rebase",
             )?;
 
+            // Set HEAD to point to the branch (not detached)
+            self.repo.set_head(&branch_ref)?;
+
             // Make sure working directory is up to date
             self.repo
                 .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
