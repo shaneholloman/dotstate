@@ -7,13 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+## [0.2.13] - 2025-01-21
+
 ### Added
-- **UI**: Toast notification system for non-blocking success confirmations that auto-dismiss after 3 seconds
-- **Manage Files**: Success toasts when adding/removing files from sync and moving files between common/profile
+- **UI**: Toast notification system for non-blocking success confirmations (auto-dismiss after 3 seconds)
 
 ### Changed
 - **UI**: Error messages now display as centered modal dialogs instead of full-screen overlays
-- **UI**: New toast replaces any existing toast (no queue buildup)
 - **Manage Files**: Preview pane is now always visible, improving layout consistency
 - **Package Manager**: Import tabs now use ratatui's built-in Tabs widget for consistent styling
 
