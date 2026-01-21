@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Manage Files**: Preview pane is now always visible, improving layout consistency
 - **Package Manager**: Import tabs now use ratatui's built-in Tabs widget for consistent styling
 
+### Fixed
+- **Move to Common**: Fixed bug where confirming deletion of files with different content in other profiles did not actually delete them
+
 ---
 ## [0.2.12] - 2025-01-20
 

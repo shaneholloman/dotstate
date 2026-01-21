@@ -998,11 +998,27 @@ impl DotfileSelectionScreen {
                             }
 
                             // Get profiles to cleanup from validation
+                            // Include both auto-resolvable (same content) AND forced (different content) profiles
                             let profiles_to_cleanup = self
                                 .state
                                 .move_validation
                                 .as_ref()
-                                .map(|v| v.profiles_to_cleanup.clone())
+                                .map(|v| {
+                                    let mut profiles = v.profiles_to_cleanup.clone();
+                                    // When user confirms/forces, also include profiles with different content
+                                    for conflict in &v.conflicts {
+                                        if let crate::utils::MoveToCommonConflict::DifferentContentInProfile {
+                                            profile_name,
+                                            ..
+                                        } = conflict
+                                        {
+                                            if !profiles.contains(profile_name) {
+                                                profiles.push(profile_name.clone());
+                                            }
+                                        }
+                                    }
+                                    profiles
+                                })
                                 .unwrap_or_default();
 
                             let action = ScreenAction::MoveToCommon {
@@ -1052,11 +1068,27 @@ impl DotfileSelectionScreen {
                         }
 
                         // Get profiles to cleanup from validation
+                        // Include both auto-resolvable (same content) AND forced (different content) profiles
                         let profiles_to_cleanup = self
                             .state
                             .move_validation
                             .as_ref()
-                            .map(|v| v.profiles_to_cleanup.clone())
+                            .map(|v| {
+                                let mut profiles = v.profiles_to_cleanup.clone();
+                                // When user forces, also include profiles with different content
+                                for conflict in &v.conflicts {
+                                    if let crate::utils::MoveToCommonConflict::DifferentContentInProfile {
+                                        profile_name,
+                                        ..
+                                    } = conflict
+                                    {
+                                        if !profiles.contains(profile_name) {
+                                            profiles.push(profile_name.clone());
+                                        }
+                                    }
+                                }
+                                profiles
+                            })
                             .unwrap_or_default();
 
                         let action = ScreenAction::MoveToCommon {
