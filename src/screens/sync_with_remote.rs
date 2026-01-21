@@ -418,6 +418,14 @@ impl Screen for SyncWithRemoteScreen {
                 if let Some(action) = ctx.config.keymap.get_action(key.code, key.modifiers) {
                     match action {
                         Action::Confirm => {
+                            // Close result popup if showing
+                            if self.state.show_result_popup {
+                                self.state.show_result_popup = false;
+                                self.state.sync_result = None;
+                                self.state.pulled_changes_count = None;
+                                return Ok(ScreenAction::Navigate(ScreenId::MainMenu));
+                            }
+
                             // Start pushing if not already pushing and we have changes (local or remote)
                             let has_remote_changes = if let Some(status) = &self.state.git_status {
                                 status.ahead > 0 || status.behind > 0

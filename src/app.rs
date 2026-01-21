@@ -1157,14 +1157,29 @@ impl App {
                 is_synced,
             } => {
                 let state = self.dotfile_selection_screen.get_state_mut();
-                let filename = state
-                    .dotfiles
-                    .get(file_index)
+                let dotfile = state.dotfiles.get(file_index);
+                let filename = dotfile
                     .map(|d| d.relative_path.to_string_lossy().to_string())
                     .unwrap_or_default();
+                let is_common = dotfile.map(|d| d.is_common).unwrap_or(false);
+
                 if is_synced {
-                    Self::remove_file_from_sync_with_state(&self.config, state, file_index)?;
-                    self.toast_manager.success(format!("Removed: {}", filename));
+                    // Check if trying to unsync a common file
+                    if is_common {
+                        self.dialog_state = Some(DialogState {
+                            title: "Cannot Unsync Common File".to_string(),
+                            content: format!(
+                                "\"{}\" is a common file shared across all profiles.\n\n\
+                                To remove it from sync, first move it to your profile \
+                                using the 'Move to Profile' action, then unsync it.",
+                                filename
+                            ),
+                            variant: DialogVariant::Warning,
+                        });
+                    } else {
+                        Self::remove_file_from_sync_with_state(&self.config, state, file_index)?;
+                        self.toast_manager.success(format!("Removed: {}", filename));
+                    }
                 } else {
                     Self::add_file_to_sync_with_state(&self.config, state, file_index)?;
                     // Check if there was an error (status_message was set)
@@ -1301,12 +1316,36 @@ impl App {
                                 info!("Moved {} from common to profile", relative_path);
                                 // Refresh list to update UI
                                 Self::scan_dotfiles_into(&self.config, state)?;
-                                // Try to maintain selection
+
+                                // Verify the file is correctly marked as profile (not common)
                                 if let Some(idx) = state.dotfiles.iter().position(|d| {
                                     d.relative_path.to_string_lossy() == relative_path
                                 }) {
+                                    // Extract flags before potentially mutating
+                                    let file_is_common = state.dotfiles[idx].is_common;
+                                    let file_is_synced = state.dotfiles[idx].synced;
+
+                                    if file_is_common {
+                                        // File found but still marked as common - force fix
+                                        warn!(
+                                            "File {} was moved to profile but still detected as common after scan. Forcing refresh.",
+                                            relative_path
+                                        );
+                                        state.dotfiles[idx].is_common = false;
+                                    }
+                                    // Ensure it's still marked as synced
+                                    if !file_is_synced {
+                                        state.dotfiles[idx].synced = true;
+                                        state.selected_for_sync.insert(idx);
+                                    }
                                     state.dotfile_list_state.select(Some(idx));
+                                } else {
+                                    warn!(
+                                        "File {} not found in dotfiles list after move to profile",
+                                        relative_path
+                                    );
                                 }
+
                                 // Show success toast
                                 self.toast_manager
                                     .success(format!("Moved to profile: {}", relative_path));
@@ -1338,12 +1377,31 @@ impl App {
                                 info!("Moved {} to common", relative_path);
                                 // Refresh list to update UI
                                 Self::scan_dotfiles_into(&self.config, state)?;
-                                // Try to maintain selection
+
+                                // Verify the file is correctly marked as common
                                 if let Some(idx) = state.dotfiles.iter().position(|d| {
                                     d.relative_path.to_string_lossy() == relative_path
                                 }) {
+                                    let dotfile = &state.dotfiles[idx];
+                                    if !dotfile.is_common {
+                                        // File found but not marked as common - force fix
+                                        warn!(
+                                            "File {} was moved to common but not detected as common after scan. Forcing refresh.",
+                                            relative_path
+                                        );
+                                        // Force the flags and selected_for_sync
+                                        state.dotfiles[idx].is_common = true;
+                                        state.dotfiles[idx].synced = true;
+                                        state.selected_for_sync.insert(idx);
+                                    }
                                     state.dotfile_list_state.select(Some(idx));
+                                } else {
+                                    warn!(
+                                        "File {} not found in dotfiles list after move to common",
+                                        relative_path
+                                    );
                                 }
+
                                 // Show success toast
                                 self.toast_manager
                                     .success(format!("Moved to common: {}", relative_path));

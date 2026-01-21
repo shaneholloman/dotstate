@@ -339,6 +339,15 @@ impl SyncService {
         let dotfile_names = get_default_dotfile_paths();
         let mut found = file_manager.scan_dotfiles(&dotfile_names);
 
+        debug!(
+            "Found {} dotfiles from scan. Paths: {:?}",
+            found.len(),
+            found
+                .iter()
+                .map(|d| d.relative_path.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        );
+
         // Load the manifest to get synced files and common files
         let manifest = ProfileManifest::load_or_backfill(&config.repo_path)?;
 
@@ -354,14 +363,18 @@ impl SyncService {
                 .collect();
 
         // Also check if any found files are common files
-        let common_files_set: HashSet<String> = manifest
-            .get_common_files()
+        let common_files_raw = manifest.get_common_files();
+        debug!("Common files from manifest (raw): {:?}", common_files_raw);
+
+        let common_files_set: HashSet<String> = common_files_raw
             .iter()
             .map(|p| {
                 let p = p.replace('\\', "/");
                 p.strip_prefix("./").unwrap_or(&p).to_string()
             })
             .collect();
+
+        debug!("Common files set (normalized): {:?}", common_files_set);
 
         for dotfile in &mut found {
             let rel_raw = dotfile.relative_path.to_string_lossy().replace('\\', "/");
@@ -371,6 +384,11 @@ impl SyncService {
                 dotfile.synced = true;
             }
             if common_files_set.contains(&rel) {
+                debug!(
+                    "Marking file as common: {} (normalized: {})",
+                    dotfile.relative_path.display(),
+                    rel
+                );
                 dotfile.is_common = true;
                 dotfile.synced = true; // Common files are always synced
             }
@@ -432,32 +450,37 @@ impl SyncService {
             });
         }
 
-        // Add common files from manifest
+        // Add common files from manifest (or mark existing files as common)
         let common_files = manifest.get_common_files();
         for common_path in common_files {
-            // Skip if already in the list (shouldn't happen, but be safe)
-            if found.iter().any(|d| {
+            let c_path_raw = common_path.replace('\\', "/");
+            let c_path = c_path_raw.strip_prefix("./").unwrap_or(&c_path_raw);
+
+            // Check if already in the list
+            let existing_idx = found.iter().position(|d| {
                 let d_path_raw = d.relative_path.to_string_lossy().replace('\\', "/");
                 let d_path = d_path_raw.strip_prefix("./").unwrap_or(&d_path_raw);
-
-                let c_path_raw = common_path.replace('\\', "/");
-                let c_path = c_path_raw.strip_prefix("./").unwrap_or(&c_path_raw);
-
                 d_path == c_path
-            }) {
-                continue;
-            }
-
-            let full_path = home_dir.join(common_path);
-            let relative_path = PathBuf::from(common_path);
-
-            found.push(Dotfile {
-                original_path: full_path,
-                relative_path,
-                synced: true, // Common files are always synced
-                description: None,
-                is_common: true,
             });
+
+            if let Some(idx) = existing_idx {
+                // File already in list - mark it as common
+                debug!("File {} already in list, marking as common", common_path);
+                found[idx].is_common = true;
+                found[idx].synced = true;
+            } else {
+                // File not in list - add it
+                let full_path = home_dir.join(common_path);
+                let relative_path = PathBuf::from(common_path);
+
+                found.push(Dotfile {
+                    original_path: full_path,
+                    relative_path,
+                    synced: true, // Common files are always synced
+                    description: None,
+                    is_common: true,
+                });
+            }
         }
 
         // Sort by relative path for consistent display

@@ -1427,6 +1427,11 @@ impl GitManager {
             Err(_) => Ok(None),
         }
     }
+
+    /// Check if a remote exists
+    pub fn has_remote(&self, remote_name: &str) -> bool {
+        self.repo.find_remote(remote_name).is_ok()
+    }
 }
 
 /// Validation result for local repository

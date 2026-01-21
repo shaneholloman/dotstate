@@ -149,29 +149,37 @@ impl GitService {
             }
         }
 
-        // 2. Fetch and check ahead/behind (if configured for remote)
-        // Skip for Local mode or if GitHub token is missing for GitHub mode
-        let should_fetch = match config.repo_mode {
-            RepoMode::Local => false,
-            RepoMode::GitHub => config.get_github_token().is_some(),
-        };
+        // 2. Fetch and check ahead/behind (if repo has a remote)
+        // For GitHub mode, require token. For Local mode, try without token (SSH or public repo).
+        let branch = git_mgr
+            .get_current_branch()
+            .unwrap_or_else(|| config.default_branch.clone());
 
-        if should_fetch {
-            let branch = git_mgr
-                .get_current_branch()
-                .unwrap_or_else(|| config.default_branch.clone());
+        // Check if repo has a remote configured
+        let has_remote = git_mgr.has_remote("origin");
 
-            let token = config.get_github_token();
+        if has_remote {
+            let token = match config.repo_mode {
+                RepoMode::Local => None, // Local repos use SSH or no auth
+                RepoMode::GitHub => config.get_github_token(),
+            };
 
-            // Try to fetch
-            if let Err(e) = git_mgr.fetch("origin", &branch, token.as_deref()) {
-                warn!("Background fetch failed: {}", e);
-                // Don't fail the whole status check, just record error
-                // We can still return uncommitted changes info
-                // status.error = Some(format!("Fetch failed: {}", e));
+            // Only require token for GitHub mode
+            let should_fetch = match config.repo_mode {
+                RepoMode::Local => true, // Always try for local repos with remotes
+                RepoMode::GitHub => token.is_some(),
+            };
+
+            if should_fetch {
+                // Try to fetch
+                if let Err(e) = git_mgr.fetch("origin", &branch, token.as_deref()) {
+                    warn!("Background fetch failed: {}", e);
+                    // Don't fail the whole status check, just record error
+                    // We can still return uncommitted changes info
+                }
             }
 
-            // Check ahead/behind counts
+            // Check ahead/behind counts (even if fetch failed, we might have cached data)
             match git_mgr.get_ahead_behind("origin", &branch) {
                 Ok((ahead, behind)) => {
                     status.ahead = ahead;
