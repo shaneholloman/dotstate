@@ -17,7 +17,7 @@ use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Tabs, Wrap};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -2720,6 +2720,7 @@ impl ManagePackagesScreen {
     ) -> Result<()> {
         use crate::components::Popup;
         use crate::ui::ImportFocus;
+        use ratatui::symbols;
 
         let t = theme();
 
@@ -2734,15 +2735,14 @@ impl ManagePackagesScreen {
         // Determine if we should show tabs
         let show_tabs = self.state.import_available_sources.len() > 1;
 
-        // Layout: Title, Tabs (optional), Filter, List, Footer
-        let chunks = if show_tabs {
+        // Layout: Title, Tabs (optional), Content (bordered), Footer
+        let outer_chunks = if show_tabs {
             Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(2), // Title
-                    Constraint::Length(2), // Tabs
-                    Constraint::Length(3), // Filter input
-                    Constraint::Min(10),   // List
+                    Constraint::Length(1), // Tabs
+                    Constraint::Min(10),   // Content (bordered block with filter + list)
                     Constraint::Length(2), // Footer
                 ])
                 .split(popup_area)
@@ -2752,8 +2752,7 @@ impl ManagePackagesScreen {
                 .constraints([
                     Constraint::Length(2), // Title
                     Constraint::Length(0), // No tabs
-                    Constraint::Length(3), // Filter input
-                    Constraint::Min(10),   // List
+                    Constraint::Min(10),   // Content (bordered block with filter + list)
                     Constraint::Length(2), // Footer
                 ])
                 .split(popup_area)
@@ -2763,12 +2762,31 @@ impl ManagePackagesScreen {
         let title = Paragraph::new("Import System Packages")
             .alignment(Alignment::Center)
             .style(t.title_style());
-        frame.render_widget(title, chunks[0]);
+        frame.render_widget(title, outer_chunks[0]);
 
         // Tabs (only if we have multiple sources)
         if show_tabs {
-            self.render_import_tabs(frame, chunks[1]);
+            self.render_import_tabs(frame, outer_chunks[1]);
         }
+
+        // Content block with border (like ratatui tabs example)
+        let content_border_style = self.import_content_border_style();
+        let content_block = Block::bordered()
+            .border_set(symbols::border::PROPORTIONAL_TALL)
+            .border_style(content_border_style)
+            .padding(Padding::horizontal(1));
+
+        let content_inner = content_block.inner(outer_chunks[2]);
+        frame.render_widget(content_block, outer_chunks[2]);
+
+        // Split content area into filter and list
+        let content_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Filter input
+                Constraint::Min(5),    // List
+            ])
+            .split(content_inner);
 
         // Filter input
         let filter_focused = self.state.import_focus == ImportFocus::Filter;
@@ -2776,77 +2794,69 @@ impl ManagePackagesScreen {
             .title("Filter")
             .placeholder("Type to filter packages...")
             .focused(filter_focused);
-        frame.render_text_input_widget(widget, chunks[2]);
+        frame.render_text_input_widget(widget, content_chunks[0]);
 
         // List (or loading state)
-        self.render_import_list(frame, chunks[3]);
+        self.render_import_list(frame, content_chunks[1]);
 
         // Footer
-        self.render_import_footer(frame, chunks[4], config)?;
+        self.render_import_footer(frame, outer_chunks[3], config)?;
 
         Ok(())
     }
 
     fn render_import_tabs(&self, frame: &mut Frame, area: Rect) {
         use crate::ui::ImportFocus;
-        use ratatui::text::Span;
 
         let t = theme();
-        let tabs_focused = self.state.import_focus == ImportFocus::Tabs;
 
         if self.state.import_available_sources.is_empty() {
             return;
         }
 
-        // Build tab spans with visual indicators
-        let mut spans = Vec::new();
-        for (i, source) in self.state.import_available_sources.iter().enumerate() {
-            let name = source.display_name();
-            let is_active = i == self.state.import_active_tab;
+        let tabs_focused = self.state.import_focus == ImportFocus::Tabs;
 
-            // Check if this source has cached data
-            let has_cache = self.state.import_source_cache.contains_key(source);
-            let cache_indicator = if has_cache { "●" } else { "○" };
-
-            if is_active {
-                // Active tab: highlighted with brackets
-                spans.push(Span::styled(
-                    format!(" [{}] {} ", cache_indicator, name),
-                    Style::default()
-                        .fg(if tabs_focused {
-                            t.text_emphasis
-                        } else {
-                            t.primary
-                        })
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                // Inactive tab
-                spans.push(Span::styled(
-                    format!("  {}  {} ", cache_indicator, name),
-                    Style::default().fg(t.text_muted),
-                ));
-            }
-
-            // Add separator between tabs (except after last)
-            if i < self.state.import_available_sources.len() - 1 {
-                spans.push(Span::styled(" │ ", Style::default().fg(t.border)));
-            }
-        }
-
-        // Add focus hint if tabs are focused
-        if tabs_focused {
-            spans.push(Span::styled(
-                "  ← →",
-                Style::default()
+        // Build tab titles with padding and background color (like ratatui example)
+        let titles: Vec<Line> = self
+            .state
+            .import_available_sources
+            .iter()
+            .map(|source| {
+                Line::from(format!("  {}  ", source.display_name()))
                     .fg(t.text_muted)
-                    .add_modifier(Modifier::DIM),
-            ));
-        }
+                    .bg(t.dim_bg)
+            })
+            .collect();
 
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(line).alignment(Alignment::Center);
-        frame.render_widget(paragraph, area);
+        // Highlight style for selected tab - brighter background when focused
+        let highlight_style = if tabs_focused {
+            Style::default().fg(t.background).bg(t.primary)
+        } else {
+            Style::default().fg(t.text).bg(t.text_muted)
+        };
+
+        // Build the tabs widget (like ratatui example)
+        let tabs = Tabs::new(titles)
+            .select(self.state.import_active_tab)
+            .highlight_style(highlight_style)
+            .padding("", "")
+            .divider(" ");
+
+        frame.render_widget(tabs, area);
+    }
+
+    /// Get the border style for import content areas (matches selected tab)
+    fn import_content_border_style(&self) -> Style {
+        use crate::ui::ImportFocus;
+
+        let t = theme();
+        let tabs_focused = self.state.import_focus == ImportFocus::Tabs;
+
+        if tabs_focused {
+            Style::default().fg(t.primary)
+        } else {
+            Style::default().fg(t.border)
+        }
     }
 
     fn render_import_list(&mut self, frame: &mut Frame, area: Rect) {
@@ -2967,16 +2977,30 @@ impl ManagePackagesScreen {
     }
 
     fn render_import_footer(&self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
+        use crate::ui::ImportFocus;
+
         let k = |a| config.keymap.get_key_display_for_action(a);
-        let footer_text = if self.state.import_available_sources.len() > 1 {
-            format!(
-                "{}: Toggle | Tab: Focus | {}: All | {}: None | {}: Import | {}: Cancel",
-                k(crate::keymap::Action::ToggleSelect),
-                k(crate::keymap::Action::SelectAll),
-                k(crate::keymap::Action::DeselectAll),
-                k(crate::keymap::Action::Confirm),
-                k(crate::keymap::Action::Cancel),
-            )
+        let has_multiple_sources = self.state.import_available_sources.len() > 1;
+        let tabs_focused = self.state.import_focus == ImportFocus::Tabs;
+
+        let footer_text = if has_multiple_sources {
+            if tabs_focused {
+                // When tabs are focused, show arrow navigation hint
+                format!(
+                    "← →: Switch Tab | Tab: Focus | {}: Import | {}: Cancel",
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Cancel),
+                )
+            } else {
+                format!(
+                    "{}: Toggle | Tab: Focus | {}: All | {}: None | {}: Import | {}: Cancel",
+                    k(crate::keymap::Action::ToggleSelect),
+                    k(crate::keymap::Action::SelectAll),
+                    k(crate::keymap::Action::DeselectAll),
+                    k(crate::keymap::Action::Confirm),
+                    k(crate::keymap::Action::Cancel),
+                )
+            }
         } else {
             format!(
                 "{}: Toggle | {}: All | {}: None | {}: Import | {}: Cancel",
