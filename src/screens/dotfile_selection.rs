@@ -3,7 +3,6 @@
 //! This screen handles selecting and managing dotfiles for syncing.
 //! It owns all state and rendering logic (self-contained screen).
 
-use crate::components::dialog::{Dialog, DialogVariant};
 use crate::components::file_preview::FilePreview;
 use crate::components::footer::Footer;
 use crate::components::header::Header;
@@ -17,6 +16,7 @@ use crate::utils::{
     create_split_layout, create_standard_layout, focused_border_style, unfocused_border_style,
     TextInput,
 };
+use crate::widgets::{Dialog, DialogVariant};
 use crate::widgets::{TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -268,14 +268,18 @@ impl DotfileSelectionScreen {
             KeyCode::Enter => {
                 let path_str = self.state.custom_file_input.text_trimmed();
                 if path_str.is_empty() {
-                    self.state.status_message =
-                        Some("Error: File path cannot be empty".to_string());
+                    return Ok(ScreenAction::ShowMessage {
+                        title: "Invalid Path".to_string(),
+                        content: "File path cannot be empty".to_string(),
+                    });
                 } else {
                     let full_path = crate::utils::expand_path(path_str);
 
                     if !full_path.exists() {
-                        self.state.status_message =
-                            Some(format!("Error: File does not exist: {:?}", full_path));
+                        return Ok(ScreenAction::ShowMessage {
+                            title: "File Not Found".to_string(),
+                            content: format!("File does not exist: {:?}", full_path),
+                        });
                     } else {
                         // Calculate relative path
                         let home_dir = crate::utils::get_home_dir();
@@ -293,12 +297,14 @@ impl DotfileSelectionScreen {
                         let repo_path = &config.repo_path;
                         let (is_safe, reason) = crate::utils::is_safe_to_add(&full_path, repo_path);
                         if !is_safe {
-                            self.state.status_message = Some(format!(
-                                "Error: {}. Path: {}",
-                                reason.unwrap_or_else(|| "Cannot add this file".to_string()),
-                                full_path.display()
-                            ));
-                            return Ok(ScreenAction::None);
+                            return Ok(ScreenAction::ShowMessage {
+                                title: "Cannot Add File".to_string(),
+                                content: format!(
+                                    "{}.\n\nPath: {}",
+                                    reason.unwrap_or_else(|| "Cannot add this file".to_string()),
+                                    full_path.display()
+                                ),
+                            });
                         }
 
                         // Show confirmation modal
@@ -396,9 +402,7 @@ impl DotfileSelectionScreen {
                     }
                 }
                 Action::Confirm => {
-                    if self.state.status_message.is_some() {
-                        self.state.status_message = None;
-                    } else if let Some(idx) = self.state.dotfile_list_state.selected() {
+                    if let Some(idx) = self.state.dotfile_list_state.selected() {
                         if idx < display_items.len() {
                             if let DisplayItem::File(file_idx) = &display_items[idx] {
                                 let is_synced = self.state.selected_for_sync.contains(file_idx);
@@ -641,12 +645,9 @@ impl DotfileSelectionScreen {
         theme: &Theme,
     ) -> Result<()> {
         // Split content into left (list + description) and right (preview)
-        let (left_area, preview_area_opt) = if self.state.status_message.is_some() {
-            (content_chunk, None::<Rect>)
-        } else {
-            let content_chunks = create_split_layout(content_chunk, &[50, 50]);
-            (content_chunks[0], Some(content_chunks[1]))
-        };
+        let content_chunks = create_split_layout(content_chunk, &[50, 50]);
+        let left_area = content_chunks[0];
+        let preview_area = content_chunks[1];
         let icons = crate::icons::Icons::from_config(config);
         // Split left area into list (top) and description (bottom)
         let left_chunks = Layout::default()
@@ -862,58 +863,31 @@ impl DotfileSelectionScreen {
         }
 
         // Preview panel
-        if let Some(preview_rect) = preview_area_opt {
-            if let Some(dotfile) = selected_dotfile {
-                let is_focused = self.state.focus == DotfileSelectionFocus::Preview;
-                let preview_title = format!("Preview: {}", dotfile.relative_path.to_string_lossy());
+        if let Some(dotfile) = selected_dotfile {
+            let is_focused = self.state.focus == DotfileSelectionFocus::Preview;
+            let preview_title = format!("Preview: {}", dotfile.relative_path.to_string_lossy());
 
-                FilePreview::render(
-                    frame,
-                    preview_rect,
-                    &dotfile.original_path,
-                    self.state.preview_scroll,
-                    is_focused,
-                    Some(&preview_title),
-                    None,
-                    syntax_set,
-                    theme,
-                    config,
-                )?;
-            } else {
-                let empty_preview = Paragraph::new("No file selected").block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Preview ")
-                        .border_type(ui_theme().border_type(false))
-                        .title_alignment(Alignment::Center),
-                );
-                frame.render_widget(empty_preview, preview_rect);
-            }
-        }
-
-        // Status message overlay
-        if let Some(status) = &self.state.status_message {
-            let status_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(10)])
-                .split(content_chunk);
-
-            frame.render_widget(Clear, status_chunks[1]);
-            frame.render_widget(
-                Block::default().style(Style::default().bg(t.background)),
-                status_chunks[1],
+            FilePreview::render(
+                frame,
+                preview_area,
+                &dotfile.original_path,
+                self.state.preview_scroll,
+                is_focused,
+                Some(&preview_title),
+                None,
+                syntax_set,
+                theme,
+                config,
+            )?;
+        } else {
+            let empty_preview = Paragraph::new("No file selected").block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Preview ")
+                    .border_type(ui_theme().border_type(false))
+                    .title_alignment(Alignment::Center),
             );
-
-            let status_block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(ui_theme().border_type(false))
-                .title(" Sync Summary ")
-                .title_alignment(Alignment::Center)
-                .style(Style::default().bg(t.background));
-            let status_para = Paragraph::new(status.as_str())
-                .block(status_block)
-                .wrap(Wrap { trim: true });
-            frame.render_widget(status_para, status_chunks[1]);
+            frame.render_widget(empty_preview, preview_area);
         }
 
         // Footer
@@ -922,44 +896,39 @@ impl DotfileSelectionScreen {
         } else {
             "OFF"
         };
-        let footer_text = if self.state.status_message.is_some() {
-            let k = |a| config.keymap.get_key_display_for_action(a);
-            format!("{}: Continue", k(crate::keymap::Action::Confirm))
-        } else {
-            let k = |a| config.keymap.get_key_display_for_action(a);
+        let k = |a| config.keymap.get_key_display_for_action(a);
 
-            // Determine move action text based on selected file
-            let display_items = self.get_display_items(&config.active_profile);
-            let move_text = self
-                .state
-                .dotfile_list_state
-                .selected()
-                .and_then(|idx| display_items.get(idx))
-                .and_then(|item| match item {
-                    DisplayItem::File(file_idx) => self.state.dotfiles.get(*file_idx),
-                    _ => None,
-                })
-                .map(|dotfile| {
-                    if dotfile.is_common {
-                        "Move to Profile"
-                    } else {
-                        "Move to Common"
-                    }
-                })
-                .unwrap_or("Move");
+        // Determine move action text based on selected file
+        let display_items = self.get_display_items(&config.active_profile);
+        let move_text = self
+            .state
+            .dotfile_list_state
+            .selected()
+            .and_then(|idx| display_items.get(idx))
+            .and_then(|item| match item {
+                DisplayItem::File(file_idx) => self.state.dotfiles.get(*file_idx),
+                _ => None,
+            })
+            .map(|dotfile| {
+                if dotfile.is_common {
+                    "Move to Profile"
+                } else {
+                    "Move to Common"
+                }
+            })
+            .unwrap_or("Move");
 
-            format!(
-                "Tab: Focus | {}: Navigate | Space/{}: Toggle | {}: {} | {}: Add Custom | {}: Backup ({}) | {}: Back",
-                 config.keymap.navigation_display(),
-                 k(crate::keymap::Action::Confirm),
-                 k(crate::keymap::Action::Move),
-                 move_text,
-                 k(crate::keymap::Action::Create),
-                 k(crate::keymap::Action::ToggleBackup),
-                 backup_status,
-                 k(crate::keymap::Action::Quit)
-            )
-        };
+        let footer_text = format!(
+            "Tab: Focus | {}: Navigate | Space/{}: Toggle | {}: {} | {}: Add Custom | {}: Backup ({}) | {}: Back",
+             config.keymap.navigation_display(),
+             k(crate::keymap::Action::Confirm),
+             k(crate::keymap::Action::Move),
+             move_text,
+             k(crate::keymap::Action::Create),
+             k(crate::keymap::Action::ToggleBackup),
+             backup_status,
+             k(crate::keymap::Action::Quit)
+        );
 
         let _ = Footer::render(frame, footer_chunk, &footer_text)?;
 

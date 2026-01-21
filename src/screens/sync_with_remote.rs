@@ -114,7 +114,7 @@ impl SyncWithRemoteScreen {
         area: Rect,
         config: &crate::config::Config,
     ) -> Result<()> {
-        use crate::components::dialog::{Dialog, DialogVariant};
+        use crate::widgets::{Dialog, DialogVariant};
 
         let result_text = self
             .state

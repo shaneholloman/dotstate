@@ -554,7 +554,7 @@ impl ManageProfilesScreen {
 
     /// Render switch profile confirmation popup
     fn render_switch_popup(&self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
-        use crate::components::dialog::{Dialog, DialogVariant};
+        use crate::widgets::{Dialog, DialogVariant};
 
         let selected_idx = self.state.list_state.selected();
         let current_profile = self
@@ -664,7 +664,7 @@ impl ManageProfilesScreen {
 
     /// Render delete profile confirmation popup
     fn render_delete_popup(&self, frame: &mut Frame, area: Rect, config: &Config) -> Result<()> {
-        use crate::components::dialog::{Dialog, DialogVariant};
+        use crate::widgets::{Dialog, DialogVariant};
 
         let icons = crate::icons::Icons::from_config(config);
         let selected_idx = self.state.list_state.selected();

@@ -53,7 +53,7 @@ impl ProfileSelectionScreen {
 
     /// Render the exit warning popup.
     fn render_exit_warning(&self, frame: &mut Frame, area: Rect, config: &Config) {
-        use crate::components::dialog::{Dialog, DialogVariant};
+        use crate::widgets::{Dialog, DialogVariant};
 
         let icons = crate::icons::Icons::from_config(config);
         let warning_text = format!(

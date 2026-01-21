@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **UI**: Toast notification system for non-blocking success confirmations that auto-dismiss after 3 seconds
+- **Manage Files**: Success toasts when adding/removing files from sync and moving files between common/profile
+
+### Changed
+- **UI**: Error messages now display as centered modal dialogs instead of full-screen overlays
+- **UI**: New toast replaces any existing toast (no queue buildup)
+- **Manage Files**: Preview pane is now always visible, improving layout consistency
+
 ---
 ## [0.2.12] - 2025-01-20
 

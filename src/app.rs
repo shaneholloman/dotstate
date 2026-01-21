@@ -1,4 +1,3 @@
-use crate::components::{Component, ComponentAction, MessageComponent};
 use crate::config::{Config, GitHubConfig};
 use crate::git::GitManager;
 use crate::github::GitHubClient;
@@ -8,6 +7,7 @@ use crate::screens::{
 };
 use crate::tui::Tui;
 use crate::ui::{GitHubAuthStep, GitHubSetupStep, Screen, UiState};
+use crate::widgets::{Dialog, DialogVariant, Toast, ToastManager};
 
 use crate::screens::dotfile_selection::DotfileSelectionState;
 use anyhow::{Context, Result};
@@ -52,6 +52,14 @@ fn list_files_in_profile_dir(profile_dir: &Path, _repo_path: &Path) -> Result<Ve
     Ok(entries)
 }
 
+/// State for showing a modal dialog
+#[derive(Debug, Clone)]
+struct DialogState {
+    title: String,
+    content: String,
+    variant: DialogVariant,
+}
+
 /// Main application state
 pub struct App {
     config: Config,
@@ -71,7 +79,10 @@ pub struct App {
     manage_profiles_screen: ManageProfilesScreen,
     manage_packages_screen: ManagePackagesScreen,
     settings_screen: crate::screens::SettingsScreen,
-    message_component: Option<MessageComponent>,
+    /// Modal dialog state (for error messages, confirmations)
+    dialog_state: Option<DialogState>,
+    /// Toast notification manager for non-blocking notifications
+    toast_manager: ToastManager,
     // Syntax highlighting assets
     syntax_set: SyntaxSet,
     theme_set: syntect::highlighting::ThemeSet,
@@ -128,7 +139,8 @@ impl App {
             manage_packages_screen: ManagePackagesScreen::new(),
             settings_screen: crate::screens::SettingsScreen::new(),
 
-            message_component: None,
+            dialog_state: None,
+            toast_manager: ToastManager::new(),
             syntax_set,
             theme_set,
             has_checked_updates: false,
@@ -151,22 +163,17 @@ impl App {
         if !self.config.profile_activated && self.config.is_repo_configured() {
             warn!("Profile '{}' is deactivated", self.config.active_profile);
             // Profile is deactivated - show warning message
-            self.message_component = Some(
-                MessageComponent::new(
-                    "Profile Deactivated".to_string(),
-                    format!(
-                        "⚠️  Your profile '{}' is currently deactivated.\n\n\
-                        Your symlinks have been removed and original files restored.\n\n\
-                        To reactivate your profile and restore symlinks, run:\n\
-                        \n\
-                        \x1b[1m  dotstate activate\x1b[0m\n\n\
-                        Or press any key to continue to the main menu.",
-                        self.config.active_profile
-                    ),
-                    Screen::MainMenu,
-                )
-                .with_config(self.config.clone()),
-            );
+            self.dialog_state = Some(DialogState {
+                title: "Profile Deactivated".to_string(),
+                content: format!(
+                    "Your profile '{}' is currently deactivated.\n\n\
+                    Your symlinks have been removed and original files restored.\n\n\
+                    To reactivate your profile and restore symlinks, run:\n\n\
+                    dotstate activate",
+                    self.config.active_profile
+                ),
+                variant: DialogVariant::Warning,
+            });
         }
 
         // Always start with main menu (which is now the welcome screen)
@@ -178,6 +185,9 @@ impl App {
         // Main event loop
         loop {
             self.draw()?;
+
+            // Tick toast manager to remove expired toasts
+            self.toast_manager.tick();
 
             // Start async update check after first render (non-blocking for UI)
             if !self.has_checked_updates
@@ -435,24 +445,19 @@ impl App {
             let area = frame.area();
             match self.ui_state.current_screen {
                 Screen::MainMenu => {
-                    // Show deactivation warning message if present
-                    if let Some(ref mut msg_component) = self.message_component {
-                        let _ = msg_component.render(frame, area);
-                    } else {
-                        // Pass config to main menu for stats
-                        self.main_menu_screen.update_config(config_clone.clone());
-                        // Router pattern - delegate to screen's render method
-                        use crate::screens::{RenderContext, Screen as ScreenTrait};
-                        let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
-                        let ctx = RenderContext::new(
-                            &config_clone,
-                            &self.syntax_set,
-                            &self.theme_set,
-                            syntax_theme,
-                        );
-                        if let Err(e) = self.main_menu_screen.render(frame, area, &ctx) {
-                            error!("Failed to render main menu screen: {}", e);
-                        }
+                    // Pass config to main menu for stats
+                    self.main_menu_screen.update_config(config_clone.clone());
+                    // Router pattern - delegate to screen's render method
+                    use crate::screens::{RenderContext, Screen as ScreenTrait};
+                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
+                    let ctx = RenderContext::new(
+                        &config_clone,
+                        &self.syntax_set,
+                        &self.theme_set,
+                        syntax_theme,
+                    );
+                    if let Err(e) = self.main_menu_screen.render(frame, area, &ctx) {
+                        error!("Failed to render main menu screen: {}", e);
                     }
                 }
                 Screen::GitHubAuth => {
@@ -555,6 +560,19 @@ impl App {
                     }
                 }
             }
+
+            // Render dialog on top of screen content (modal overlay)
+            if let Some(ref dialog) = self.dialog_state {
+                let footer = "Press any key to continue";
+                let dlg = Dialog::new(&dialog.title, &dialog.content)
+                    .variant(dialog.variant)
+                    .height(30)
+                    .footer(footer);
+                frame.render_widget(dlg, area);
+            }
+
+            // Render toast notifications (non-blocking, on top of content but below help overlay)
+            self.toast_manager.render(frame, area);
 
             // Render help overlay on top of everything if active
             if self.ui_state.show_help_overlay {
@@ -719,16 +737,14 @@ impl App {
             }
         }
 
-        // Handle message component events first (e.g., deactivation warning on MainMenu)
-        if let Some(ref mut msg_component) = self.message_component {
-            if self.ui_state.current_screen == Screen::MainMenu {
-                let action = msg_component.handle_event(event)?;
-                if let ComponentAction::Navigate(Screen::MainMenu) = action {
-                    // User dismissed the warning, clear it and show main menu
-                    self.message_component = None;
+        // Handle dialog events - any key dismisses it
+        if self.dialog_state.is_some() {
+            if let Event::Key(key) = event {
+                if key.kind == KeyEventKind::Press {
+                    self.dialog_state = None;
                 }
-                return Ok(());
             }
+            return Ok(());
         }
 
         // Let components handle events first (for mouse support)
@@ -946,12 +962,16 @@ impl App {
                 self.ui_state.current_screen = screen;
             }
             ScreenAction::ShowMessage { title, content } => {
-                // Show message popup using MessageComponent
-                self.message_component = Some(MessageComponent::new(
+                // Show message popup using Dialog
+                self.dialog_state = Some(DialogState {
                     title,
                     content,
-                    self.ui_state.current_screen,
-                ));
+                    variant: DialogVariant::Error,
+                });
+            }
+            ScreenAction::ShowToast { message, variant } => {
+                // Show non-blocking toast notification
+                self.toast_manager.push(Toast::new(message, variant));
             }
             ScreenAction::Quit => {
                 self.should_quit = true;
@@ -1087,11 +1107,11 @@ impl App {
                         // Activate the newly created profile
                         if let Err(e) = self.activate_profile_after_setup(&name) {
                             error!("Failed to activate profile: {}", e);
-                            self.message_component = Some(MessageComponent::new(
-                                "Activation Failed".to_string(),
-                                e.to_string(),
-                                Screen::MainMenu,
-                            ));
+                            self.dialog_state = Some(DialogState {
+                                title: "Activation Failed".to_string(),
+                                content: e.to_string(),
+                                variant: DialogVariant::Error,
+                            });
                         } else {
                             self.profile_selection_screen.reset();
                             self.ui_state.profile_selection = Default::default();
@@ -1100,11 +1120,11 @@ impl App {
                     }
                     Err(e) => {
                         error!("Failed to create profile: {}", e);
-                        self.message_component = Some(MessageComponent::new(
-                            "Creation Failed".to_string(),
-                            format!("Failed to create profile: {}", e),
-                            Screen::ProfileSelection,
-                        ));
+                        self.dialog_state = Some(DialogState {
+                            title: "Creation Failed".to_string(),
+                            content: format!("Failed to create profile: {}", e),
+                            variant: DialogVariant::Error,
+                        });
                     }
                 }
             }
@@ -1112,11 +1132,11 @@ impl App {
                 // Activate an existing profile
                 if let Err(e) = self.activate_profile_after_setup(&name) {
                     error!("Failed to activate profile: {}", e);
-                    self.message_component = Some(MessageComponent::new(
-                        "Activation Failed".to_string(),
-                        e.to_string(),
-                        Screen::MainMenu,
-                    ));
+                    self.dialog_state = Some(DialogState {
+                        title: "Activation Failed".to_string(),
+                        content: e.to_string(),
+                        variant: DialogVariant::Error,
+                    });
                 } else {
                     self.profile_selection_screen.reset();
                     self.ui_state.profile_selection = Default::default();
@@ -1137,10 +1157,26 @@ impl App {
                 is_synced,
             } => {
                 let state = self.dotfile_selection_screen.get_state_mut();
+                let filename = state
+                    .dotfiles
+                    .get(file_index)
+                    .map(|d| d.relative_path.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 if is_synced {
                     Self::remove_file_from_sync_with_state(&self.config, state, file_index)?;
+                    self.toast_manager.success(format!("Removed: {}", filename));
                 } else {
                     Self::add_file_to_sync_with_state(&self.config, state, file_index)?;
+                    // Check if there was an error (status_message was set)
+                    if let Some(error_msg) = state.status_message.take() {
+                        self.dialog_state = Some(DialogState {
+                            title: "Sync Failed".to_string(),
+                            content: error_msg,
+                            variant: DialogVariant::Error,
+                        });
+                    } else {
+                        self.toast_manager.success(format!("Added: {}", filename));
+                    }
                 }
             }
             ScreenAction::AddCustomFileToSync {
@@ -1179,32 +1215,32 @@ impl App {
                     }
                     Err(e) => {
                         error!("Failed to create profile: {}", e);
-                        self.message_component = Some(MessageComponent::new(
-                            "Profile Creation Failed".to_string(),
-                            format!("Failed to create profile '{}':\n{}", name, e),
-                            Screen::ManageProfiles,
-                        ));
+                        self.dialog_state = Some(DialogState {
+                            title: "Profile Creation Failed".to_string(),
+                            content: format!("Failed to create profile '{}':\n\n{}", name, e),
+                            variant: DialogVariant::Error,
+                        });
                     }
                 }
             }
             ScreenAction::SwitchProfile { name } => {
                 if let Err(e) = self.switch_profile(&name) {
                     error!("Failed to switch profile: {}", e);
-                    self.message_component = Some(MessageComponent::new(
-                        "Switch Profile Failed".to_string(),
-                        format!("Failed to switch to profile '{}':\n{}", name, e),
-                        Screen::ManageProfiles,
-                    ));
+                    self.dialog_state = Some(DialogState {
+                        title: "Switch Profile Failed".to_string(),
+                        content: format!("Failed to switch to profile '{}':\n\n{}", name, e),
+                        variant: DialogVariant::Error,
+                    });
                 }
             }
             ScreenAction::RenameProfile { old_name, new_name } => {
                 if let Err(e) = self.rename_profile(&old_name, &new_name) {
                     error!("Failed to rename profile: {}", e);
-                    self.message_component = Some(MessageComponent::new(
-                        "Rename Failed".to_string(),
-                        format!("Failed to rename profile '{}':\n{}", old_name, e),
-                        Screen::ManageProfiles,
-                    ));
+                    self.dialog_state = Some(DialogState {
+                        title: "Rename Failed".to_string(),
+                        content: format!("Failed to rename profile '{}':\n\n{}", old_name, e),
+                        variant: DialogVariant::Error,
+                    });
                 } else {
                     // Refresh profiles in screen
                     if let Err(e) = self
@@ -1238,11 +1274,11 @@ impl App {
                     }
                     Err(e) => {
                         error!("Failed to delete profile: {}", e);
-                        self.message_component = Some(MessageComponent::new(
-                            "Delete Failed".to_string(),
-                            format!("Failed to delete profile '{}':\n{}", name, e),
-                            Screen::ManageProfiles,
-                        ));
+                        self.dialog_state = Some(DialogState {
+                            title: "Delete Failed".to_string(),
+                            content: format!("Failed to delete profile '{}':\n\n{}", name, e),
+                            variant: DialogVariant::Error,
+                        });
                     }
                 }
             }
@@ -1271,10 +1307,17 @@ impl App {
                                 }) {
                                     state.dotfile_list_state.select(Some(idx));
                                 }
+                                // Show success toast
+                                self.toast_manager
+                                    .success(format!("Moved to profile: {}", relative_path));
                             }
                             Err(e) => {
                                 error!("Failed to move from common: {}", e);
-                                state.status_message = Some(format!("Error: {}", e));
+                                self.dialog_state = Some(DialogState {
+                                    title: "Move Failed".to_string(),
+                                    content: format!("Failed to move file from common:\n\n{}", e),
+                                    variant: DialogVariant::Error,
+                                });
                             }
                         }
                     } else {
@@ -1301,10 +1344,17 @@ impl App {
                                 }) {
                                     state.dotfile_list_state.select(Some(idx));
                                 }
+                                // Show success toast
+                                self.toast_manager
+                                    .success(format!("Moved to common: {}", relative_path));
                             }
                             Err(e) => {
                                 error!("Failed to move to common: {}", e);
-                                state.status_message = Some(format!("Error: {}", e));
+                                self.dialog_state = Some(DialogState {
+                                    title: "Move Failed".to_string(),
+                                    content: format!("Failed to move file to common:\n\n{}", e),
+                                    variant: DialogVariant::Error,
+                                });
                             }
                         }
                     }
@@ -1857,17 +1907,23 @@ impl App {
                     state.dotfile_list_state.select(Some(index));
                     state.selected_for_sync.insert(index);
                 }
+                // Show success toast
+                self.toast_manager
+                    .success(format!("Added: {}", relative_path));
             }
             crate::services::sync_service::AddFileResult::AlreadySynced => {
                 debug!("Custom file already synced: {}", relative_path);
             }
             crate::services::sync_service::AddFileResult::ValidationFailed(error_msg) => {
-                let state = self.dotfile_selection_screen.get_state_mut();
-                state.status_message = Some(format!("Error: {}", error_msg));
                 warn!(
                     "Validation failed for custom file {}: {}",
                     relative_path, error_msg
                 );
+                self.dialog_state = Some(DialogState {
+                    title: "Sync Failed".to_string(),
+                    content: error_msg,
+                    variant: DialogVariant::Error,
+                });
             }
         }
 

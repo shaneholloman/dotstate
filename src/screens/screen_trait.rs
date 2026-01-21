@@ -95,6 +95,11 @@ pub enum ScreenAction {
     },
     /// Show a message popup.
     ShowMessage { title: String, content: String },
+    /// Show a toast notification (non-blocking, auto-dismisses).
+    ShowToast {
+        message: String,
+        variant: crate::widgets::ToastVariant,
+    },
     /// Request to quit the application.
     Quit,
     /// Trigger a data refresh (e.g., reload dotfiles).
