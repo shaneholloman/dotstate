@@ -7,11 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+## [0.2.14] - 2025-01-21
+
 ### Fixed
-- **Sync with Remote**: Now works for local repo mode when a remote is configured (fetches without requiring token)
-- **Sync with Remote**: Results popup now closes correctly with Enter key
-- **Manage Files**: Common files now show a warning dialog when trying to unsync (must move to profile first)
-- **Move to Common**: Fixed files not being marked as common when re-entering the Manage Files screen (custom and synced files weren't being checked against common files list)
+- **Sync with Remote**: Fixed local repo mode to work without token and results popup now closes correctly with Enter key
+- **Manage Files**: Fixed common files handling (warning dialog when trying to unsync, proper file marking when re-entering screen)
 
 ---
 ## [0.2.13] - 2025-01-21
