@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ---
+## [0.2.15] - 2025-01-21
+
+### Fixed
+- **Package Manager**: Fixed installation progress counter off-by-one error and added auto-scroll to output window
+- **Package Manager**: Fixed app freeze with custom `sudo` commands (checks password requirement, closes stdin for interactive commands)
+- **Package Manager**: Package check now shows detailed check attempts when package is not found
+
+---
 ## [0.2.14] - 2025-01-21
 
 ### Fixed
