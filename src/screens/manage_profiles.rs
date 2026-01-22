@@ -820,33 +820,27 @@ impl Screen for ManageProfilesScreen {
 
                     match self.state.popup_type {
                         ProfilePopupType::Create => {
-                            // Handle keymap actions
-                            if let Some(action) = action {
-                                // Generalized input filtering
-                                if !crate::utils::TextInput::is_action_allowed_when_focused(&action)
-                                {
-                                    if let KeyCode::Char(c) = key.code {
-                                        if !key.modifiers.intersects(
-                                            KeyModifiers::CONTROL
-                                                | KeyModifiers::ALT
-                                                | KeyModifiers::SUPER,
-                                        ) {
-                                            match self.state.create_focused_field {
-                                                CreateField::Name => {
-                                                    self.state.create_name_input.insert_char(c);
-                                                }
-                                                CreateField::Description => {
-                                                    self.state
-                                                        .create_description_input
-                                                        .insert_char(c);
-                                                }
-                                                _ => {}
-                                            }
-                                            return Ok(ScreenAction::Refresh);
+                            // For plain character keys, ALWAYS insert the character first
+                            // This ensures vim bindings like h/l don't interfere with typing
+                            if let KeyCode::Char(c) = key.code {
+                                if !key.modifiers.intersects(
+                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                                ) {
+                                    match self.state.create_focused_field {
+                                        CreateField::Name => {
+                                            self.state.create_name_input.insert_char(c);
                                         }
+                                        CreateField::Description => {
+                                            self.state.create_description_input.insert_char(c);
+                                        }
+                                        _ => {}
                                     }
+                                    return Ok(ScreenAction::Refresh);
                                 }
+                            }
 
+                            // Handle actions for non-character keys (arrows, Tab, Esc, etc.)
+                            if let Some(action) = action {
                                 match action {
                                     Action::Cancel => {
                                         self.state.popup_type = ProfilePopupType::None;
@@ -1074,22 +1068,19 @@ impl Screen for ManageProfilesScreen {
                             }
                         }
                         ProfilePopupType::Rename => {
-                            if let Some(action) = action {
-                                // Generalized input filtering
-                                if !crate::utils::TextInput::is_action_allowed_when_focused(&action)
-                                {
-                                    if let KeyCode::Char(c) = key.code {
-                                        if !key.modifiers.intersects(
-                                            KeyModifiers::CONTROL
-                                                | KeyModifiers::ALT
-                                                | KeyModifiers::SUPER,
-                                        ) {
-                                            self.state.rename_input.insert_char(c);
-                                            return Ok(ScreenAction::Refresh);
-                                        }
-                                    }
+                            // For plain character keys, ALWAYS insert the character first
+                            // This ensures vim bindings like h/l don't interfere with typing
+                            if let KeyCode::Char(c) = key.code {
+                                if !key.modifiers.intersects(
+                                    KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                                ) {
+                                    self.state.rename_input.insert_char(c);
+                                    return Ok(ScreenAction::Refresh);
                                 }
+                            }
 
+                            // Handle actions for non-character keys (arrows, Tab, Esc, etc.)
+                            if let Some(action) = action {
                                 match action {
                                     Action::Cancel => {
                                         self.state.popup_type = ProfilePopupType::None;
@@ -1150,34 +1141,21 @@ impl Screen for ManageProfilesScreen {
                                     _ => {}
                                 }
                             }
-
-                            // Char input
+                        }
+                        ProfilePopupType::Delete => {
+                            // For plain character keys, ALWAYS insert the character first
+                            // This ensures vim bindings like h/l don't interfere with typing
                             if let KeyCode::Char(c) = key.code {
                                 if !key.modifiers.intersects(
                                     KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
                                 ) {
-                                    self.state.rename_input.insert_char(c);
+                                    self.state.delete_confirm_input.insert_char(c);
                                     return Ok(ScreenAction::Refresh);
                                 }
                             }
-                        }
-                        ProfilePopupType::Delete => {
-                            if let Some(action) = action {
-                                // Generalized input filtering
-                                if !crate::utils::TextInput::is_action_allowed_when_focused(&action)
-                                {
-                                    if let KeyCode::Char(c) = key.code {
-                                        if !key.modifiers.intersects(
-                                            KeyModifiers::CONTROL
-                                                | KeyModifiers::ALT
-                                                | KeyModifiers::SUPER,
-                                        ) {
-                                            self.state.delete_confirm_input.insert_char(c);
-                                            return Ok(ScreenAction::Refresh);
-                                        }
-                                    }
-                                }
 
+                            // Handle actions for non-character keys (arrows, Tab, Esc, etc.)
+                            if let Some(action) = action {
                                 match action {
                                     Action::Cancel => {
                                         self.state.popup_type = ProfilePopupType::None;
