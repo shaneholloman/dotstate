@@ -1,0 +1,175 @@
+---
+// Interactive install command widget with tabs
+---
+
+<div class="install-widget">
+    <div class="install-tabs">
+        <button class="install-tab active" data-tab="curl">curl</button>
+        <button class="install-tab" data-tab="brew">brew</button>
+        <button class="install-tab" data-tab="cargo">cargo</button>
+        <button class="install-tab" data-tab="more">more</button>
+    </div>
+    <div class="install-content">
+        <div class="install-tab-content active" id="install-curl">
+            <div class="install-command">
+                <code>/bin/bash -c "$(curl -fsSL https://dotstate.serkan.dev/install.sh)"</code>
+                <button class="copy-btn" data-copy='/bin/bash -c "$(curl -fsSL https://dotstate.serkan.dev/install.sh)"' aria-label="Copy install command">📋</button>
+            </div>
+        </div>
+        <div class="install-tab-content" id="install-brew">
+            <div class="install-command">
+                <code>brew tap serkanyersen/dotstate<br>brew install dotstate</code>
+                <button class="copy-btn" data-copy="brew tap serkanyersen/dotstate&#10;brew install dotstate" aria-label="Copy install command">📋</button>
+            </div>
+        </div>
+        <div class="install-tab-content" id="install-cargo">
+            <div class="install-command">
+                <code>cargo install dotstate</code>
+                <button class="copy-btn" data-copy="cargo install dotstate" aria-label="Copy install command">📋</button>
+            </div>
+        </div>
+        <div class="install-tab-content" id="install-more">
+            <div class="install-more-content">
+                <p>For more installation options, see the <a href="#installation" class="install-link">Installation</a> page.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .install-widget {
+        background-color: rgba(0, 212, 255, 0.05);
+        border: 2px solid var(--border-color);
+        border-radius: 4px;
+        margin: 30px 0;
+        overflow: hidden;
+    }
+
+    .install-tabs {
+        display: flex;
+        border-bottom: 2px solid var(--border-color);
+        background-color: rgba(0, 212, 255, 0.1);
+    }
+
+    .install-tab {
+        flex: 1;
+        padding: 15px 20px;
+        background: transparent;
+        border: none;
+        border-right: 1px solid rgba(0, 212, 255, 0.3);
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: 1rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: center;
+    }
+
+    .install-tab:last-child {
+        border-right: none;
+    }
+
+    .install-tab:hover {
+        background-color: rgba(0, 212, 255, 0.15);
+        color: var(--text-primary);
+    }
+
+    .install-tab.active {
+        background-color: rgba(0, 212, 255, 0.2);
+        color: var(--text-green);
+        font-weight: 700;
+        border-bottom: 3px solid var(--text-green);
+    }
+
+    .install-content {
+        padding: 25px;
+        min-height: 100px;
+    }
+
+    .install-tab-content {
+        display: none;
+        animation: fadeIn 0.3s ease-in;
+    }
+
+    .install-tab-content.active {
+        display: block;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+    }
+
+    .install-command {
+        position: relative;
+        background-color: var(--bg-primary);
+        padding: 15px 50px 15px 15px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        overflow-x: auto;
+    }
+
+    .install-command code {
+        display: block;
+        font-size: 1rem;
+        color: var(--text-green);
+        background: none;
+        padding: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-family: var(--font-mono);
+    }
+
+    .install-command .copy-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 212, 255, 0.2);
+        border: 1px solid var(--border-color);
+        color: var(--accent-cyan);
+        padding: 5px 10px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        transition: all 0.2s;
+        border-radius: 3px;
+    }
+
+    .install-command .copy-btn:hover {
+        background: rgba(0, 212, 255, 0.3);
+        transform: scale(1.05);
+    }
+
+    .install-more-content {
+        text-align: center;
+        padding: 20px;
+    }
+
+    .install-more-content p {
+        color: var(--text-secondary);
+        margin: 0;
+    }
+
+    .install-link {
+        color: var(--accent-cyan);
+        text-decoration: none;
+        font-weight: 700;
+    }
+
+    .install-link:hover {
+        color: var(--text-green);
+        text-decoration: underline;
+    }
+
+    @media (max-width: 600px) {
+        .install-tabs {
+            flex-wrap: wrap;
+        }
+
+        .install-tab {
+            flex: 1 1 auto;
+            min-width: 80px;
+            font-size: 0.9rem;
+            padding: 12px 15px;
+        }
+    }
+</style>

@@ -1,0 +1,97 @@
+---
+// Demo status grid shown on the overview page
+---
+
+<div class="status-section">
+    <div class="section-header">
+        <span class="section-icon" aria-hidden="true">✓</span>
+        <h2>Status</h2>
+    </div>
+    <div class="status-grid">
+        <div class="status-item">
+            <span class="status-label">Synced Files:</span>
+            <span class="status-value">8</span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Profiles:</span>
+            <span class="status-value purple">2</span>
+            <span class="status-subtext purple">(Active: Personal)</span>
+        </div>
+        <div class="status-item">
+            <span class="status-label">Repository:</span>
+            <span class="status-value">dotstate-storage</span>
+        </div>
+    </div>
+</div>
+
+<style>
+    .status-section {
+        margin-top: 30px;
+        padding-top: 30px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .section-header h2 {
+        font-size: 1.5rem;
+        color: var(--accent-cyan);
+    }
+
+    .section-icon {
+        font-size: 1.5rem;
+    }
+
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+    }
+
+    .status-item {
+        padding: 15px;
+        background-color: rgba(0, 212, 255, 0.05);
+        border: 1px solid var(--border-color);
+    }
+
+    .status-label {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+    }
+
+    .status-value {
+        display: block;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-green);
+    }
+
+    .status-value.purple {
+        color: var(--text-purple);
+    }
+
+    .status-subtext {
+        display: block;
+        font-size: 0.9rem;
+        margin-top: 5px;
+    }
+
+    .status-subtext.purple {
+        color: var(--text-purple);
+    }
+
+    @media (max-width: 600px) {
+        .status-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>

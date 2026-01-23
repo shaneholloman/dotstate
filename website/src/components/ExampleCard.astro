@@ -1,0 +1,43 @@
+---
+interface Props {
+    title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<div class="example-card">
+    <h4>{title}</h4>
+    <slot />
+</div>
+
+<style>
+    .example-card {
+        background-color: rgba(0, 212, 255, 0.05);
+        border: 1px solid var(--border-color);
+        padding: 20px;
+        margin: 20px 0;
+        border-radius: 4px;
+    }
+
+    .example-card h4 {
+        color: var(--text-green);
+        margin-bottom: 15px;
+    }
+
+    .example-card :global(ol),
+    .example-card :global(ul) {
+        margin-left: 20px;
+        color: var(--text-secondary);
+    }
+
+    .example-card :global(p) {
+        color: var(--text-secondary);
+        margin-bottom: 10px;
+    }
+
+    .example-card :global(code) {
+        display: inline-block;
+        margin: 5px 0;
+    }
+</style>

@@ -1,0 +1,33 @@
+---
+interface Props {
+    icon: string;
+    title: string;
+}
+
+const { icon, title } = Astro.props;
+---
+
+<div class="section-header">
+    <span class="section-icon" aria-hidden="true">{icon}</span>
+    <h2>{title}</h2>
+</div>
+
+<style>
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .section-header h2 {
+        font-size: 1.5rem;
+        color: var(--accent-cyan);
+    }
+
+    .section-icon {
+        font-size: 1.5rem;
+    }
+</style>

@@ -1,0 +1,65 @@
+---
+interface Props {
+    type?: 'info' | 'success' | 'warning';
+    icon?: string;
+}
+
+const { type = 'info', icon } = Astro.props;
+
+const icons = {
+    info: '💡',
+    success: '✅',
+    warning: '⚠️'
+};
+
+const displayIcon = icon || icons[type];
+---
+
+<div class={`tip ${type}`}>
+    <span class="tip-icon" aria-hidden="true">{displayIcon}</span>
+    <div class="tip-content">
+        <slot />
+    </div>
+</div>
+
+<style>
+    .tip {
+        background-color: rgba(217, 70, 239, 0.1);
+        border-left: 3px solid var(--text-purple);
+        padding: 15px;
+        margin: 20px 0;
+        display: flex;
+        gap: 10px;
+    }
+
+    .tip.success {
+        background-color: rgba(0, 255, 0, 0.1);
+        border-left-color: var(--text-green);
+    }
+
+    .tip.warning {
+        background-color: rgba(255, 215, 0, 0.1);
+        border-left-color: var(--text-yellow);
+    }
+
+    .tip-icon {
+        font-size: 1.2rem;
+        flex-shrink: 0;
+    }
+
+    .tip-content {
+        color: var(--text-secondary);
+    }
+
+    .tip-content :global(strong) {
+        color: var(--text-purple);
+    }
+
+    .tip.success .tip-content :global(strong) {
+        color: var(--text-green);
+    }
+
+    .tip.warning .tip-content :global(strong) {
+        color: var(--text-yellow);
+    }
+</style>

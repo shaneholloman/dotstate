@@ -1,0 +1,63 @@
+---
+interface Props {
+    code: string;
+    lang?: string;
+}
+
+const { code, lang = 'bash' } = Astro.props;
+---
+
+<div class="code-block">
+    <code set:html={code.replace(/\n/g, '<br>')} />
+    <button class="copy-btn" data-copy={code} aria-label="Copy command">📋</button>
+</div>
+
+<style>
+    .code-block {
+        position: relative;
+        background-color: var(--bg-primary);
+        padding: 15px 50px 15px 15px;
+        border: 1px solid var(--border-color);
+        margin: 15px 0;
+        border-radius: 4px;
+        width: 100%;
+        box-sizing: border-box;
+        overflow-x: auto;
+    }
+
+    .code-block code {
+        display: block;
+        font-size: 1rem;
+        color: var(--text-green);
+        background: none;
+        padding: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+
+    .copy-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 212, 255, 0.2);
+        border: 1px solid var(--border-color);
+        color: var(--accent-cyan);
+        padding: 5px 10px;
+        cursor: pointer;
+        font-size: 0.9rem;
+        transition: all 0.2s;
+        border-radius: 3px;
+        z-index: 10;
+    }
+
+    .copy-btn:hover {
+        background: rgba(0, 212, 255, 0.3);
+        transform: scale(1.05);
+    }
+
+    :global(.copy-btn.copied) {
+        background: rgba(0, 255, 0, 0.2);
+        border-color: var(--text-green);
+        color: var(--text-green);
+    }
+</style>

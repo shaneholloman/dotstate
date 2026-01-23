@@ -1,0 +1,32 @@
+---
+interface Props {
+    title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<div class="security-card">
+    <h4>{title}</h4>
+    <slot />
+</div>
+
+<style>
+    .security-card {
+        background-color: rgba(0, 212, 255, 0.05);
+        border: 1px solid var(--border-color);
+        padding: 20px;
+        margin: 15px 0;
+        border-radius: 4px;
+    }
+
+    .security-card h4 {
+        color: var(--text-green);
+        margin-bottom: 10px;
+    }
+
+    .security-card :global(p) {
+        color: var(--text-secondary);
+        margin: 0;
+    }
+</style>

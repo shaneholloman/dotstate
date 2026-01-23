@@ -32,3 +32,9 @@ notes/
 .claude/
 CLAUDE.md
 .cursor/
+
+# Website
+website/node_modules/
+website/dist/
+website/.astro/
+website/.vercel/

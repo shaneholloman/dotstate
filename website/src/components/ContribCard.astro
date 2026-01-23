@@ -1,0 +1,32 @@
+---
+interface Props {
+    title: string;
+}
+
+const { title } = Astro.props;
+---
+
+<div class="contrib-card">
+    <h4>{title}</h4>
+    <p><slot /></p>
+</div>
+
+<style>
+    .contrib-card {
+        background-color: rgba(0, 212, 255, 0.05);
+        border: 1px solid var(--border-color);
+        padding: 15px;
+        text-align: center;
+    }
+
+    .contrib-card h4 {
+        color: var(--accent-cyan);
+        margin-bottom: 10px;
+    }
+
+    .contrib-card p {
+        font-size: 0.9rem;
+        margin: 0;
+        color: var(--text-secondary);
+    }
+</style>
