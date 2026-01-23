@@ -4,7 +4,7 @@
 
 <div class="status-section">
     <div class="section-header">
-        <span class="section-icon" aria-hidden="true">✓</span>
+        <span class="section-icon" aria-hidden="true">[+]</span>
         <h2>Status</h2>
     </div>
     <div class="status-grid">
@@ -28,51 +28,60 @@
     .status-section {
         margin-top: 30px;
         padding-top: 30px;
-        border-top: 1px solid var(--border-color);
+        border-top: 1px solid var(--border-dim);
     }
 
     .section-header {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
         margin-bottom: 20px;
         padding-bottom: 10px;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid var(--border-dim);
     }
 
     .section-header h2 {
-        font-size: 1.5rem;
+        font-size: 1.2rem;
         color: var(--accent-cyan);
+        margin: 0;
     }
 
     .section-icon {
-        font-size: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--accent-green);
+        font-family: var(--font-mono);
+        margin-right: 4px;
     }
 
     .status-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 20px;
+        gap: 15px;
     }
 
     .status-item {
         padding: 15px;
-        background-color: rgba(0, 212, 255, 0.05);
-        border: 1px solid var(--border-color);
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-dim);
     }
 
     .status-label {
         display: block;
         color: var(--text-secondary);
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         margin-bottom: 8px;
+    }
+
+    .status-label::before {
+        content: '├─ ';
+        color: var(--border-dim);
     }
 
     .status-value {
         display: block;
-        font-size: 1.5rem;
+        font-size: 1.3rem;
         font-weight: 700;
-        color: var(--text-green);
+        color: var(--accent-green);
     }
 
     .status-value.purple {
@@ -81,7 +90,7 @@
 
     .status-subtext {
         display: block;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         margin-top: 5px;
     }
 

@@ -7,9 +7,9 @@ interface Props {
 const { type = 'info', icon } = Astro.props;
 
 const icons = {
-    info: '💡',
-    success: '✅',
-    warning: '⚠️'
+    info: '[i]',
+    success: '[+]',
+    warning: '[!]'
 };
 
 const displayIcon = icon || icons[type];
@@ -24,31 +24,44 @@ const displayIcon = icon || icons[type];
 
 <style>
     .tip {
-        background-color: rgba(217, 70, 239, 0.1);
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-dim);
         border-left: 3px solid var(--text-purple);
         padding: 15px;
         margin: 20px 0;
         display: flex;
-        gap: 10px;
+        gap: 12px;
+        align-items: flex-start;
     }
 
     .tip.success {
-        background-color: rgba(0, 255, 0, 0.1);
-        border-left-color: var(--text-green);
+        border-left-color: var(--accent-green);
     }
 
     .tip.warning {
-        background-color: rgba(255, 215, 0, 0.1);
         border-left-color: var(--text-yellow);
     }
 
     .tip-icon {
-        font-size: 1.2rem;
+        font-size: 0.85rem;
         flex-shrink: 0;
+        font-family: var(--font-mono);
+        color: var(--text-purple);
+        font-weight: bold;
+    }
+
+    .tip.success .tip-icon {
+        color: var(--accent-green);
+    }
+
+    .tip.warning .tip-icon {
+        color: var(--text-yellow);
     }
 
     .tip-content {
         color: var(--text-secondary);
+        font-size: 0.95rem;
+        line-height: 1.6;
     }
 
     .tip-content :global(strong) {
@@ -56,7 +69,7 @@ const displayIcon = icon || icons[type];
     }
 
     .tip.success .tip-content :global(strong) {
-        color: var(--text-green);
+        color: var(--accent-green);
     }
 
     .tip.warning .tip-content :global(strong) {

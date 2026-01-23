@@ -16,18 +16,22 @@ const { icon, title } = Astro.props;
     .section-header {
         display: flex;
         align-items: center;
-        gap: 10px;
-        margin-bottom: 20px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid var(--border-color);
+        gap: 12px;
+        margin-bottom: 25px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-dim);
     }
 
     .section-header h2 {
-        font-size: 1.5rem;
+        font-size: 1.3rem;
         color: var(--accent-cyan);
+        margin: 0;
+        text-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
     }
 
     .section-icon {
-        font-size: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--accent-cyan);
+        font-family: var(--font-mono);
     }
 </style>

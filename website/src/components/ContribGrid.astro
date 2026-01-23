@@ -9,12 +9,18 @@
 <style>
     .contrib-areas {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 15px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
         margin: 20px 0;
     }
 
     @media (max-width: 968px) {
+        .contrib-areas {
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        }
+    }
+
+    @media (max-width: 600px) {
         .contrib-areas {
             grid-template-columns: 1fr;
         }

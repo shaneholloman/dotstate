@@ -8,57 +8,73 @@ const { number, title } = Astro.props;
 ---
 
 <div class="step">
-    <div class="step-number">{number}</div>
-    <div class="step-content">
+    <div class="step-header">
+        <span class="step-number">[{number}]</span>
         <h3>{title}</h3>
+    </div>
+    <div class="step-content">
         <slot />
     </div>
 </div>
 
 <style>
     .step {
+        margin: 20px 0;
+        background-color: var(--bg-secondary);
+        border: 1px solid var(--border-dim);
+    }
+
+    .step-header {
         display: flex;
-        gap: 20px;
-        margin: 25px 0;
-        padding: 20px;
-        background-color: rgba(0, 212, 255, 0.05);
-        border-left: 3px solid var(--border-color);
+        align-items: center;
+        gap: 12px;
+        padding: 12px 15px;
+        background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+        border-bottom: 1px solid var(--border-dim);
     }
 
     .step-number {
-        flex-shrink: 0;
-        width: 40px;
-        height: 40px;
-        background-color: var(--accent-cyan);
-        color: var(--bg-primary);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 1.2rem;
+        color: var(--accent-cyan);
+        font-family: var(--font-mono);
+        font-size: 0.9rem;
+        font-weight: bold;
     }
 
-    .step-content h3 {
-        margin-top: 0;
-        margin-bottom: 10px;
-        color: var(--text-green);
+    .step-header h3 {
+        margin: 0;
+        color: var(--text-primary);
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .step-content {
+        padding: 15px;
     }
 
     .step-content :global(ul) {
         margin-top: 10px;
+        margin-left: 5px;
         color: var(--text-secondary);
+        list-style: none;
+    }
+
+    .step-content :global(ul > li::before) {
+        content: '├─ ';
+        color: var(--border-dim);
+    }
+
+    .step-content :global(ul > li:last-child::before) {
+        content: '└─ ';
     }
 
     .step-content :global(p) {
         color: var(--text-secondary);
+        margin: 0 0 10px 0;
     }
 
     @media (max-width: 600px) {
-        .step {
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
+        .step-header {
+            flex-direction: row;
         }
     }
 </style>
