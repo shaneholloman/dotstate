@@ -21,7 +21,7 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap,
+    Block, Borders, List, ListItem, ListState, Padding, Paragraph, StatefulWidget, Wrap
 };
 use ratatui::Frame;
 
@@ -490,6 +490,7 @@ impl SettingsScreen {
                     .title_alignment(Alignment::Center)
                     .border_type(t.border_type(false))
                     .border_style(unfocused_border_style())
+                    .padding(Padding::proportional(1))
                     .style(t.background_style()),
             )
             .wrap(Wrap { trim: false });
@@ -499,8 +500,8 @@ impl SettingsScreen {
 
 impl Screen for SettingsScreen {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &RenderContext) -> Result<()> {
-        // Standard layout (header=6, footer=2)
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
+        // Standard layout (header=5, footer=2)
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 3);
 
         // Header
         Header::render(

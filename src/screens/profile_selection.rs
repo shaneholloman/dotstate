@@ -130,7 +130,7 @@ impl ProfileSelectionScreen {
         use crate::utils::create_standard_layout;
 
         let icons = crate::icons::Icons::from_config(config);
-        let (header_area, content_area, footer_area) = create_standard_layout(area, 5, 2);
+        let (header_area, content_area, footer_area) = create_standard_layout(area, 5, 3);
 
         // Header
         let _ = Header::render(

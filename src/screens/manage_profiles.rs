@@ -763,7 +763,7 @@ impl Screen for ManageProfilesScreen {
         frame.render_widget(background, area);
 
         // Layout: Header, Content (split), Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 3);
 
         // Header
         let _ = Header::render(

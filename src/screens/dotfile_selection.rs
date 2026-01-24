@@ -1354,7 +1354,7 @@ impl Screen for DotfileSelectionScreen {
         frame.render_widget(background, area);
 
         // Layout: Title/Description, Content (list + preview), Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 3);
 
         // Header: Use common header component
         let _ = Header::render(

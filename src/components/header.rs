@@ -49,11 +49,13 @@ impl Header {
         frame.render_widget(header_block, area);
 
         // Split horizontally: logo on left, description on right
+        let logo = DotstateLogo::regular();
+        let logo_width = logo.width() + 2; // Add padding for spacing
         let horizontal_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(30), // Logo width (small logo is ~28 chars + spacing)
-                Constraint::Min(0),     // Rest for description
+                Constraint::Length(logo_width),
+                Constraint::Min(0), // Rest for description
             ])
             .split(inner_area);
 
@@ -61,7 +63,7 @@ impl Header {
         let logo_block = Block::default().padding(ratatui::widgets::Padding::new(0, 1, 0, 0));
         let logo_area = logo_block.inner(horizontal_chunks[0]);
         frame.render_widget(logo_block, horizontal_chunks[0]);
-        frame.render_widget(DotstateLogo::small(), logo_area);
+        frame.render_widget(logo, logo_area);
 
         // Description area (borderless, just for padding)
         let desc_area = Block::default()

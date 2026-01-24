@@ -768,7 +768,7 @@ impl MainMenuScreen {
         let background = Block::default().style(t.background_style());
         frame.render_widget(background, area);
 
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 3);
 
         // Header: Use common header component (with logo on left)
         let _ = Header::render(

@@ -240,12 +240,12 @@ impl GitHubAuthScreen {
     fn render_mode_selection(
         &mut self,
         frame: &mut Frame,
-        area: Rect,
+        header_chunk: Rect,
+        content_chunk: Rect,
+        footer_chunk: Rect,
         ctx: &RenderContext,
     ) -> Result<()> {
         let t = theme();
-        // Layout: Header, Content, Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header
         let _ = Header::render(
@@ -427,13 +427,13 @@ impl GitHubAuthScreen {
     fn render_local_setup(
         &mut self,
         frame: &mut Frame,
-        area: Rect,
+        header_chunk: Rect,
+        content_chunk: Rect,
+        footer_chunk: Rect,
         ctx: &RenderContext,
     ) -> Result<()> {
         let t = theme();
         let icons = self.icons(ctx);
-        // Layout: Header, Content, Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header
         let _ = Header::render(
@@ -815,13 +815,12 @@ impl GitHubAuthScreen {
     fn render_progress_screen(
         &mut self,
         frame: &mut Frame,
-        area: Rect,
+        header_chunk: Rect,
+        content_chunk: Rect,
+        footer_chunk: Rect,
         ctx: &RenderContext,
     ) -> Result<()> {
         let t = theme();
-
-        // Layout: Header, Content, Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 6, 2);
 
         // Header
         let _ = Header::render(
@@ -906,13 +905,12 @@ impl GitHubAuthScreen {
     fn render_github_form(
         &mut self,
         frame: &mut Frame,
-        area: Rect,
+        header_chunk: Rect,
+        content_chunk: Rect,
+        footer_chunk: Rect,
         ctx: &RenderContext,
     ) -> Result<()> {
         let t = theme();
-
-        // Layout: Title/Description, Content, Footer
-        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 2);
 
         // Header: Use common header component
         let _ = Header::render(
@@ -1507,19 +1505,22 @@ impl Screen for GitHubAuthScreen {
         let background = Block::default().style(t.background_style());
         frame.render_widget(background, area);
 
+        // Standard layout for all sub-screens
+        let (header_chunk, content_chunk, footer_chunk) = create_standard_layout(area, 5, 3);
+
         // If processing or in setup, show progress screen instead of input form
         if matches!(
             self.state.step,
             GitHubAuthStep::Processing | GitHubAuthStep::SetupStep(_)
         ) {
-            return self.render_progress_screen(frame, area, ctx);
+            return self.render_progress_screen(frame, header_chunk, content_chunk, footer_chunk, ctx);
         }
 
         // Check setup mode and render appropriate screen
         match self.state.setup_mode {
-            SetupMode::Choosing => self.render_mode_selection(frame, area, ctx),
-            SetupMode::Local => self.render_local_setup(frame, area, ctx),
-            SetupMode::GitHub => self.render_github_form(frame, area, ctx),
+            SetupMode::Choosing => self.render_mode_selection(frame, header_chunk, content_chunk, footer_chunk, ctx),
+            SetupMode::Local => self.render_local_setup(frame, header_chunk, content_chunk, footer_chunk, ctx),
+            SetupMode::GitHub => self.render_github_form(frame, header_chunk, content_chunk, footer_chunk, ctx),
         }
     }
 

@@ -472,7 +472,7 @@ impl Screen for ManagePackagesScreen {
         }
 
         // Always render main content first (so dialogs can dim it)
-        let layout = create_standard_layout(area, 5, 2);
+        let layout = create_standard_layout(area, 5, 3);
 
         // Header
         let _header_height = Header::render(
