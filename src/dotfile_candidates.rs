@@ -247,6 +247,63 @@ pub const DEFAULT_DOTFILES: &[DotfileCandidate] = &[
         path: ".config/systemd/user",
         description: "User-level systemd services and timers.",
     },
+
+    // --- AI tools ---
+    // Antigravity
+    DotfileCandidate {
+        path: ".agent/skills",
+        description: "Antigravity global skills directory (usable across projects).",
+    },
+    // claude
+    DotfileCandidate {
+        path: ".claude/skills",
+        description: "Claude global skills directory (usable across projects).",
+    },
+    DotfileCandidate {
+        path: ".claude/commands",
+        description: "Claude global slash-commands directory.",
+    },
+    // copilot
+    DotfileCandidate {
+        path: ".github/skills",
+        description: "GitHub Copilot / VS Code personal skills directory (global).",
+    },
+    // Gemini
+    DotfileCandidate {
+        path: ".gemini/skills",
+        description: "Gemini global skills directory (usable across projects).",
+    },
+    // cursor
+    DotfileCandidate {
+        path: ".cursor/skills",
+        description: "Cursor global skills directory (Cursor stores global skills here).",
+    },
+    DotfileCandidate {
+        path: ".cursor/commands",
+        description: "Cursor global commands directory (Cursor stores global commands here).",
+    },
+    // aider
+    DotfileCandidate {
+        path: ".aider.conf.yml",
+        description: "Aider global config (aider loads this from home).",
+    },
+    DotfileCandidate {
+        path: ".aider.conventions.md",
+        description: "Aider global conventions file (commonly used for shared instructions).",
+    },
+    // opencode
+    DotfileCandidate {
+        path: ".config/opencode/skills/",
+        description: "OpenCode global skills directory.",
+    },
+    DotfileCandidate {
+        path: ".opencode/skills/",
+        description: "OpenCode global skills directory.",
+    },
+    DotfileCandidate {
+        path: ".agents/skills/",
+        description: "Agent global skills directory.",
+    }
 ];
 
 /// Get default dotfile paths as a Vec<String>

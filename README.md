@@ -5,6 +5,7 @@
 DotState is a terminal-based tool that helps you manage your dotfiles effortlessly. Whether you're syncing your configuration across multiple machines or setting up a new development environment, DotState makes it simple, safe, and fast.
 
 ## Demo
+
 https://github.com/user-attachments/assets/9be0df5e-87ce-4b61-ae0f-1c8ffe94cb36
 
 ## Why DotState?
@@ -12,6 +13,7 @@ https://github.com/user-attachments/assets/9be0df5e-87ce-4b61-ae0f-1c8ffe94cb36
 Managing dotfiles can be a pain. You want your `.zshrc`, `.vimrc`, and other config files synced across machines, but traditional solutions are either too complex, insecure, or require too much manual work.
 
 **DotState solves this by being:**
+
 - 🦀 **Built with Rust** - Fast, memory-safe, and reliable
 - 🔒 **Secure by design** - No shell injection vulnerabilities, safe file operations
 - 🎨 **Beautiful TUI** - Intuitive interface that doesn't require learning Git
@@ -22,12 +24,14 @@ Managing dotfiles can be a pain. You want your `.zshrc`, `.vimrc`, and other con
 ## What Makes DotState Different?
 
 ### Traditional Dotfile Managers
+
 - Require Git knowledge
 - Manual symlink management
 - No built-in backup system
 - Complex setup process
 
 ### DotState
+
 - **Zero Git knowledge required** - We handle everything
 - **Automatic symlink management** - Files are linked automatically
 - **Built-in backups** - Your files are safe before any operation
@@ -75,9 +79,11 @@ Managing dotfiles can be a pain. You want your `.zshrc`, `.vimrc`, and other con
 ## Installation
 
 ### Prebuilt from website (Recommended)
+
 [Installation Guide](https://dotstate.serkan.dev/#installation)
+
 ```bash
-/bin/bash -c "$(curl -fsSL https://dotstate.serkan.dev/install.sh)"
+curl -fsSL https://dotstate.serkan.dev/install.sh | bash"
 ```
 
 ### Using Cargo
@@ -94,6 +100,7 @@ brew install dotstate
 ```
 
 Or use the direct install:
+
 ```bash
 brew install serkanyersen/dotstate/dotstate
 ```
@@ -101,6 +108,7 @@ brew install serkanyersen/dotstate/dotstate
 ## Quick Start
 
 1. **Launch DotState**:
+
    ```bash
    dotstate
    ```
@@ -172,27 +180,34 @@ dotstate help
 DotState supports two repository setup modes:
 
 #### GitHub Mode (Automatic)
+
 Let DotState create and manage a GitHub repository for you. Requires a GitHub Personal Access Token.
 
 **GitHub Token Configuration:**
+
 1. **Environment Variable** (Recommended for automation):
+
    ```bash
    export DOTSTATE_GITHUB_TOKEN=ghp_your_token_here
    ```
+
    The environment variable takes precedence over the config file token.
 
 2. **Config File**: The token can be stored in the config file (set during first-time setup).
 
 #### Local Mode (Bring Your Own Repo)
+
 Use any existing git repository from any host (GitHub, GitLab, Bitbucket, self-hosted, etc.).
 
 **Setup:**
+
 1. Create a repository on your preferred git host
 2. Clone it locally: `git clone <url> ~/.config/dotstate/storage`
 3. Ensure you can push: `git push origin main`
 4. In DotState, choose "Use my own repository" and enter the path
 
 **Benefits of Local Mode:**
+
 - Works with any git host
 - Uses your existing SSH keys or git credentials
 - No GitHub token required
@@ -211,6 +226,7 @@ dotstate upgrade --check
 
 **Configuration:**
 Update checks can be configured in `~/.config/dotstate/config.toml`:
+
 ```toml
 [updates]
 check_enabled = true       # Set to false to disable update checks
@@ -232,6 +248,7 @@ theme = "nocolor" # Disable all UI colors (same as NO_COLOR=1 / --no-colors)
 ```
 
 **Theme Features:**
+
 - **Automatic Syntax Highlighting**: File preview syntax highlighting automatically matches your selected theme
 - **Consistent Colors**: All UI elements (headers, footers, borders, lists, text) use theme-appropriate colors
 - **Terminal Compatibility**: Works with both light and dark terminal themes
@@ -245,6 +262,7 @@ theme = "nocolor" # Disable all UI colors (same as NO_COLOR=1 / --no-colors)
   ```
 
 **What Changes with Theme:**
+
 - Text colors (dark text on light backgrounds, light text on dark backgrounds)
 - Border colors (adjusted for visibility)
 - Highlight colors (selection indicators, focused elements)
@@ -356,6 +374,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Acknowledgments
 
 Built with:
+
 - [Ratatui](https://github.com/ratatui-org/ratatui) - Beautiful TUI framework
 - [git2](https://github.com/rust-lang/git2-rs) - Git operations
 - [clap](https://github.com/clap-rs/clap) - CLI parsing
