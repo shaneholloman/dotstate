@@ -101,6 +101,58 @@ impl GitHubAuthScreen {
         }
     }
 
+    // Debug methods (only available in debug builds)
+
+    /// Cycle through sub-screens for preview/testing
+    /// Note: Skips Processing/SetupStep states as they trigger async processing
+    #[cfg(debug_assertions)]
+    fn debug_cycle_screen(&mut self) -> ScreenAction {
+        // Cycle through static screens only (no async processing states)
+        // Choosing -> Local (new) -> GitHub (new) -> Local (configured) -> GitHub (configured) -> back
+        match (&self.state.setup_mode, self.state.repo_already_configured) {
+            // New user flow
+            (SetupMode::Choosing, _) => {
+                self.state.setup_mode = SetupMode::Local;
+                self.state.step = GitHubAuthStep::Input;
+                self.state.repo_already_configured = false;
+                self.state.status_message = None;
+            }
+            (SetupMode::Local, false) => {
+                self.state.setup_mode = SetupMode::GitHub;
+                self.state.step = GitHubAuthStep::Input;
+                self.state.repo_already_configured = false;
+            }
+            (SetupMode::GitHub, false) => {
+                // Switch to "already configured" flow
+                self.state.setup_mode = SetupMode::Local;
+                self.state.step = GitHubAuthStep::Input;
+                self.state.repo_already_configured = true;
+                self.state.local_repo_path_input =
+                    crate::utils::TextInput::with_text("~/.config/dotstate/storage");
+            }
+            // Configured user flow
+            (SetupMode::Local, true) => {
+                self.state.setup_mode = SetupMode::GitHub;
+                self.state.step = GitHubAuthStep::Input;
+                self.state.repo_already_configured = true;
+                self.state.token_input =
+                    crate::utils::TextInput::with_text("ghp_xxxxxxxxxxxxxxxxxxxx");
+                self.state.repo_name_input = crate::utils::TextInput::with_text("my-dotfiles");
+            }
+            (SetupMode::GitHub, true) => {
+                // Reset back to start
+                self.state.setup_mode = SetupMode::Choosing;
+                self.state.step = GitHubAuthStep::Input;
+                self.state.repo_already_configured = false;
+                self.state.status_message = None;
+                self.state.token_input.clear();
+                self.state.repo_name_input.clear();
+                self.state.local_repo_path_input.clear();
+            }
+        }
+        ScreenAction::Refresh
+    }
+
     // Rendering methods
 
     fn render_token_field(
@@ -1531,6 +1583,12 @@ impl Screen for GitHubAuthScreen {
         if let Event::Key(key) = event {
             if key.kind != KeyEventKind::Press {
                 return Ok(ScreenAction::None);
+            }
+
+            // Debug mode: F12 cycles through sub-screens (debug builds only)
+            #[cfg(debug_assertions)]
+            if key.code == KeyCode::F(12) {
+                return Ok(self.debug_cycle_screen());
             }
 
             let action = ctx.config.keymap.get_action(key.code, key.modifiers);
