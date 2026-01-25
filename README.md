@@ -198,7 +198,8 @@ Fine-grained tokens offer better security through granular permissions. Create o
 |------------|--------------|---------|
 | **Administration** | Read & write | Create your `dotstate-storage` repository |
 | **Contents** | Read & write | Sync your dotfiles to/from the repository |
-| **Metadata** | Read-only | Check if `dotstate-storage` already exists |
+
+> **Note:** Metadata (read-only) is automatically included by GitHub for all fine-grained tokens.
 
 **Repository access:**
 - For initial setup, select **"All repositories"** so DotState can create and find your storage repo

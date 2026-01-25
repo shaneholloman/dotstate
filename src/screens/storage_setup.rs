@@ -538,19 +538,36 @@ impl StorageSetupScreen {
                     Style::default().fg(t.success).add_modifier(Modifier::BOLD),
                 )),
                 Line::from(""),
-                Line::from("DotState will automatically:"),
+                Line::from("DotState will create a private repo"),
+                Line::from("and set up syncing automatically."),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "You'll need a token with:",
+                    Style::default().fg(t.primary),
+                )),
                 Line::from(vec![
                     Span::styled("  • ", t.muted_style()),
-                    Span::raw("Create a GitHub repository"),
+                    Span::styled("Administration", Style::default().fg(t.text_emphasis)),
+                    Span::raw(" read & write"),
                 ]),
                 Line::from(vec![
                     Span::styled("  • ", t.muted_style()),
-                    Span::raw("Set up syncing for you"),
+                    Span::styled("Contents", Style::default().fg(t.text_emphasis)),
+                    Span::raw(" read & write"),
                 ]),
                 Line::from(""),
-                Line::from(Span::styled("Requires:", Style::default().fg(t.primary))),
-                Line::from("  • GitHub account"),
-                Line::from("  • Personal Access Token (PAT)"),
+                Line::from(Span::styled(
+                    "Create a token:",
+                    Style::default().fg(t.primary),
+                )),
+                Line::from(Span::styled(
+                    "  github.com/settings/tokens",
+                    Style::default().fg(t.text_muted),
+                )),
+                Line::from(Span::styled(
+                    "  (classic: select 'repo' scope)",
+                    Style::default().fg(t.text_muted),
+                )),
             ]),
             StorageMethod::Local => Text::from(vec![
                 Line::from(Span::styled(
@@ -633,8 +650,12 @@ impl StorageSetupScreen {
                         Line::from("    (to create dotstate-storage repo)"),
                         Line::from("  Contents: Read & write"),
                         Line::from("    (to sync your dotfiles)"),
-                        Line::from("  Metadata: Read-only"),
-                        Line::from("    (to check if repo already exists)"),
+                        Line::from(""),
+                        Line::from(Span::styled("Note:", Style::default().fg(t.text_muted))),
+                        Line::from(Span::styled(
+                            "  Metadata is auto-included by GitHub.",
+                            Style::default().fg(t.text_muted),
+                        )),
                         Line::from(""),
                         Line::from(Span::styled("Tip:", Style::default().fg(t.success))),
                         Line::from("  For initial setup, grant access to"),
