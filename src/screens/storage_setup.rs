@@ -17,7 +17,7 @@ use crate::utils::{
 };
 use crate::widgets::{Menu, MenuItem, MenuState, TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
+use crossterm::event::{Event, KeyEventKind};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -1106,32 +1106,6 @@ impl StorageSetupScreen {
             }
         }
     }
-
-    /// Debug mode: cycle through states (debug builds only)
-    #[cfg(debug_assertions)]
-    fn debug_cycle(&mut self) -> ScreenAction {
-        match (&self.state.focus, &self.state.method) {
-            (StorageSetupFocus::MethodList, StorageMethod::GitHub) => {
-                self.state.method = StorageMethod::Local;
-                self.state.menu_state.select(Some(1));
-            }
-            (StorageSetupFocus::MethodList, StorageMethod::Local) => {
-                self.state.focus = StorageSetupFocus::Form;
-                self.state.method = StorageMethod::GitHub;
-                self.state.menu_state.select(Some(0));
-            }
-            (StorageSetupFocus::Form, StorageMethod::GitHub) => {
-                self.state.method = StorageMethod::Local;
-                self.state.menu_state.select(Some(1));
-            }
-            (StorageSetupFocus::Form, StorageMethod::Local) => {
-                self.state.focus = StorageSetupFocus::MethodList;
-                self.state.method = StorageMethod::GitHub;
-                self.state.menu_state.select(Some(0));
-            }
-        }
-        ScreenAction::Refresh
-    }
 }
 
 impl Screen for StorageSetupScreen {
@@ -1231,12 +1205,6 @@ impl Screen for StorageSetupScreen {
         if let Event::Key(key) = event {
             if key.kind != KeyEventKind::Press {
                 return Ok(ScreenAction::None);
-            }
-
-            // Debug mode: F12 cycles through states
-            #[cfg(debug_assertions)]
-            if key.code == KeyCode::F(12) {
-                return Ok(self.debug_cycle());
             }
 
             let action = ctx.config.keymap.get_action(key.code, key.modifiers);
