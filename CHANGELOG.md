@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.2.18] - 2025-01-25
+
 ### Added
 
 - **Storage Setup**: New unified storage setup screen with two-pane layout matching settings screen pattern, improving first-time user experience
