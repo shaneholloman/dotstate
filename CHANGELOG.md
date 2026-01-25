@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Storage Setup**: Token update now validates by checking repo access (works with scoped tokens)
 - **Storage Setup**: Token update now updates the git remote URL (token is embedded in origin URL)
 - **Storage Setup**: Fixed keybindings like 'q' (quit) and 't' (theme) being triggered instead of typing characters in text input fields
+- **Storage Setup**: Token validation now accepts both classic (`ghp_`) and fine-grained (`github_pat_`) tokens
+- **Storage Setup**: Improved help text to explain permission requirements for both token types (classic needs 'repo' scope, fine-grained needs 'Contents: Read and write')
+- **Sync**: Fixed empty commits being created on sync retry when previous attempt committed but failed to push
+- **Git**: Improved push error messages to explain token permission requirements for both classic and fine-grained tokens
+
+### Removed
+
+- **GitHub Auth Screen**: Removed legacy `github_auth.rs` screen, replaced by the new `StorageSetupScreen`
 
 ---
 

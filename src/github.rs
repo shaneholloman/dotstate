@@ -67,7 +67,9 @@ impl GitHubClient {
         info!(
             "Token starts with: {}",
             if self.token.starts_with("ghp_") {
-                "ghp_ (correct)"
+                "ghp_ (classic)"
+            } else if self.token.starts_with("github_pat_") {
+                "github_pat_ (fine-grained)"
             } else {
                 &self.token[..self.token.len().min(4)]
             }
@@ -124,9 +126,10 @@ impl GitHubClient {
                     Common issues:\n\
                     • Token may be expired - check https://github.com/settings/tokens\n\
                     • Token may have been revoked\n\
-                    • Make sure you copied the entire token (starts with 'ghp_')\n\
-                    • Token should be 40+ characters long\n\
+                    • Make sure you copied the entire token\n\
+                      (Classic: 'ghp_...', Fine-grained: 'github_pat_...')\n\
                     • For CLASSIC tokens: 'repo' scope should be checked\n\
+                    • For fine-grained tokens: ensure repo access is granted\n\
                     • Try generating a new token if this one doesn't work\n\n\
                     Check console/logs for detailed request information."
                 );

@@ -7,8 +7,7 @@ use std::time::Instant;
 pub enum Screen {
     MainMenu,
     DotfileSelection,
-    GitHubAuth,
-    StorageSetup, // New unified storage setup screen
+    StorageSetup,
     SyncWithRemote,
     ManageProfiles,
     ProfileSelection, // For selecting which profile to activate after setup
@@ -403,7 +402,6 @@ pub enum InstallationStatus {
 pub struct UiState {
     pub current_screen: Screen,
     pub selected_index: usize,
-    pub github_auth: GitHubAuthState,
     pub has_changes_to_push: bool, // Whether there are uncommitted or unpushed changes
     pub git_status: Option<crate::services::git_service::GitStatus>, // Detailed git status
     /// State for profile selection after GitHub setup
@@ -426,7 +424,6 @@ impl UiState {
         Self {
             current_screen: Screen::MainMenu,
             selected_index: 0,
-            github_auth: GitHubAuthState::default(),
             has_changes_to_push: false,
             git_status: None,
             profile_selection: ProfileSelectionState::default(),
@@ -439,7 +436,6 @@ impl UiState {
 // Legacy render functions removed - replaced by components:
 // - render_welcome() -> WelcomeComponent
 // - render_main_menu() -> MainMenuComponent
-// - render_github_auth() -> GitHubAuthComponent
 // - render_message() -> MessageComponent
 // - render_synced_files() -> SyncedFilesComponent
 // - render_dotfile_selection() -> DotfileSelectionScreen (self-contained)

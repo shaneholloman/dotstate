@@ -315,122 +315,119 @@ impl GitService {
             };
         }
 
-        // Step 1: Commit all changes
-        let commit_msg = git_mgr
-            .generate_commit_message()
-            .unwrap_or_else(|_| "Update dotfiles".to_string());
+        // Step 1: Only commit if there are uncommitted changes
+        // This prevents creating empty commits on retry after a failed push
+        let has_changes = git_mgr.has_uncommitted_changes().unwrap_or(false);
 
-        match git_mgr.commit_all(&commit_msg) {
-            Ok(_) => {
-                // Step 2: Pull with rebase
-                match git_mgr.pull_with_rebase("origin", &branch, token) {
-                    Ok(pulled_count) => {
-                        // Step 3: Push to remote
-                        match git_mgr.push("origin", &branch, token) {
-                            Ok(_) => {
-                                let mut success_msg = format!(
-                                    "✓ Successfully synced with remote!\n\n\
-                                    Branch: {}\n\
-                                    Repository: {:?}",
-                                    branch, repo_path
-                                );
-                                if pulled_count > 0 {
-                                    success_msg.push_str(&format!(
-                                        "\n\nPulled {} change(s) from remote.",
-                                        pulled_count
-                                    ));
+        if has_changes {
+            let commit_msg = git_mgr
+                .generate_commit_message()
+                .unwrap_or_else(|_| "Update dotfiles".to_string());
 
-                                    // Step 4: Ensure symlinks for any new files pulled from remote
-                                    // This is efficient - only creates symlinks for missing files
-                                    use crate::services::ProfileService;
-                                    match ProfileService::ensure_profile_symlinks(
-                                        repo_path,
-                                        &config.active_profile,
-                                        config.backup_enabled,
-                                    ) {
-                                        Ok((created, _skipped, errors)) => {
-                                            if created > 0 {
-                                                success_msg.push_str(&format!(
-                                                    "\nCreated {} symlink(s) for new files.",
-                                                    created
-                                                ));
-                                            }
-                                            if !errors.is_empty() {
-                                                success_msg.push_str(&format!(
-                                                    "\n\nWarning: {} error(s) creating symlinks:\n{}",
-                                                    errors.len(),
-                                                    errors.join("\n")
-                                                ));
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to ensure symlinks after pull: {}", e);
-                                            success_msg.push_str(&format!(
-                                                "\n\nWarning: Failed to create symlinks for new files: {}",
-                                                e
-                                            ));
-                                        }
-                                    }
+            if let Err(e) = git_mgr.commit_all(&commit_msg) {
+                return SyncResult {
+                    success: false,
+                    message: Self::format_error_chain("Failed to commit changes", &e),
+                    pulled_count: None,
+                };
+            }
+        }
 
-                                    // Also ensure common symlinks
-                                    match ProfileService::ensure_common_symlinks(
-                                        repo_path,
-                                        config.backup_enabled,
-                                    ) {
-                                        Ok((created, _skipped, errors)) => {
-                                            if created > 0 {
-                                                success_msg.push_str(&format!(
-                                                    "\nCreated {} common symlink(s).",
-                                                    created
-                                                ));
-                                            }
-                                            if !errors.is_empty() {
-                                                success_msg.push_str(&format!(
-                                                    "\n\nWarning: {} error(s) creating common symlinks:\n{}",
-                                                    errors.len(),
-                                                    errors.join("\n")
-                                                ));
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!(
-                                                "Failed to ensure common symlinks after pull: {}",
-                                                e
-                                            );
-                                            success_msg.push_str(&format!(
-                                                "\n\nWarning: Failed to create common symlinks: {}",
-                                                e
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    success_msg.push_str("\n\nNo changes pulled from remote.");
-                                }
-                                SyncResult {
-                                    success: true,
-                                    message: success_msg,
-                                    pulled_count: Some(pulled_count),
-                                }
-                            }
-                            Err(e) => SyncResult {
-                                success: false,
-                                message: Self::format_error_chain("Failed to push to remote", &e),
-                                pulled_count: Some(pulled_count),
-                            },
-                        }
-                    }
-                    Err(e) => SyncResult {
-                        success: false,
-                        message: Self::format_error_chain("Failed to pull from remote", &e),
-                        pulled_count: None,
-                    },
+        // Step 2: Pull with rebase
+        let pulled_count = match git_mgr.pull_with_rebase("origin", &branch, token) {
+            Ok(count) => count,
+            Err(e) => {
+                return SyncResult {
+                    success: false,
+                    message: Self::format_error_chain("Failed to pull from remote", &e),
+                    pulled_count: None,
                 }
             }
-            Err(e) => SyncResult {
+        };
+
+        // Step 3: Push to remote
+        if let Err(e) = git_mgr.push("origin", &branch, token) {
+            return SyncResult {
                 success: false,
-                message: Self::format_error_chain("Failed to commit changes", &e),
-                pulled_count: None,
-            },
+                message: Self::format_error_chain("Failed to push to remote", &e),
+                pulled_count: Some(pulled_count),
+            };
+        }
+
+        // Success! Build the success message
+        let mut success_msg = format!(
+            "✓ Successfully synced with remote!\n\n\
+            Branch: {}\n\
+            Repository: {:?}",
+            branch, repo_path
+        );
+
+        if pulled_count > 0 {
+            success_msg.push_str(&format!(
+                "\n\nPulled {} change(s) from remote.",
+                pulled_count
+            ));
+
+            // Step 4: Ensure symlinks for any new files pulled from remote
+            // This is efficient - only creates symlinks for missing files
+            use crate::services::ProfileService;
+            match ProfileService::ensure_profile_symlinks(
+                repo_path,
+                &config.active_profile,
+                config.backup_enabled,
+            ) {
+                Ok((created, _skipped, errors)) => {
+                    if created > 0 {
+                        success_msg
+                            .push_str(&format!("\nCreated {} symlink(s) for new files.", created));
+                    }
+                    if !errors.is_empty() {
+                        success_msg.push_str(&format!(
+                            "\n\nWarning: {} error(s) creating symlinks:\n{}",
+                            errors.len(),
+                            errors.join("\n")
+                        ));
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to ensure symlinks after pull: {}", e);
+                    success_msg.push_str(&format!(
+                        "\n\nWarning: Failed to create symlinks for new files: {}",
+                        e
+                    ));
+                }
+            }
+
+            // Also ensure common symlinks
+            match ProfileService::ensure_common_symlinks(repo_path, config.backup_enabled) {
+                Ok((created, _skipped, errors)) => {
+                    if created > 0 {
+                        success_msg.push_str(&format!("\nCreated {} common symlink(s).", created));
+                    }
+                    if !errors.is_empty() {
+                        success_msg.push_str(&format!(
+                            "\n\nWarning: {} error(s) creating common symlinks:\n{}",
+                            errors.len(),
+                            errors.join("\n")
+                        ));
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to ensure common symlinks after pull: {}", e);
+                    success_msg.push_str(&format!(
+                        "\n\nWarning: Failed to create common symlinks: {}",
+                        e
+                    ));
+                }
+            }
+        } else {
+            success_msg.push_str("\n\nNo changes pulled from remote.");
+        }
+
+        SyncResult {
+            success: true,
+            message: success_msg,
+            pulled_count: Some(pulled_count),
         }
     }
 

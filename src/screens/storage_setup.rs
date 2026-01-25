@@ -613,12 +613,18 @@ impl StorageSetupScreen {
                         Line::from("Personal Access Token for authentication."),
                         Line::from(""),
                         Line::from(Span::styled(
-                            "How to create:",
+                            "Classic token:",
                             Style::default().fg(t.primary),
                         )),
-                        Line::from("  1. Go to github.com/settings/tokens"),
-                        Line::from("  2. Generate new token (classic)"),
-                        Line::from("  3. Select 'repo' scope"),
+                        Line::from("  github.com/settings/tokens"),
+                        Line::from("  Select 'repo' scope"),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "Fine-grained token:",
+                            Style::default().fg(t.primary),
+                        )),
+                        Line::from("  github.com/settings/personal-access-tokens"),
+                        Line::from("  Set 'Contents' to 'Read and write'"),
                     ])
                 }
             }
@@ -995,15 +1001,10 @@ impl StorageSetupScreen {
                 // User is updating their token
                 let token = self.state.token_input.text_trimmed().to_string();
 
-                // Validate token
-                if !token.starts_with("ghp_") {
-                    self.state.error_message = Some("Token must start with 'ghp_'".to_string());
-                    return Ok(ScreenAction::None);
-                }
-
-                if token.len() < 40 {
+                // Validate token (ghp_ for classic, github_pat_ for fine-grained)
+                if !token.starts_with("ghp_") && !token.starts_with("github_pat_") {
                     self.state.error_message =
-                        Some(format!("Token too short: {} chars (need 40+)", token.len()));
+                        Some("Token must start with 'ghp_' or 'github_pat_'".to_string());
                     return Ok(ScreenAction::None);
                 }
 
@@ -1022,15 +1023,10 @@ impl StorageSetupScreen {
                 let token = self.state.token_input.text_trimmed().to_string();
                 let repo_name = self.state.repo_name_input.text_trimmed().to_string();
 
-                // Validate token
-                if !token.starts_with("ghp_") {
-                    self.state.error_message = Some("Token must start with 'ghp_'".to_string());
-                    return Ok(ScreenAction::None);
-                }
-
-                if token.len() < 40 {
+                // Validate token (ghp_ for classic, github_pat_ for fine-grained)
+                if !token.starts_with("ghp_") && !token.starts_with("github_pat_") {
                     self.state.error_message =
-                        Some(format!("Token too short: {} chars (need 40+)", token.len()));
+                        Some("Token must start with 'ghp_' or 'github_pat_'".to_string());
                     return Ok(ScreenAction::None);
                 }
 

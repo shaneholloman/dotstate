@@ -12,7 +12,7 @@
 //! │  │               Screen Router                     │    │
 //! │  │  match current_screen {                         │    │
 //! │  │    MainMenu => main_menu.handle_event(...)     │    │
-//! │  │    GitHubAuth => github_auth.handle_event(...) │    │
+//! │  │    StorageSetup => storage_setup.handle_event(...) │    │
 //! │  │    ...                                          │    │
 //! │  │  }                                              │    │
 //! │  └────────────────────────────────────────────────┘    │
@@ -49,7 +49,6 @@
 //! ```
 
 pub mod dotfile_selection;
-pub mod github_auth;
 pub mod main_menu;
 pub mod manage_packages;
 pub mod manage_profiles;
@@ -60,7 +59,6 @@ pub mod storage_setup;
 pub mod sync_with_remote;
 
 pub use dotfile_selection::DotfileSelectionScreen;
-pub use github_auth::GitHubAuthScreen;
 pub use main_menu::MainMenuScreen;
 pub use manage_packages::ManagePackagesScreen;
 pub use manage_profiles::ManageProfilesScreen;

@@ -371,8 +371,13 @@ impl GitManager {
                 // Get more detailed error information - redact credentials for safety
                 let remote_url = remote.url().map(redact_credentials).unwrap_or_else(|| "unknown".to_string());
                 format!(
-                    "Failed to push to remote '{}' (URL: {}). \
-                    Check that:\n  - Your GitHub token has 'repo' scope\n  - The remote branch exists\n  - You have push permissions",
+                    "Failed to push to remote '{}' (URL: {}).\n\n\
+                    Check token permissions:\n\
+                    • Classic tokens (ghp_): needs 'repo' scope\n\
+                    • Fine-grained tokens (github_pat_): needs 'Contents' set to 'Read and write'\n\n\
+                    Also verify:\n\
+                    • Remote branch exists\n\
+                    • You have push access to this repository",
                     remote_name, remote_url
                 )
             })?;
