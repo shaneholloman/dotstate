@@ -187,7 +187,7 @@ impl FileManager {
     }
 }
 
-/// Recursively copy a directory
+/// Recursively copy a directory, preserving symlinks
 pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     debug!("Creating destination directory: {:?}", dst);
     fs::create_dir_all(dst)
@@ -195,6 +195,8 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 
     let mut files_copied = 0;
     let mut dirs_copied = 0;
+    let mut symlinks_copied = 0;
+    let mut skipped = 0;
 
     for entry in
         fs::read_dir(src).with_context(|| format!("Failed to read directory: {:?}", src))?
@@ -204,7 +206,58 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
         let file_name = entry.file_name();
         let dst_path = dst.join(&file_name);
 
-        if path.is_dir() {
+        // Check for symlinks first (before is_dir/is_file which follow symlinks)
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            // Preserve symlinks as symlinks
+            match fs::read_link(&path) {
+                Ok(link_target) => {
+                    debug!(
+                        "Copying symlink: {:?} -> {:?} (target: {:?})",
+                        path, dst_path, link_target
+                    );
+                    // Remove existing destination if it exists
+                    if dst_path.symlink_metadata().is_ok() {
+                        let _ = fs::remove_file(&dst_path);
+                    }
+                    #[cfg(unix)]
+                    {
+                        if let Err(e) = std::os::unix::fs::symlink(&link_target, &dst_path) {
+                            warn!(
+                                "Failed to create symlink {:?} -> {:?}: {}",
+                                dst_path, link_target, e
+                            );
+                            skipped += 1;
+                            continue;
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        // On Windows, we need to know if target is file or directory
+                        // For broken symlinks, default to file symlink
+                        let target_is_dir = link_target.is_dir();
+                        let result = if target_is_dir {
+                            std::os::windows::fs::symlink_dir(&link_target, &dst_path)
+                        } else {
+                            std::os::windows::fs::symlink_file(&link_target, &dst_path)
+                        };
+                        if let Err(e) = result {
+                            warn!(
+                                "Failed to create symlink {:?} -> {:?}: {}",
+                                dst_path, link_target, e
+                            );
+                            skipped += 1;
+                            continue;
+                        }
+                    }
+                    symlinks_copied += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to read symlink target for {:?}: {}", path, e);
+                    skipped += 1;
+                }
+            }
+        } else if file_type.is_dir() {
             debug!("Copying subdirectory: {:?} -> {:?}", path, dst_path);
             copy_dir_all(&path, &dst_path)?;
             dirs_copied += 1;
@@ -225,8 +278,8 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     }
 
     debug!(
-        "Directory copy complete: {:?} -> {:?} ({} files, {} dirs)",
-        src, dst, files_copied, dirs_copied
+        "Directory copy complete: {:?} -> {:?} ({} files, {} dirs, {} symlinks, {} skipped)",
+        src, dst, files_copied, dirs_copied, symlinks_copied, skipped
     );
 
     Ok(())

@@ -236,6 +236,17 @@ impl Config {
         }
     }
 
+    /// Reset config to unconfigured state
+    /// Used when setup fails partway through to ensure clean retry
+    pub fn reset_to_unconfigured(&mut self) {
+        self.github = None;
+        self.active_profile = String::new();
+        self.profile_activated = false;
+        self.repo_name = default_repo_name();
+        // Keep repo_path as the default location - it will be recreated on next setup
+        // Keep other settings like backup_enabled, theme, keymap
+    }
+
     /// Get GitHub token from environment variable or config
     /// Priority: DOTSTATE_GITHUB_TOKEN env var > config token
     /// Returns None if neither is set

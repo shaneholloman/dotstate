@@ -1127,11 +1127,19 @@ impl GitManager {
                 .statuses(Some(&mut status_opts))
                 .context("Failed to get status")?;
 
-            let has_untracked = statuses
-                .iter()
-                .any(|s| s.status().contains(git2::Status::WT_NEW));
+            // Check for any working tree changes (new, modified, deleted, renamed, etc.)
+            let has_working_changes = statuses.iter().any(|s| {
+                let status = s.status();
+                status.intersects(
+                    git2::Status::WT_NEW
+                        | git2::Status::WT_MODIFIED
+                        | git2::Status::WT_DELETED
+                        | git2::Status::WT_RENAMED
+                        | git2::Status::WT_TYPECHANGE,
+                )
+            });
 
-            Ok(has_changes || has_untracked)
+            Ok(has_changes || has_working_changes)
         } else {
             // No HEAD, check if index has any entries
             Ok(!index.is_empty())

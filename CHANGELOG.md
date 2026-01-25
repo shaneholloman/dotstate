@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deactivate**: Fixed crash when deactivating with directories containing symlinks (now preserves symlinks as symlinks instead of following them)
+- **Deactivate**: Restore errors during deactivation are now warnings instead of fatal errors, allowing deactivation to complete gracefully
+- **Storage Setup**: Fixed crash when git push fails during setup (now shows error in UI with token permission hints)
+- **Storage Setup**: Config is now reset to "unconfigured" state when setup fails partway through, preventing confused state on retry
+- **Storage Setup**: When cloning an empty repo (from a failed previous setup), a default profile is now created automatically
 - **Storage Setup**: Enter no longer triggers setup process in reconfiguration mode (prevents accidental re-setup)
 - **Storage Setup**: Disabled fields are now properly blocked from input in reconfiguration mode
 - **Storage Setup**: Token update now validates by checking repo access (works with scoped tokens)
@@ -25,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Storage Setup**: Comprehensive help text for fine-grained token permissions (Administration, Contents, Metadata) with setup tips
 - **Documentation**: Updated README and website with detailed GitHub token setup guide for both classic and fine-grained tokens
 - **Sync**: Fixed empty commits being created on sync retry when previous attempt committed but failed to push
+- **Sync**: Fixed sync not detecting modified files (only untracked files were being detected)
 - **Git**: Improved push error messages to explain token permission requirements for both classic and fine-grained tokens
 
 ### Removed

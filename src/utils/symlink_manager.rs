@@ -678,72 +678,106 @@ impl SymlinkManager {
 
         // Restore from repo source first (source of truth)
         // Only fall back to backup if repo file doesn't exist
-        let restored = if tracked.source.exists() {
-            info!(
-                "Restoring from repo source: {:?} -> {:?}",
-                tracked.source, tracked.target
-            );
-            // Create parent directories if needed
-            if let Some(parent) = tracked.target.parent() {
-                if !parent.exists() {
-                    debug!("Creating parent directory for restored file: {:?}", parent);
-                    fs::create_dir_all(parent)
-                        .context("Failed to create parent directory for restored file")?;
-                }
-            }
-
-            // Copy file or directory from repo (source of truth)
-            let metadata = tracked
-                .source
-                .metadata()
-                .context("Failed to read source metadata")?;
-
-            if metadata.is_dir() {
-                debug!(
-                    "Restoring directory from repo: {:?} -> {:?}",
+        // Errors during restore are warnings, not failures - the symlink was still removed
+        let restored = 'restore: {
+            if tracked.source.exists() {
+                info!(
+                    "Restoring from repo source: {:?} -> {:?}",
                     tracked.source, tracked.target
                 );
-                crate::file_manager::copy_dir_all(&tracked.source, &tracked.target)
-                    .context("Failed to copy directory from repo")?;
-                info!("Restored directory from repo: {:?}", tracked.target);
+                // Create parent directories if needed
+                if let Some(parent) = tracked.target.parent() {
+                    if !parent.exists() {
+                        debug!("Creating parent directory for restored file: {:?}", parent);
+                        if let Err(e) = fs::create_dir_all(parent) {
+                            warn!("Failed to create parent directory {:?}: {}", parent, e);
+                            break 'restore false;
+                        }
+                    }
+                }
+
+                // Copy file or directory from repo (source of truth)
+                match tracked.source.metadata() {
+                    Ok(metadata) => {
+                        if metadata.is_dir() {
+                            debug!(
+                                "Restoring directory from repo: {:?} -> {:?}",
+                                tracked.source, tracked.target
+                            );
+                            match crate::file_manager::copy_dir_all(
+                                &tracked.source,
+                                &tracked.target,
+                            ) {
+                                Ok(()) => {
+                                    info!("Restored directory from repo: {:?}", tracked.target);
+                                    true
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to restore directory {:?}: {}",
+                                        tracked.target, e
+                                    );
+                                    false
+                                }
+                            }
+                        } else {
+                            let file_size = metadata.len();
+                            debug!(
+                                "Restoring file from repo ({} bytes): {:?} -> {:?}",
+                                file_size, tracked.source, tracked.target
+                            );
+                            match fs::copy(&tracked.source, &tracked.target) {
+                                Ok(_) => {
+                                    info!("Restored file from repo: {:?}", tracked.target);
+                                    true
+                                }
+                                Err(e) => {
+                                    warn!("Failed to restore file {:?}: {}", tracked.target, e);
+                                    false
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to read metadata for {:?}: {}", tracked.source, e);
+                        false
+                    }
+                }
             } else {
-                let file_size = metadata.len();
-                debug!(
-                    "Restoring file from repo ({} bytes): {:?} -> {:?}",
-                    file_size, tracked.source, tracked.target
-                );
-                fs::copy(&tracked.source, &tracked.target)
-                    .context("Failed to copy file from repo")?;
-                info!("Restored file from repo: {:?}", tracked.target);
-            }
-            true
-        } else {
-            // Repo file doesn't exist - try backup as last resort
-            if let Some(backup) = &tracked.backup {
-                if backup.exists() {
-                    warn!(
-                        "Repo file {:?} not found, restoring from backup {:?}",
-                        tracked.source, backup
-                    );
-                    // Restore from backup (last resort)
-                    debug!(
-                        "Restoring from backup: {:?} -> {:?}",
-                        backup, tracked.target
-                    );
-                    fs::rename(backup, &tracked.target).context("Failed to restore backup")?;
-                    info!("Restored from backup: {:?}", tracked.target);
-                    true
+                // Repo file doesn't exist - try backup as last resort
+                if let Some(backup) = &tracked.backup {
+                    if backup.exists() {
+                        warn!(
+                            "Repo file {:?} not found, restoring from backup {:?}",
+                            tracked.source, backup
+                        );
+                        // Restore from backup (last resort)
+                        debug!(
+                            "Restoring from backup: {:?} -> {:?}",
+                            backup, tracked.target
+                        );
+                        match fs::rename(backup, &tracked.target) {
+                            Ok(()) => {
+                                info!("Restored from backup: {:?}", tracked.target);
+                                true
+                            }
+                            Err(e) => {
+                                warn!("Failed to restore from backup {:?}: {}", backup, e);
+                                false
+                            }
+                        }
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
-            } else {
-                false
             }
         };
 
         if !restored {
             warn!(
-                "Could not restore {:?}: repo file doesn't exist and no backup available",
+                "Could not restore {:?}: repo file doesn't exist, has errors, or no backup available",
                 tracked.target
             );
         }
@@ -1592,6 +1626,10 @@ mod tests {
             .write_all(b"test content")
             .unwrap();
 
+        // Track the symlink target for cleanup
+        let home_dir = crate::utils::get_home_dir();
+        let symlink_target = home_dir.join(".testrc");
+
         // Activate profile
         let result = manager.activate_profile("test-profile", &[".testrc".to_string()]);
         assert!(result.is_ok());
@@ -1599,6 +1637,9 @@ mod tests {
         let operations = result.unwrap();
         assert_eq!(operations.len(), 1);
         assert!(matches!(operations[0].status, OperationStatus::Success));
+
+        // Cleanup: remove the symlink created in the home directory
+        let _ = fs::remove_file(&symlink_target);
     }
 
     // More tests would go here...

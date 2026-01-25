@@ -1608,11 +1608,10 @@ impl App {
                         state.setup_data = Some(setup_data);
                     }
                     Err(e) => {
+                        // Clone failed - clean up any partial state
+                        self.cleanup_failed_setup(true);
                         let state = self.storage_setup_screen.get_state_mut();
                         state.error_message = Some(format!("❌ Failed to clone repository: {}", e));
-                        state.status_message = None;
-                        state.step = StorageSetupStep::Input;
-                        state.setup_data = None;
                         return Ok(());
                     }
                 }
@@ -1655,12 +1654,11 @@ impl App {
                         state.setup_data = Some(setup_data);
                     }
                     Err(e) => {
+                        // GitHub API failed to create repo - ensure config is clean
+                        self.cleanup_failed_setup(false); // No local repo to clean
                         let state = self.storage_setup_screen.get_state_mut();
                         state.error_message =
                             Some(format!("❌ Failed to create repository: {}", e));
-                        state.status_message = None;
-                        state.step = StorageSetupStep::Input;
-                        state.setup_data = None;
                         return Ok(());
                     }
                 }
@@ -1670,14 +1668,12 @@ impl App {
                     Some(u) => u.clone(),
                     None => {
                         error!("Invalid state: username not set in InitializingRepo step");
+                        self.cleanup_failed_setup(false);
                         let state = self.storage_setup_screen.get_state_mut();
                         state.error_message = Some(
                             "❌ Internal error: Username not available. Please try again."
                                 .to_string(),
                         );
-                        state.status_message = None;
-                        state.step = StorageSetupStep::Input;
-                        state.setup_data = None;
                         return Ok(());
                     }
                 };
@@ -1685,61 +1681,86 @@ impl App {
                 let token = setup_data.token.clone();
                 let repo_name = setup_data.repo_name.clone();
                 let repo_path = self.config.repo_path.clone();
+                let default_branch = self.config.default_branch.clone();
+                let active_profile = self.config.active_profile.clone();
 
-                std::fs::create_dir_all(&repo_path)
-                    .context("Failed to create repository directory")?;
+                // Wrap all fallible operations - if any fail, we clean up
+                let init_result: Result<String> = (|| {
+                    std::fs::create_dir_all(&repo_path)
+                        .context("Failed to create repository directory")?;
 
-                let mut git_mgr = GitManager::open_or_init(&repo_path)?;
+                    let mut git_mgr = GitManager::open_or_init(&repo_path)?;
 
-                // Add remote
-                let remote_url = format!(
-                    "https://{}@github.com/{}/{}.git",
-                    token, username, repo_name
-                );
-                git_mgr.add_remote("origin", &remote_url)?;
-
-                // Create initial commit
-                std::fs::write(
-                    repo_path.join("README.md"),
-                    format!("# {}\n\nDotfiles managed by dotstate", repo_name),
-                )?;
-
-                // Create profile manifest with default profile
-                let default_profile_name = if self.config.active_profile.is_empty() {
-                    "Personal".to_string()
-                } else {
-                    self.config.active_profile.clone()
-                };
-
-                let manifest = crate::utils::ProfileManifest {
-                    common: crate::utils::profile_manifest::CommonSection::default(),
-                    profiles: vec![crate::utils::profile_manifest::ProfileInfo {
-                        name: default_profile_name.clone(),
-                        description: None,
-                        synced_files: Vec::new(),
-                        packages: Vec::new(),
-                    }],
-                };
-                manifest.save(&repo_path)?;
-
-                git_mgr.commit_all("Initial commit")?;
-
-                let current_branch = git_mgr
-                    .get_current_branch()
-                    .unwrap_or_else(|| self.config.default_branch.clone());
-
-                // Before pushing, fetch and merge any remote commits
-                if let Err(e) = git_mgr.pull("origin", &current_branch, Some(&token)) {
-                    info!(
-                        "Could not pull from remote (this is normal for new repos): {}",
-                        e
+                    // Add remote
+                    let remote_url = format!(
+                        "https://{}@github.com/{}/{}.git",
+                        token, username, repo_name
                     );
-                } else {
-                    info!("Successfully pulled from remote before pushing");
-                }
+                    git_mgr.add_remote("origin", &remote_url)?;
 
-                git_mgr.push("origin", &current_branch, Some(&token))?;
-                git_mgr.set_upstream_tracking("origin", &current_branch)?;
+                    // Create initial commit
+                    std::fs::write(
+                        repo_path.join("README.md"),
+                        format!("# {}\n\nDotfiles managed by dotstate", repo_name),
+                    )?;
+
+                    // Create profile manifest with default profile
+                    let default_profile_name = if active_profile.is_empty() {
+                        "Personal".to_string()
+                    } else {
+                        active_profile.clone()
+                    };
+
+                    let manifest = crate::utils::ProfileManifest {
+                        common: crate::utils::profile_manifest::CommonSection::default(),
+                        profiles: vec![crate::utils::profile_manifest::ProfileInfo {
+                            name: default_profile_name.clone(),
+                            description: None,
+                            synced_files: Vec::new(),
+                            packages: Vec::new(),
+                        }],
+                    };
+                    manifest.save(&repo_path)?;
+
+                    git_mgr.commit_all("Initial commit")?;
+
+                    let current_branch = git_mgr
+                        .get_current_branch()
+                        .unwrap_or_else(|| default_branch.clone());
+
+                    // Before pushing, fetch and merge any remote commits
+                    if let Err(e) = git_mgr.pull("origin", &current_branch, Some(&token)) {
+                        info!(
+                            "Could not pull from remote (this is normal for new repos): {}",
+                            e
+                        );
+                    } else {
+                        info!("Successfully pulled from remote before pushing");
+                    }
+
+                    git_mgr
+                        .push("origin", &current_branch, Some(&token))
+                        .context("Failed to push to remote. Check your token permissions:\n• Fine-grained tokens: needs 'Contents' set to 'Read and write'\n• Classic tokens: needs 'repo' scope")?;
+
+                    if let Err(e) = git_mgr.set_upstream_tracking("origin", &current_branch) {
+                        // Non-fatal - log and continue
+                        warn!("Failed to set upstream tracking: {}", e);
+                    }
+
+                    Ok(default_profile_name)
+                })();
+
+                let default_profile_name = match init_result {
+                    Ok(name) => name,
+                    Err(e) => {
+                        error!("Failed to initialize repository: {}", e);
+                        // Clean up the partially created local repo and reset config
+                        self.cleanup_failed_setup(true);
+                        let state = self.storage_setup_screen.get_state_mut();
+                        state.error_message = Some(format!("❌ {}", e));
+                        return Ok(());
+                    }
+                };
 
                 // Update config
                 self.config.github = Some(GitHubConfig {
@@ -1757,6 +1778,11 @@ impl App {
                 let manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
                 self.ui_state.profile_selection.profiles =
                     manifest.profiles.iter().map(|p| p.name.clone()).collect();
+                info!(
+                    "InitializingRepo: loaded {} profiles: {:?}",
+                    self.ui_state.profile_selection.profiles.len(),
+                    self.ui_state.profile_selection.profiles
+                );
                 if !self.ui_state.profile_selection.profiles.is_empty() {
                     self.ui_state.profile_selection.list_state.select(Some(0));
                 }
@@ -1778,25 +1804,67 @@ impl App {
             GitHubSetupStep::DiscoveringProfiles => {
                 let repo_path = self.config.repo_path.clone();
 
-                // Load manifest
-                let mut manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-
-                // Backfill synced_files if empty
-                for profile_info in &mut manifest.profiles {
-                    if profile_info.synced_files.is_empty() {
-                        let profile_dir = repo_path.join(&profile_info.name);
-                        if profile_dir.exists() && profile_dir.is_dir() {
-                            profile_info.synced_files =
-                                list_files_in_profile_dir(&profile_dir, &repo_path)
-                                    .unwrap_or_default();
+                // Load manifest - if this fails, clean up and reset
+                let manifest = match crate::utils::ProfileManifest::load_or_backfill(&repo_path) {
+                    Ok(mut m) => {
+                        // Backfill synced_files if empty
+                        for profile_info in &mut m.profiles {
+                            if profile_info.synced_files.is_empty() {
+                                let profile_dir = repo_path.join(&profile_info.name);
+                                if profile_dir.exists() && profile_dir.is_dir() {
+                                    profile_info.synced_files =
+                                        list_files_in_profile_dir(&profile_dir, &repo_path)
+                                            .unwrap_or_default();
+                                }
+                            }
                         }
+                        if let Err(e) = m.save(&repo_path) {
+                            warn!("Failed to save manifest: {}", e);
+                        }
+                        m
                     }
+                    Err(e) => {
+                        error!("Failed to load manifest: {}", e);
+                        self.cleanup_failed_setup(true);
+                        let state = self.storage_setup_screen.get_state_mut();
+                        state.error_message =
+                            Some(format!("❌ Failed to discover profiles: {}", e));
+                        return Ok(());
+                    }
+                };
+
+                // If no profiles found (e.g., empty repo from failed previous setup), create a default
+                let mut manifest = manifest;
+                if manifest.profiles.is_empty() {
+                    info!("No profiles found in repository, creating default 'Personal' profile");
+                    let default_profile = crate::utils::profile_manifest::ProfileInfo {
+                        name: "Personal".to_string(),
+                        description: None,
+                        synced_files: Vec::new(),
+                        packages: Vec::new(),
+                    };
+                    manifest.profiles.push(default_profile);
+
+                    // Create the profile directory
+                    let profile_dir = repo_path.join("Personal");
+                    if let Err(e) = std::fs::create_dir_all(&profile_dir) {
+                        warn!("Failed to create profile directory: {}", e);
+                    }
+
+                    // Save the manifest
+                    if let Err(e) = manifest.save(&repo_path) {
+                        warn!("Failed to save manifest with default profile: {}", e);
+                    }
+
+                    // Mark this as a new repo so we go to dotfile scanning
+                    setup_data.is_new_repo = true;
                 }
-                manifest.save(&repo_path)?;
 
                 if !manifest.profiles.is_empty() && self.config.active_profile.is_empty() {
                     self.config.active_profile = manifest.profiles[0].name.clone();
-                    self.config.save(&self.config_path)?;
+                    if let Err(e) = self.config.save(&self.config_path) {
+                        warn!("Failed to save config with active profile: {}", e);
+                    }
                 }
 
                 // Set up profile selection state
@@ -1804,6 +1872,11 @@ impl App {
                     manifest.profiles.iter().map(|p| p.name.clone()).collect();
 
                 self.ui_state.profile_selection.profiles = profiles.clone();
+                info!(
+                    "DiscoveringProfiles: loaded {} profiles: {:?}",
+                    profiles.len(),
+                    profiles
+                );
                 if !self.ui_state.profile_selection.profiles.is_empty() {
                     self.ui_state.profile_selection.list_state.select(Some(0));
                 }
@@ -1838,6 +1911,11 @@ impl App {
                 // Delay complete, transition to next screen
                 let profile_count = self.ui_state.profile_selection.profiles.len();
                 let is_new_repo = setup_data.is_new_repo;
+
+                info!(
+                    "Setup complete: profile_count={}, is_new_repo={}, profiles={:?}",
+                    profile_count, is_new_repo, self.ui_state.profile_selection.profiles
+                );
 
                 // Determine target screen
                 let should_scan_dotfiles = is_new_repo && profile_count == 1;
@@ -2141,6 +2219,44 @@ impl App {
     #[allow(dead_code)]
     fn load_manifest(&self) -> Result<crate::utils::ProfileManifest> {
         crate::services::ProfileService::load_manifest(&self.config.repo_path)
+    }
+
+    /// Helper: Reset setup state when setup fails partway through
+    /// This ensures the app returns to a clean "unconfigured" state
+    fn cleanup_failed_setup(&mut self, cleanup_repo: bool) {
+        use tracing::{info, warn};
+
+        info!("Cleaning up failed setup state");
+
+        // Clean up repo directory if requested and it exists
+        if cleanup_repo && self.config.repo_path.exists() {
+            // Only clean up if it's a dotstate-created repo (has .git)
+            if self.config.repo_path.join(".git").exists() {
+                info!(
+                    "Removing partially created repo at {:?}",
+                    self.config.repo_path
+                );
+                if let Err(e) = std::fs::remove_dir_all(&self.config.repo_path) {
+                    warn!("Failed to clean up repo directory: {}", e);
+                }
+            }
+        }
+
+        // Reset config to unconfigured state
+        self.config.reset_to_unconfigured();
+
+        // Save the reset config
+        if let Err(e) = self.config.save(&self.config_path) {
+            warn!("Failed to save reset config: {}", e);
+        }
+
+        // Reset storage setup screen state
+        self.storage_setup_screen.reset();
+
+        // Reset UI state that may have been populated during failed setup
+        self.ui_state.profile_selection.profiles.clear();
+        self.ui_state.profile_selection.list_state.select(None);
+        self.profile_selection_screen.set_profiles(Vec::new());
     }
 
     /// Helper: Get active profile info from manifest
