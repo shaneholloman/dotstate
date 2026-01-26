@@ -13,33 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Storage Setup**: New unified storage setup screen with two-pane layout matching settings screen pattern, improving first-time user experience
-- **Storage Setup**: Full async GitHub setup flow with visual progress tracking (connecting, validating token, creating/cloning repo, discovering profiles)
-- **Storage Setup**: Edit Token functionality in reconfiguration mode (press Enter on token field to update)
-- **Git**: Added `update_remote_token` method to update embedded token in remote URLs
+- **Storage Setup**: New unified storage setup screen with async GitHub flow, visual progress tracking, and edit token functionality in reconfiguration mode
 
 ### Fixed
 
-- **Deactivate**: Fixed crash when deactivating with directories containing symlinks (now preserves symlinks as symlinks instead of following them)
-- **Deactivate**: Restore errors during deactivation are now warnings instead of fatal errors, allowing deactivation to complete gracefully
-- **Storage Setup**: Fixed crash when git push fails during setup (now shows error in UI with token permission hints)
-- **Storage Setup**: Config is now reset to "unconfigured" state when setup fails partway through, preventing confused state on retry
-- **Storage Setup**: When cloning an empty repo (from a failed previous setup), a default profile is now created automatically
-- **Storage Setup**: Enter no longer triggers setup process in reconfiguration mode (prevents accidental re-setup)
-- **Storage Setup**: Disabled fields are now properly blocked from input in reconfiguration mode
-- **Storage Setup**: Token update now validates by checking repo access (works with scoped tokens)
-- **Storage Setup**: Token update now updates the git remote URL (token is embedded in origin URL)
-- **Storage Setup**: Fixed keybindings like 'q' (quit) and 't' (theme) being triggered instead of typing characters in text input fields
-- **Storage Setup**: Token validation now accepts both classic (`ghp_`) and fine-grained (`github_pat_`) tokens
-- **Storage Setup**: Comprehensive help text for fine-grained token permissions (Administration, Contents, Metadata) with setup tips
-- **Documentation**: Updated README and website with detailed GitHub token setup guide for both classic and fine-grained tokens
-- **Sync**: Fixed empty commits being created on sync retry when previous attempt committed but failed to push
+- **Deactivate**: Fixed crash when deactivating directories containing symlinks; restore errors are now warnings instead of fatal
+- **Storage Setup**: Improved error recovery - config resets to unconfigured state on failure, empty repos get default profile created
+- **Storage Setup**: Fixed reconfiguration mode - Enter no longer triggers re-setup, disabled fields block input, token updates work with scoped tokens
+- **Storage Setup**: Fixed global keybindings (q, t) being triggered while typing in text fields
+- **Storage Setup**: Added support for fine-grained tokens (`github_pat_`) with detailed permission help text
 - **Sync**: Fixed sync not detecting modified files (only untracked files were being detected)
-- **Git**: Improved push error messages to explain token permission requirements for both classic and fine-grained tokens
+- **Git**: Improved push error messages with token permission guidance for classic and fine-grained tokens
+- **Documentation**: Updated README with detailed GitHub token setup guide
 
 ### Removed
 
-- **GitHub Auth Screen**: Removed legacy `github_auth.rs` screen, replaced by the new `StorageSetupScreen`
+- **GitHub Auth Screen**: Removed legacy screen, replaced by new `StorageSetupScreen`
 
 ---
 
