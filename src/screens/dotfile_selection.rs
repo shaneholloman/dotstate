@@ -10,6 +10,8 @@ use crate::components::{FileBrowser, FileBrowserResult};
 use crate::config::Config;
 use crate::file_manager::Dotfile;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
+use crate::screens::ActionResult;
+use crate::services::SyncService;
 use crate::styles::{theme as ui_theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::Screen as ScreenId;
 use crate::utils::{
@@ -22,13 +24,14 @@ use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
+use tracing::{debug, info, warn};
 
 use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
     ScrollbarState, StatefulWidget, Wrap,
 };
 use ratatui::Frame;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use syntect::highlighting::Theme;
 use syntect::parsing::SyntaxSet;
 
@@ -37,6 +40,30 @@ use syntect::parsing::SyntaxSet;
 enum DisplayItem {
     Header(String), // Section header
     File(usize),    // Index into state.dotfiles
+}
+
+/// Actions that can be processed by the dotfile selection screen
+#[derive(Debug, Clone)]
+pub enum DotfileAction {
+    /// Scan for dotfiles and refresh the list
+    ScanDotfiles,
+    /// Refresh the file browser entries
+    RefreshFileBrowser,
+    /// Toggle file sync status (add or remove from sync)
+    ToggleFileSync { file_index: usize, is_synced: bool },
+    /// Add a custom file to sync
+    AddCustomFileToSync {
+        full_path: PathBuf,
+        relative_path: String,
+    },
+    /// Update backup enabled setting
+    SetBackupEnabled { enabled: bool },
+    /// Move a file to/from common
+    MoveToCommon {
+        file_index: usize,
+        is_common: bool,
+        profiles_to_cleanup: Vec<String>,
+    },
 }
 
 /// Focus area in dotfile selection screen
@@ -1323,6 +1350,418 @@ impl DotfileSelectionScreen {
         frame.render_widget(dialog, area);
 
         Ok(())
+    }
+
+    // ============================================================================
+    // Action Processing Methods
+    // ============================================================================
+
+    /// Process a dotfile action and return the result.
+    ///
+    /// This is the main dispatcher for all dotfile-related actions.
+    pub fn process_action(
+        &mut self,
+        action: DotfileAction,
+        config: &mut Config,
+        config_path: &Path,
+    ) -> Result<ActionResult> {
+        debug!("Processing dotfile action: {:?}", action);
+
+        match action {
+            DotfileAction::ScanDotfiles => {
+                self.scan_dotfiles(config)?;
+                Ok(ActionResult::None)
+            }
+            DotfileAction::RefreshFileBrowser => {
+                self.refresh_file_browser(config)?;
+                Ok(ActionResult::None)
+            }
+            DotfileAction::ToggleFileSync {
+                file_index,
+                is_synced,
+            } => self.toggle_file_sync(config, file_index, is_synced),
+            DotfileAction::AddCustomFileToSync {
+                full_path,
+                relative_path,
+            } => self.add_custom_file_to_sync(config, config_path, full_path, relative_path),
+            DotfileAction::SetBackupEnabled { enabled } => {
+                self.state.backup_enabled = enabled;
+                Ok(ActionResult::None)
+            }
+            DotfileAction::MoveToCommon {
+                file_index,
+                is_common,
+                profiles_to_cleanup,
+            } => self.move_to_common(config, file_index, is_common, profiles_to_cleanup),
+        }
+    }
+
+    /// Scan for dotfiles and update the state.
+    pub fn scan_dotfiles(&mut self, config: &Config) -> Result<()> {
+        info!("Scanning for dotfiles...");
+
+        let dotfiles = SyncService::scan_dotfiles(config)?;
+        debug!("Found {} dotfiles", dotfiles.len());
+
+        // Update state
+        self.state.dotfiles = dotfiles;
+        self.state.selected_for_sync.clear();
+
+        // Mark synced files as selected
+        for (i, dotfile) in self.state.dotfiles.iter().enumerate() {
+            if dotfile.synced {
+                self.state.selected_for_sync.insert(i);
+            }
+        }
+
+        // Update scrollbar
+        self.state.dotfile_list_scrollbar = self
+            .state
+            .dotfile_list_scrollbar
+            .content_length(self.state.dotfiles.len());
+
+        // Select first file if list is not empty
+        if !self.state.dotfiles.is_empty() && self.state.dotfile_list_state.selected().is_none() {
+            // Find first non-header item
+            let display_items = self.get_display_items(&config.active_profile);
+            for (i, item) in display_items.iter().enumerate() {
+                if matches!(item, DisplayItem::File(_)) {
+                    self.state.dotfile_list_state.select(Some(i));
+                    break;
+                }
+            }
+        }
+
+        info!("Dotfile scan complete");
+        Ok(())
+    }
+
+    /// Refresh the file browser entries.
+    pub fn refresh_file_browser(&mut self, _config: &Config) -> Result<()> {
+        debug!("Refreshing file browser entries");
+        // The file browser component handles its own refresh
+        // This is a placeholder for any additional refresh logic needed
+        Ok(())
+    }
+
+    /// Toggle file sync status (add or remove from sync).
+    pub fn toggle_file_sync(
+        &mut self,
+        config: &Config,
+        file_index: usize,
+        is_synced: bool,
+    ) -> Result<ActionResult> {
+        if file_index >= self.state.dotfiles.len() {
+            warn!("Invalid file index: {}", file_index);
+            return Ok(ActionResult::ShowToast {
+                message: "Invalid file selection".to_string(),
+                variant: crate::widgets::ToastVariant::Error,
+            });
+        }
+
+        if is_synced {
+            self.remove_file_from_sync(config, file_index)
+        } else {
+            self.add_file_to_sync(config, file_index)
+        }
+    }
+
+    /// Add a file to sync.
+    fn add_file_to_sync(&mut self, config: &Config, file_index: usize) -> Result<ActionResult> {
+        let dotfile = &self.state.dotfiles[file_index];
+        let relative_path = dotfile.relative_path.to_string_lossy().to_string();
+        let full_path = dotfile.original_path.clone();
+
+        info!("Adding file to sync: {}", relative_path);
+
+        match SyncService::add_file_to_sync(
+            config,
+            &full_path,
+            &relative_path,
+            self.state.backup_enabled,
+        ) {
+            Ok(crate::services::AddFileResult::Success) => {
+                // Update state
+                self.state.selected_for_sync.insert(file_index);
+                self.state.dotfiles[file_index].synced = true;
+
+                info!("Successfully added file to sync: {}", relative_path);
+                Ok(ActionResult::ShowToast {
+                    message: format!("Added {} to sync", relative_path),
+                    variant: crate::widgets::ToastVariant::Success,
+                })
+            }
+            Ok(crate::services::AddFileResult::AlreadySynced) => {
+                // Already synced - just update state to be consistent
+                self.state.selected_for_sync.insert(file_index);
+                self.state.dotfiles[file_index].synced = true;
+
+                Ok(ActionResult::ShowToast {
+                    message: format!("{} is already synced", relative_path),
+                    variant: crate::widgets::ToastVariant::Info,
+                })
+            }
+            Ok(crate::services::AddFileResult::ValidationFailed(msg)) => {
+                warn!("Validation failed for {}: {}", relative_path, msg);
+                Ok(ActionResult::ShowDialog {
+                    title: "Cannot Add File".to_string(),
+                    content: msg,
+                    variant: crate::widgets::DialogVariant::Error,
+                })
+            }
+            Err(e) => {
+                warn!("Error adding file to sync: {}", e);
+                Ok(ActionResult::ShowToast {
+                    message: format!("Error: {}", e),
+                    variant: crate::widgets::ToastVariant::Error,
+                })
+            }
+        }
+    }
+
+    /// Remove a file from sync.
+    fn remove_file_from_sync(
+        &mut self,
+        config: &Config,
+        file_index: usize,
+    ) -> Result<ActionResult> {
+        let dotfile = &self.state.dotfiles[file_index];
+        let relative_path = dotfile.relative_path.to_string_lossy().to_string();
+
+        // Check if this is a common file
+        if dotfile.is_common {
+            info!("Removing common file from sync: {}", relative_path);
+
+            match SyncService::remove_common_file_from_sync(config, &relative_path) {
+                Ok(crate::services::RemoveFileResult::Success) => {
+                    // Update state
+                    self.state.selected_for_sync.remove(&file_index);
+                    self.state.dotfiles[file_index].synced = false;
+                    self.state.dotfiles[file_index].is_common = false;
+
+                    info!(
+                        "Successfully removed common file from sync: {}",
+                        relative_path
+                    );
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Removed {} from sync", relative_path),
+                        variant: crate::widgets::ToastVariant::Success,
+                    })
+                }
+                Ok(crate::services::RemoveFileResult::NotSynced) => {
+                    // Not synced - just update state to be consistent
+                    self.state.selected_for_sync.remove(&file_index);
+                    self.state.dotfiles[file_index].synced = false;
+
+                    Ok(ActionResult::ShowToast {
+                        message: format!("{} is not synced", relative_path),
+                        variant: crate::widgets::ToastVariant::Info,
+                    })
+                }
+                Err(e) => {
+                    warn!("Error removing common file from sync: {}", e);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Error: {}", e),
+                        variant: crate::widgets::ToastVariant::Error,
+                    })
+                }
+            }
+        } else {
+            info!("Removing file from sync: {}", relative_path);
+
+            match SyncService::remove_file_from_sync(config, &relative_path) {
+                Ok(crate::services::RemoveFileResult::Success) => {
+                    // Update state
+                    self.state.selected_for_sync.remove(&file_index);
+                    self.state.dotfiles[file_index].synced = false;
+
+                    info!("Successfully removed file from sync: {}", relative_path);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Removed {} from sync", relative_path),
+                        variant: crate::widgets::ToastVariant::Success,
+                    })
+                }
+                Ok(crate::services::RemoveFileResult::NotSynced) => {
+                    // Not synced - just update state to be consistent
+                    self.state.selected_for_sync.remove(&file_index);
+                    self.state.dotfiles[file_index].synced = false;
+
+                    Ok(ActionResult::ShowToast {
+                        message: format!("{} is not synced", relative_path),
+                        variant: crate::widgets::ToastVariant::Info,
+                    })
+                }
+                Err(e) => {
+                    warn!("Error removing file from sync: {}", e);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Error: {}", e),
+                        variant: crate::widgets::ToastVariant::Error,
+                    })
+                }
+            }
+        }
+    }
+
+    /// Add a custom file to sync.
+    pub fn add_custom_file_to_sync(
+        &mut self,
+        config: &mut Config,
+        config_path: &Path,
+        full_path: PathBuf,
+        relative_path: String,
+    ) -> Result<ActionResult> {
+        info!("Adding custom file to sync: {}", relative_path);
+
+        // Validate the file exists
+        if !full_path.exists() {
+            return Ok(ActionResult::ShowDialog {
+                title: "File Not Found".to_string(),
+                content: format!("The file {} does not exist", full_path.display()),
+                variant: crate::widgets::DialogVariant::Error,
+            });
+        }
+
+        // Validate the file is safe to add
+        let (is_safe, reason) = crate::utils::is_safe_to_add(&full_path, &config.repo_path);
+        if !is_safe {
+            return Ok(ActionResult::ShowDialog {
+                title: "Cannot Add File".to_string(),
+                content: reason.unwrap_or_else(|| "Cannot add this file".to_string()),
+                variant: crate::widgets::DialogVariant::Error,
+            });
+        }
+
+        // Add to sync using SyncService
+        match SyncService::add_file_to_sync(
+            config,
+            &full_path,
+            &relative_path,
+            self.state.backup_enabled,
+        ) {
+            Ok(crate::services::AddFileResult::Success) => {
+                // Add to custom files in config if not already present
+                if !config.custom_files.contains(&relative_path) {
+                    config.custom_files.push(relative_path.clone());
+                    // Save config
+                    if let Err(e) = config.save(config_path) {
+                        warn!("Failed to save config: {}", e);
+                    }
+                }
+
+                // Refresh dotfile list
+                self.scan_dotfiles(config)?;
+
+                info!("Successfully added custom file to sync: {}", relative_path);
+                Ok(ActionResult::ShowToast {
+                    message: format!("Added {} to sync", relative_path),
+                    variant: crate::widgets::ToastVariant::Success,
+                })
+            }
+            Ok(crate::services::AddFileResult::AlreadySynced) => Ok(ActionResult::ShowToast {
+                message: format!("{} is already synced", relative_path),
+                variant: crate::widgets::ToastVariant::Info,
+            }),
+            Ok(crate::services::AddFileResult::ValidationFailed(msg)) => {
+                warn!(
+                    "Validation failed for custom file {}: {}",
+                    relative_path, msg
+                );
+                Ok(ActionResult::ShowDialog {
+                    title: "Cannot Add File".to_string(),
+                    content: msg,
+                    variant: crate::widgets::DialogVariant::Error,
+                })
+            }
+            Err(e) => {
+                warn!("Error adding custom file to sync: {}", e);
+                Ok(ActionResult::ShowToast {
+                    message: format!("Error: {}", e),
+                    variant: crate::widgets::ToastVariant::Error,
+                })
+            }
+        }
+    }
+
+    /// Move a file to/from common.
+    pub fn move_to_common(
+        &mut self,
+        config: &Config,
+        file_index: usize,
+        is_common: bool,
+        profiles_to_cleanup: Vec<String>,
+    ) -> Result<ActionResult> {
+        if file_index >= self.state.dotfiles.len() {
+            warn!("Invalid file index: {}", file_index);
+            return Ok(ActionResult::ShowToast {
+                message: "Invalid file selection".to_string(),
+                variant: crate::widgets::ToastVariant::Error,
+            });
+        }
+
+        let dotfile = &self.state.dotfiles[file_index];
+        let relative_path = dotfile.relative_path.to_string_lossy().to_string();
+
+        if is_common {
+            // Move from common to profile
+            info!("Moving {} from common to profile", relative_path);
+
+            match SyncService::move_from_common(config, &relative_path) {
+                Ok(()) => {
+                    // Update state
+                    self.state.dotfiles[file_index].is_common = false;
+
+                    info!("Successfully moved {} to profile", relative_path);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Moved {} to profile", relative_path),
+                        variant: crate::widgets::ToastVariant::Success,
+                    })
+                }
+                Err(e) => {
+                    warn!("Error moving file from common: {}", e);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Error: {}", e),
+                        variant: crate::widgets::ToastVariant::Error,
+                    })
+                }
+            }
+        } else {
+            // Move from profile to common
+            info!(
+                "Moving {} from profile to common (cleanup: {} profiles)",
+                relative_path,
+                profiles_to_cleanup.len()
+            );
+
+            let result = if profiles_to_cleanup.is_empty() {
+                SyncService::move_to_common(config, &relative_path)
+            } else {
+                SyncService::move_to_common_with_cleanup(
+                    config,
+                    &relative_path,
+                    &profiles_to_cleanup,
+                )
+            };
+
+            match result {
+                Ok(()) => {
+                    // Update state
+                    self.state.dotfiles[file_index].is_common = true;
+
+                    info!("Successfully moved {} to common", relative_path);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Moved {} to common", relative_path),
+                        variant: crate::widgets::ToastVariant::Success,
+                    })
+                }
+                Err(e) => {
+                    warn!("Error moving file to common: {}", e);
+                    Ok(ActionResult::ShowToast {
+                        message: format!("Error: {}", e),
+                        variant: crate::widgets::ToastVariant::Error,
+                    })
+                }
+            }
+        }
     }
 }
 

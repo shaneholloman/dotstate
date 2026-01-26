@@ -63,7 +63,7 @@ pub use main_menu::MainMenuScreen;
 pub use manage_packages::ManagePackagesScreen;
 pub use manage_profiles::ManageProfilesScreen;
 pub use profile_selection::ProfileSelectionScreen;
-pub use screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
+pub use screen_trait::{ActionResult, RenderContext, Screen, ScreenAction, ScreenContext};
 pub use settings::SettingsScreen;
 pub use storage_setup::StorageSetupScreen;
 pub use sync_with_remote::SyncWithRemoteScreen;

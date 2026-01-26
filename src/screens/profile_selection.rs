@@ -5,15 +5,28 @@
 
 use crate::config::Config;
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
+use crate::screens::ActionResult;
+use crate::services::ProfileService;
 use crate::styles::theme;
 use crate::ui::{ProfileSelectionState, Screen as ScreenId};
-use crate::widgets::{TextInputWidget, TextInputWidgetExt};
+use crate::widgets::{DialogVariant, TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
 use ratatui::Frame;
+use std::path::Path;
+use tracing::{error, info};
+
+/// Actions that can be processed by the profile selection screen
+#[derive(Debug, Clone)]
+pub enum ProfileSelectionAction {
+    /// Create a new profile and then activate it
+    CreateAndActivateProfile { name: String },
+    /// Activate an existing profile
+    ActivateProfile { name: String },
+}
 
 /// Profile selection screen controller.
 pub struct ProfileSelectionScreen {
@@ -182,6 +195,122 @@ impl ProfileSelectionScreen {
                 .get_key_display_for_action(crate::keymap::Action::Cancel)
         );
         let _ = Footer::render(frame, footer_area, &footer_text);
+    }
+
+    /// Process a profile selection action.
+    ///
+    /// This method dispatches actions to the appropriate handler methods.
+    ///
+    /// # Arguments
+    ///
+    /// * `action` - The action to process.
+    /// * `config` - Mutable reference to the application configuration.
+    /// * `config_path` - Path to the configuration file.
+    ///
+    /// # Returns
+    ///
+    /// An `ActionResult` indicating the outcome of the action.
+    pub fn process_action(
+        &mut self,
+        action: ProfileSelectionAction,
+        config: &mut Config,
+        config_path: &Path,
+    ) -> Result<ActionResult> {
+        match action {
+            ProfileSelectionAction::CreateAndActivateProfile { name } => {
+                // First create the profile
+                match ProfileService::create_profile(&config.repo_path, &name, None, None) {
+                    Ok(sanitized_name) => {
+                        info!("Created profile '{}' during setup", sanitized_name);
+                        // Then activate it
+                        self.activate_profile(config, config_path, &sanitized_name)
+                    }
+                    Err(e) => {
+                        error!("Failed to create profile '{}': {}", name, e);
+                        Ok(ActionResult::ShowDialog {
+                            title: "Profile Creation Failed".to_string(),
+                            content: format!("Failed to create profile '{}': {}", name, e),
+                            variant: DialogVariant::Error,
+                        })
+                    }
+                }
+            }
+            ProfileSelectionAction::ActivateProfile { name } => {
+                self.activate_profile(config, config_path, &name)
+            }
+        }
+    }
+
+    /// Activate a profile and navigate to the main menu.
+    ///
+    /// This method sets the active profile in config, saves the config,
+    /// calls ProfileService to activate the profile (create symlinks),
+    /// marks the profile as activated, and navigates to the main menu.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Mutable reference to the application configuration.
+    /// * `config_path` - Path to the configuration file.
+    /// * `profile_name` - Name of the profile to activate.
+    ///
+    /// # Returns
+    ///
+    /// An `ActionResult` indicating navigation or error dialog.
+    fn activate_profile(
+        &mut self,
+        config: &mut Config,
+        config_path: &Path,
+        profile_name: &str,
+    ) -> Result<ActionResult> {
+        // Set active profile and save config
+        config.active_profile = profile_name.to_string();
+        if let Err(e) = config.save(config_path) {
+            error!("Failed to save config with active profile: {}", e);
+            return Ok(ActionResult::ShowDialog {
+                title: "Configuration Error".to_string(),
+                content: format!("Failed to save configuration: {}", e),
+                variant: DialogVariant::Error,
+            });
+        }
+
+        // Call ProfileService to activate the profile (create symlinks)
+        match ProfileService::activate_profile(
+            &config.repo_path,
+            profile_name,
+            config.backup_enabled,
+        ) {
+            Ok(result) => {
+                info!(
+                    "Activated profile '{}' with {} files",
+                    profile_name, result.success_count
+                );
+
+                // Mark as activated and save config again
+                config.profile_activated = true;
+                if let Err(e) = config.save(config_path) {
+                    error!("Failed to save config after activation: {}", e);
+                    return Ok(ActionResult::ShowDialog {
+                        title: "Configuration Error".to_string(),
+                        content: format!("Failed to save configuration after activation: {}", e),
+                        variant: DialogVariant::Error,
+                    });
+                }
+
+                // Reset screen state
+                self.reset();
+
+                // Navigate to main menu
+                Ok(ActionResult::Navigate(ScreenId::MainMenu))
+            }
+            Err(e) => {
+                error!("Failed to activate profile '{}': {}", profile_name, e);
+                Ok(ActionResult::ShowDialog {
+                    title: "Activation Failed".to_string(),
+                    content: format!("Failed to activate profile '{}': {}", profile_name, e),
+                    variant: DialogVariant::Error,
+                })
+            }
+        }
     }
 }
 

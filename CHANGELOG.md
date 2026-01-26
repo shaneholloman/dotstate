@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **App Architecture**: Major refactor of `app.rs` - reduced from ~2400 lines to ~1400 lines (40% reduction)
+- **Screens**: `DotfileSelectionScreen`, `ManageProfilesScreen`, `ProfileSelectionScreen` now handle their own actions via `process_action()` methods
+- **Services**: Added `StorageSetupService` for async GitHub repository setup state machine with oneshot channels
+
+### Added
+
+- **Screens**: New `ActionResult` enum for screens to signal toasts, dialogs, and navigation without mutating app state directly
+- **Screens**: New action enums (`DotfileAction`, `ProfileAction`, `ProfileSelectionAction`) for type-safe screen action handling
+
 ---
 
 ## [0.2.18] - 2025-01-25

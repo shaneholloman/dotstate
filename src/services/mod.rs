@@ -34,10 +34,12 @@
 pub mod git_service;
 pub mod package_service;
 pub mod profile_service;
+pub mod storage_setup_service;
 pub mod sync_service;
 
 // Re-export common types
 pub use git_service::GitService;
 pub use package_service::{PackageCreationParams, PackageService};
 pub use profile_service::ProfileService;
+pub use storage_setup_service::{StepHandle, StepResult, StorageSetupService};
 pub use sync_service::{AddFileResult, RemoveFileResult, SyncService};

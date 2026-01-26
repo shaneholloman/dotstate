@@ -1,19 +1,15 @@
-use crate::config::{Config, GitHubConfig};
-use crate::git::GitManager;
-use crate::github::GitHubClient;
+use crate::config::Config;
 use crate::screens::{
-    MainMenuScreen, ManagePackagesScreen, ManageProfilesScreen, Screen as ScreenTrait,
-    StorageSetupScreen, SyncWithRemoteScreen,
+    ActionResult, MainMenuScreen, ManagePackagesScreen, ManageProfilesScreen,
+    Screen as ScreenTrait, StorageSetupScreen, SyncWithRemoteScreen,
 };
 use crate::tui::Tui;
 use crate::ui::{GitHubSetupStep, Screen, UiState};
 use crate::widgets::{Dialog, DialogVariant, Toast, ToastManager};
 
-use crate::screens::dotfile_selection::DotfileSelectionState;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use syntect::parsing::SyntaxSet;
@@ -21,36 +17,6 @@ use tokio::runtime::Runtime;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, trace, warn};
 // Frame and Rect are used in function signatures but imported where needed
-
-/// Count files in a directory (recursively)
-/// List files and directories in a profile directory, returning relative paths from home
-/// Files are stored in the repo as: repo_path/profile_name/.zshrc or repo_path/profile_name/.config/iTerm
-/// We need to return them as: .zshrc or .config/iTerm (relative to home)
-/// This function only lists top-level entries (files and directories), not recursively scanning directories.
-/// This ensures that when a directory like .config/iTerm is synced, we symlink the directory itself,
-/// not individual files inside it.
-fn list_files_in_profile_dir(profile_dir: &Path, _repo_path: &Path) -> Result<Vec<String>> {
-    let mut entries = Vec::new();
-    if profile_dir.is_dir() {
-        for entry in fs::read_dir(profile_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            // List both files and directories at the top level only
-            if path.is_file() || path.is_symlink() || path.is_dir() {
-                // Get relative path from profile directory
-                if let Ok(relative) = path.strip_prefix(profile_dir) {
-                    // Convert to string, handling the path properly
-                    if let Some(relative_str) = relative.to_str() {
-                        // Remove leading ./ if present
-                        let clean_path = relative_str.strip_prefix("./").unwrap_or(relative_str);
-                        entries.push(clean_path.to_string());
-                    }
-                }
-            }
-        }
-    }
-    Ok(entries)
-}
 
 /// State for showing a modal dialog
 #[derive(Debug, Clone)]
@@ -96,6 +62,8 @@ pub struct App {
     git_status_receiver: Option<oneshot::Receiver<crate::services::git_service::GitStatus>>,
     /// Last time git status was checked
     last_git_status_check: Option<std::time::Instant>,
+    /// Receiver for async storage setup step
+    setup_step_handle: Option<crate::services::StepHandle>,
 }
 
 impl App {
@@ -147,6 +115,7 @@ impl App {
             update_check_receiver: None,
             git_status_receiver: None,
             last_git_status_check: None,
+            setup_step_handle: None,
         };
 
         Ok(app)
@@ -268,13 +237,38 @@ impl App {
                 }
             }
 
-            if self.should_quit {
-                break;
+            // Check for storage setup step completion
+            if let Some(handle) = &mut self.setup_step_handle {
+                match handle.receiver.try_recv() {
+                    Ok(Ok(result)) => {
+                        self.handle_setup_step_result(result)?;
+                        self.setup_step_handle = None;
+                    }
+                    Ok(Err(e)) => {
+                        error!("Setup step failed: {}", e);
+                        crate::services::StorageSetupService::cleanup_failed_setup(
+                            &mut self.config,
+                            &self.config_path,
+                            true,
+                        );
+                        self.storage_setup_screen.get_state_mut().error_message =
+                            Some(format!("Setup failed: {}", e));
+                        self.storage_setup_screen.get_state_mut().step =
+                            crate::screens::storage_setup::StorageSetupStep::Input;
+                        self.setup_step_handle = None;
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {
+                        // Still running
+                    }
+                    Err(oneshot::error::TryRecvError::Closed) => {
+                        warn!("Setup step channel closed unexpectedly");
+                        self.setup_step_handle = None;
+                    }
+                }
             }
 
-            // Process storage setup state machine if active (before polling events)
-            if self.storage_setup_screen.needs_tick() {
-                self.process_storage_setup_step()?;
+            if self.should_quit {
+                break;
             }
 
             // Process package checking and installation (managed by screen)
@@ -868,11 +862,11 @@ impl App {
             Screen::DotfileSelection => {
                 // Check for changes when returning to menu
                 self.trigger_git_status_check(false);
-                // Get screen state and update it directly
+                // Reset state and scan dotfiles
                 let state = self.dotfile_selection_screen.get_state_mut();
                 state.status_message = None;
                 state.backup_enabled = self.config.backup_enabled;
-                Self::scan_dotfiles_into(&self.config, state)?;
+                self.dotfile_selection_screen.scan_dotfiles(&self.config)?;
             }
             Screen::SyncWithRemote => {
                 // Reset sync screen state
@@ -1018,23 +1012,31 @@ impl App {
                 repo_name,
                 is_private,
             } => {
-                // Initialize the GitHub setup state machine
                 use crate::screens::storage_setup::StorageSetupStep;
                 use crate::ui::GitHubSetupData;
-                use std::time::Duration;
 
-                let state = self.storage_setup_screen.get_state_mut();
-                state.step = StorageSetupStep::Processing(GitHubSetupStep::Connecting);
-                state.status_message = Some("🔌 Connecting to GitHub...".to_string());
-                state.setup_data = Some(GitHubSetupData {
+                let data = GitHubSetupData {
                     token,
                     repo_name,
                     username: None,
                     repo_exists: None,
                     is_private,
-                    delay_until: Some(std::time::Instant::now() + Duration::from_millis(500)),
+                    delay_until: None,
                     is_new_repo: false,
-                });
+                };
+
+                let state = self.storage_setup_screen.get_state_mut();
+                state.step = StorageSetupStep::Processing(GitHubSetupStep::Connecting);
+                state.status_message = Some("Connecting to GitHub...".to_string());
+                state.setup_data = Some(data.clone());
+
+                // Start async setup
+                self.setup_step_handle = Some(crate::services::StorageSetupService::start_step(
+                    &self.runtime,
+                    GitHubSetupStep::Connecting,
+                    data,
+                    &self.config,
+                ));
             }
             ScreenAction::UpdateGitHubToken { token } => {
                 // Update the GitHub token with validation and remote URL update
@@ -1117,324 +1119,177 @@ impl App {
                 self.ui_state.profile_selection.list_state.select(Some(0));
                 self.ui_state.current_screen = Screen::ProfileSelection;
             }
+            // Profile selection actions - delegate to ProfileSelectionScreen
             ScreenAction::CreateAndActivateProfile { name } => {
-                // Create a new profile and activate it
-                use crate::services::ProfileService;
-                match ProfileService::create_profile(&self.config.repo_path, &name, None, None) {
-                    Ok(_) => {
-                        // Activate the newly created profile
-                        if let Err(e) = self.activate_profile_after_setup(&name) {
-                            error!("Failed to activate profile: {}", e);
-                            self.dialog_state = Some(DialogState {
-                                title: "Activation Failed".to_string(),
-                                content: e.to_string(),
-                                variant: DialogVariant::Error,
-                            });
-                        } else {
-                            self.profile_selection_screen.reset();
-                            self.ui_state.profile_selection = Default::default();
-                            self.ui_state.current_screen = Screen::MainMenu;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to create profile: {}", e);
-                        self.dialog_state = Some(DialogState {
-                            title: "Creation Failed".to_string(),
-                            content: format!("Failed to create profile: {}", e),
-                            variant: DialogVariant::Error,
-                        });
-                    }
-                }
+                use crate::screens::profile_selection::ProfileSelectionAction;
+                let result = self.profile_selection_screen.process_action(
+                    ProfileSelectionAction::CreateAndActivateProfile { name },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::ActivateProfile { name } => {
-                // Activate an existing profile
-                if let Err(e) = self.activate_profile_after_setup(&name) {
-                    error!("Failed to activate profile: {}", e);
-                    self.dialog_state = Some(DialogState {
-                        title: "Activation Failed".to_string(),
-                        content: e.to_string(),
-                        variant: DialogVariant::Error,
-                    });
-                } else {
-                    self.profile_selection_screen.reset();
-                    self.ui_state.profile_selection = Default::default();
-                    self.ui_state.current_screen = Screen::MainMenu;
-                }
+                use crate::screens::profile_selection::ProfileSelectionAction;
+                let result = self.profile_selection_screen.process_action(
+                    ProfileSelectionAction::ActivateProfile { name },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             // Dotfile selection actions
+            // Dotfile selection actions - delegate to screen
             ScreenAction::ScanDotfiles => {
-                let state = self.dotfile_selection_screen.get_state_mut();
-                Self::scan_dotfiles_into(&self.config, state)?;
+                use crate::screens::dotfile_selection::DotfileAction;
+                let result = self.dotfile_selection_screen.process_action(
+                    DotfileAction::ScanDotfiles,
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::RefreshFileBrowser => {
-                let state = self.dotfile_selection_screen.get_state_mut();
-                Self::refresh_file_browser_into(&self.config, state)?;
+                use crate::screens::dotfile_selection::DotfileAction;
+                let result = self.dotfile_selection_screen.process_action(
+                    DotfileAction::RefreshFileBrowser,
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::ToggleFileSync {
                 file_index,
                 is_synced,
             } => {
-                let state = self.dotfile_selection_screen.get_state_mut();
-                let dotfile = state.dotfiles.get(file_index);
-                let filename = dotfile
-                    .map(|d| d.relative_path.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let is_common = dotfile.map(|d| d.is_common).unwrap_or(false);
-
-                if is_synced {
-                    // Check if trying to unsync a common file
-                    if is_common {
-                        self.dialog_state = Some(DialogState {
-                            title: "Cannot Unsync Common File".to_string(),
-                            content: format!(
-                                "\"{}\" is a common file shared across all profiles.\n\n\
-                                To remove it from sync, first move it to your profile \
-                                using the 'Move to Profile' action, then unsync it.",
-                                filename
-                            ),
-                            variant: DialogVariant::Warning,
-                        });
-                    } else {
-                        Self::remove_file_from_sync_with_state(&self.config, state, file_index)?;
-                        self.toast_manager.success(format!("Removed: {}", filename));
-                    }
-                } else {
-                    Self::add_file_to_sync_with_state(&self.config, state, file_index)?;
-                    // Check if there was an error (status_message was set)
-                    if let Some(error_msg) = state.status_message.take() {
-                        self.dialog_state = Some(DialogState {
-                            title: "Sync Failed".to_string(),
-                            content: error_msg,
-                            variant: DialogVariant::Error,
-                        });
-                    } else {
-                        self.toast_manager.success(format!("Added: {}", filename));
-                    }
-                }
+                use crate::screens::dotfile_selection::DotfileAction;
+                let result = self.dotfile_selection_screen.process_action(
+                    DotfileAction::ToggleFileSync {
+                        file_index,
+                        is_synced,
+                    },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::AddCustomFileToSync {
                 full_path,
                 relative_path,
             } => {
-                // Handle custom file sync - may update config
-                self.handle_add_custom_file_to_sync(full_path, relative_path)?;
+                use crate::screens::dotfile_selection::DotfileAction;
+                let result = self.dotfile_selection_screen.process_action(
+                    DotfileAction::AddCustomFileToSync {
+                        full_path,
+                        relative_path,
+                    },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::SetBackupEnabled { enabled } => {
+                use crate::screens::dotfile_selection::DotfileAction;
+                let result = self.dotfile_selection_screen.process_action(
+                    DotfileAction::SetBackupEnabled { enabled },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
+                // Also save config since backup_enabled is a config setting
                 self.config.backup_enabled = enabled;
                 self.config.save(&self.config_path)?;
             }
+            // Profile management actions - delegate to ManageProfilesScreen
             ScreenAction::CreateProfile {
                 name,
                 description,
                 copy_from,
             } => {
-                use crate::services::ProfileService;
-                match ProfileService::create_profile(
-                    &self.config.repo_path,
-                    &name,
-                    description,
-                    copy_from,
-                ) {
-                    Ok(_) => {
-                        // Reload config - but create_profile doesn't affect config.toml
-                        self.config = crate::config::Config::load_or_create(&self.config_path)?;
-                        // Refresh profiles in screen
-                        if let Err(e) = self
-                            .manage_profiles_screen
-                            .refresh_profiles(&self.config.repo_path)
-                        {
-                            error!("Failed to refresh profiles after creation: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to create profile: {}", e);
-                        self.dialog_state = Some(DialogState {
-                            title: "Profile Creation Failed".to_string(),
-                            content: format!("Failed to create profile '{}':\n\n{}", name, e),
-                            variant: DialogVariant::Error,
-                        });
-                    }
-                }
+                use crate::screens::manage_profiles::ProfileAction;
+                let result = self.manage_profiles_screen.process_action(
+                    ProfileAction::CreateProfile {
+                        name,
+                        description,
+                        copy_from,
+                    },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::SwitchProfile { name } => {
-                if let Err(e) = self.switch_profile(&name) {
-                    error!("Failed to switch profile: {}", e);
-                    self.dialog_state = Some(DialogState {
-                        title: "Switch Profile Failed".to_string(),
-                        content: format!("Failed to switch to profile '{}':\n\n{}", name, e),
-                        variant: DialogVariant::Error,
-                    });
-                }
+                use crate::screens::manage_profiles::ProfileAction;
+                let result = self.manage_profiles_screen.process_action(
+                    ProfileAction::SwitchProfile { name },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::RenameProfile { old_name, new_name } => {
-                if let Err(e) = self.rename_profile(&old_name, &new_name) {
-                    error!("Failed to rename profile: {}", e);
-                    self.dialog_state = Some(DialogState {
-                        title: "Rename Failed".to_string(),
-                        content: format!("Failed to rename profile '{}':\n\n{}", old_name, e),
-                        variant: DialogVariant::Error,
-                    });
-                } else {
-                    // Refresh profiles in screen
-                    if let Err(e) = self
-                        .manage_profiles_screen
-                        .refresh_profiles(&self.config.repo_path)
-                    {
-                        error!("Failed to refresh profiles after rename: {}", e);
-                    }
-                }
+                use crate::screens::manage_profiles::ProfileAction;
+                let result = self.manage_profiles_screen.process_action(
+                    ProfileAction::RenameProfile { old_name, new_name },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::DeleteProfile { name } => {
-                use crate::services::ProfileService;
-                match ProfileService::delete_profile(
-                    &self.config.repo_path,
-                    &name,
-                    &self.config.active_profile,
-                ) {
-                    Ok(_) => {
-                        // Reload config
-                        match crate::config::Config::load_or_create(&self.config_path) {
-                            Ok(config) => self.config = config,
-                            Err(e) => error!("Failed to reload config: {}", e),
-                        }
-                        // Refresh profiles in screen
-                        if let Err(e) = self
-                            .manage_profiles_screen
-                            .refresh_profiles(&self.config.repo_path)
-                        {
-                            error!("Failed to refresh profiles after deletion: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to delete profile: {}", e);
-                        self.dialog_state = Some(DialogState {
-                            title: "Delete Failed".to_string(),
-                            content: format!("Failed to delete profile '{}':\n\n{}", name, e),
-                            variant: DialogVariant::Error,
-                        });
-                    }
-                }
+                use crate::screens::manage_profiles::ProfileAction;
+                let result = self.manage_profiles_screen.process_action(
+                    ProfileAction::DeleteProfile { name },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
             }
             ScreenAction::MoveToCommon {
                 file_index,
                 is_common,
                 profiles_to_cleanup,
             } => {
-                let state = self.dotfile_selection_screen.get_state_mut();
-                if file_index < state.dotfiles.len() {
-                    let dotfile = &state.dotfiles[file_index];
-                    let relative_path = dotfile.relative_path.to_string_lossy().to_string();
+                use crate::screens::dotfile_selection::DotfileAction;
+                let result = self.dotfile_selection_screen.process_action(
+                    DotfileAction::MoveToCommon {
+                        file_index,
+                        is_common,
+                        profiles_to_cleanup,
+                    },
+                    &mut self.config,
+                    &self.config_path,
+                )?;
+                self.handle_action_result(result)?;
+            }
+        }
+        Ok(())
+    }
 
-                    use crate::services::SyncService;
-                    // Note: is_common parameter tells us the CURRENT state of the file
-                    if is_common {
-                        // File is currently common -> Move FROM common TO profile
-                        match SyncService::move_from_common(&self.config, &relative_path) {
-                            Ok(_) => {
-                                info!("Moved {} from common to profile", relative_path);
-                                // Refresh list to update UI
-                                Self::scan_dotfiles_into(&self.config, state)?;
-
-                                // Verify the file is correctly marked as profile (not common)
-                                if let Some(idx) = state.dotfiles.iter().position(|d| {
-                                    d.relative_path.to_string_lossy() == relative_path
-                                }) {
-                                    // Extract flags before potentially mutating
-                                    let file_is_common = state.dotfiles[idx].is_common;
-                                    let file_is_synced = state.dotfiles[idx].synced;
-
-                                    if file_is_common {
-                                        // File found but still marked as common - force fix
-                                        warn!(
-                                            "File {} was moved to profile but still detected as common after scan. Forcing refresh.",
-                                            relative_path
-                                        );
-                                        state.dotfiles[idx].is_common = false;
-                                    }
-                                    // Ensure it's still marked as synced
-                                    if !file_is_synced {
-                                        state.dotfiles[idx].synced = true;
-                                        state.selected_for_sync.insert(idx);
-                                    }
-                                    state.dotfile_list_state.select(Some(idx));
-                                } else {
-                                    warn!(
-                                        "File {} not found in dotfiles list after move to profile",
-                                        relative_path
-                                    );
-                                }
-
-                                // Show success toast
-                                self.toast_manager
-                                    .success(format!("Moved to profile: {}", relative_path));
-                            }
-                            Err(e) => {
-                                error!("Failed to move from common: {}", e);
-                                self.dialog_state = Some(DialogState {
-                                    title: "Move Failed".to_string(),
-                                    content: format!("Failed to move file from common:\n\n{}", e),
-                                    variant: DialogVariant::Error,
-                                });
-                            }
-                        }
-                    } else {
-                        // File is currently profile -> Move FROM profile TO common
-                        // Use the cleanup version if we have profiles to cleanup
-                        let result = if !profiles_to_cleanup.is_empty() {
-                            SyncService::move_to_common_with_cleanup(
-                                &self.config,
-                                &relative_path,
-                                &profiles_to_cleanup,
-                            )
-                        } else {
-                            SyncService::move_to_common(&self.config, &relative_path)
-                        };
-
-                        match result {
-                            Ok(_) => {
-                                info!("Moved {} to common", relative_path);
-                                // Refresh list to update UI
-                                Self::scan_dotfiles_into(&self.config, state)?;
-
-                                // Verify the file is correctly marked as common
-                                if let Some(idx) = state.dotfiles.iter().position(|d| {
-                                    d.relative_path.to_string_lossy() == relative_path
-                                }) {
-                                    let dotfile = &state.dotfiles[idx];
-                                    if !dotfile.is_common {
-                                        // File found but not marked as common - force fix
-                                        warn!(
-                                            "File {} was moved to common but not detected as common after scan. Forcing refresh.",
-                                            relative_path
-                                        );
-                                        // Force the flags and selected_for_sync
-                                        state.dotfiles[idx].is_common = true;
-                                        state.dotfiles[idx].synced = true;
-                                        state.selected_for_sync.insert(idx);
-                                    }
-                                    state.dotfile_list_state.select(Some(idx));
-                                } else {
-                                    warn!(
-                                        "File {} not found in dotfiles list after move to common",
-                                        relative_path
-                                    );
-                                }
-
-                                // Show success toast
-                                self.toast_manager
-                                    .success(format!("Moved to common: {}", relative_path));
-                            }
-                            Err(e) => {
-                                error!("Failed to move to common: {}", e);
-                                self.dialog_state = Some(DialogState {
-                                    title: "Move Failed".to_string(),
-                                    content: format!("Failed to move file to common:\n\n{}", e),
-                                    variant: DialogVariant::Error,
-                                });
-                            }
-                        }
-                    }
-                }
+    /// Handle an ActionResult from a screen's process_action
+    fn handle_action_result(&mut self, result: ActionResult) -> Result<()> {
+        match result {
+            ActionResult::None => {}
+            ActionResult::ShowToast { message, variant } => {
+                self.toast_manager.push(Toast::new(message, variant));
+            }
+            ActionResult::ShowDialog {
+                title,
+                content,
+                variant,
+            } => {
+                self.dialog_state = Some(DialogState {
+                    title,
+                    content,
+                    variant,
+                });
+            }
+            ActionResult::Navigate(screen) => {
+                self.ui_state.current_screen = screen;
+                self.call_on_enter(screen)?;
+            }
+            ActionResult::ConfigUpdated => {
+                self.config = Config::load_or_create(&self.config_path)?;
             }
         }
         Ok(())
@@ -1458,760 +1313,113 @@ impl App {
         Ok(())
     }
 
-    /// Process the storage setup state machine (for new StorageSetupScreen)
-    fn process_storage_setup_step(&mut self) -> Result<()> {
+    /// Handle the result of an async setup step
+    fn handle_setup_step_result(&mut self, result: crate::services::StepResult) -> Result<()> {
         use crate::screens::storage_setup::StorageSetupStep;
+        use crate::services::StepResult;
 
-        // Clone the screen's state to work with (avoids borrow checker issues)
-        let state = self.storage_setup_screen.get_state();
-        let step = state.step;
-        let setup_data_opt = state.setup_data.clone();
-
-        let mut setup_data = match setup_data_opt {
-            Some(data) => data,
-            None => {
-                // No setup data, reset to input
-                self.storage_setup_screen.get_state_mut().step = StorageSetupStep::Input;
-                return Ok(());
-            }
-        };
-
-        // Check if we need to wait for a delay
-        if let Some(delay_until) = setup_data.delay_until {
-            if std::time::Instant::now() < delay_until {
-                return Ok(());
-            }
-            setup_data.delay_until = None;
-        }
-
-        // Extract the current step
-        let current_step = match step {
-            StorageSetupStep::Processing(s) => s,
-            StorageSetupStep::Input => return Ok(()),
-        };
-
-        match current_step {
-            GitHubSetupStep::Connecting => {
+        match result {
+            StepResult::Continue {
+                next_step,
+                setup_data,
+                status_message,
+                delay_ms,
+            } => {
                 let state = self.storage_setup_screen.get_state_mut();
-                state.step = StorageSetupStep::Processing(GitHubSetupStep::ValidatingToken);
-                state.status_message = Some("🔑 Validating your token...".to_string());
-                setup_data.delay_until =
-                    Some(std::time::Instant::now() + Duration::from_millis(800));
-                state.setup_data = Some(setup_data);
-            }
-            GitHubSetupStep::ValidatingToken => {
-                let token = setup_data.token.clone();
-                let repo_name = setup_data.repo_name.clone();
+                state.step = StorageSetupStep::Processing(next_step);
+                state.status_message = Some(status_message);
+                state.setup_data = Some(setup_data.clone());
 
-                let result = self.runtime.block_on(async {
-                    let client = GitHubClient::new(token.clone());
-                    let user = client.get_user().await?;
-                    let repo_exists = client.repo_exists(&user.login, &repo_name).await?;
-                    Ok::<(String, bool), anyhow::Error>((user.login, repo_exists))
-                });
+                // If there's a delay, we schedule the next step after the delay
+                if let Some(ms) = delay_ms {
+                    // Set up delayed next step by updating delay_until in setup_data
+                    let mut data_with_delay = setup_data.clone();
+                    data_with_delay.delay_until =
+                        Some(std::time::Instant::now() + std::time::Duration::from_millis(ms));
+                    state.setup_data = Some(data_with_delay.clone());
 
-                match result {
-                    Ok((username, exists)) => {
-                        setup_data.username = Some(username);
-                        setup_data.repo_exists = Some(exists);
-                        setup_data.delay_until =
-                            Some(std::time::Instant::now() + Duration::from_millis(600));
-
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.step = StorageSetupStep::Processing(GitHubSetupStep::CheckingRepo);
-                        state.status_message =
-                            Some("🔍 Checking if repository exists...".to_string());
-                        state.setup_data = Some(setup_data);
-                    }
-                    Err(e) => {
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.error_message = Some(format!("❌ Authentication failed: {}", e));
-                        state.status_message = None;
-                        state.step = StorageSetupStep::Input;
-                        state.setup_data = None;
-                        return Ok(());
-                    }
-                }
-            }
-            GitHubSetupStep::CheckingRepo => {
-                if setup_data.username.is_none() || setup_data.repo_exists.is_none() {
-                    error!("Invalid state: username or repo_exists not set in CheckingRepo step");
-                    let state = self.storage_setup_screen.get_state_mut();
-                    state.error_message = Some(
-                        "❌ Internal error: Setup state is invalid. Please try again.".to_string(),
-                    );
-                    state.status_message = None;
-                    state.step = StorageSetupStep::Input;
-                    state.setup_data = None;
-                    return Ok(());
-                }
-
-                if setup_data.repo_exists == Some(true) {
-                    let username = setup_data.username.as_ref().unwrap();
-                    let state = self.storage_setup_screen.get_state_mut();
-                    state.step = StorageSetupStep::Processing(GitHubSetupStep::CloningRepo);
-                    state.status_message = Some(format!(
-                        "📥 Cloning repository {}/{}...",
-                        username, setup_data.repo_name
-                    ));
-                    setup_data.delay_until =
-                        Some(std::time::Instant::now() + Duration::from_millis(500));
-                    state.setup_data = Some(setup_data);
+                    // Start the next step immediately (it will handle the delay internally)
+                    self.setup_step_handle =
+                        Some(crate::services::StorageSetupService::start_step(
+                            &self.runtime,
+                            next_step,
+                            data_with_delay,
+                            &self.config,
+                        ));
                 } else {
-                    let username = setup_data.username.as_ref().unwrap();
-                    let state = self.storage_setup_screen.get_state_mut();
-                    state.step = StorageSetupStep::Processing(GitHubSetupStep::CreatingRepo);
-                    state.status_message = Some(format!(
-                        "📦 Creating repository {}/{}...",
-                        username, setup_data.repo_name
-                    ));
-                    setup_data.delay_until =
-                        Some(std::time::Instant::now() + Duration::from_millis(600));
-                    state.setup_data = Some(setup_data);
+                    // Start the next step immediately
+                    self.setup_step_handle =
+                        Some(crate::services::StorageSetupService::start_step(
+                            &self.runtime,
+                            next_step,
+                            setup_data,
+                            &self.config,
+                        ));
                 }
             }
-            GitHubSetupStep::CloningRepo => {
-                let username = setup_data.username.as_ref().unwrap();
-                let repo_path = self.config.repo_path.clone();
-                let token = setup_data.token.clone();
-                let remote_url = format!(
-                    "https://github.com/{}/{}.git",
-                    username, setup_data.repo_name
-                );
-
-                match GitManager::clone_or_open(&remote_url, &repo_path, Some(&token)) {
-                    Ok((_, was_existing)) => {
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.status_message = Some(if was_existing {
-                            "✅ Using existing repository!".to_string()
-                        } else {
-                            "✅ Repository cloned successfully!".to_string()
-                        });
-
-                        // Update config
-                        self.config.github = Some(GitHubConfig {
-                            owner: username.clone(),
-                            repo: setup_data.repo_name.clone(),
-                            token: Some(token.clone()),
-                        });
-                        self.config.repo_name = setup_data.repo_name.clone();
-                        self.config
-                            .save(&self.config_path)
-                            .context("Failed to save configuration")?;
-
-                        // Move to discovering profiles
-                        state.step =
-                            StorageSetupStep::Processing(GitHubSetupStep::DiscoveringProfiles);
-                        state.status_message = Some("🔎 Discovering profiles...".to_string());
-                        setup_data.delay_until =
-                            Some(std::time::Instant::now() + Duration::from_millis(600));
-                        state.setup_data = Some(setup_data);
-                    }
-                    Err(e) => {
-                        // Clone failed - clean up any partial state
-                        self.cleanup_failed_setup(true);
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.error_message = Some(format!("❌ Failed to clone repository: {}", e));
-                        return Ok(());
-                    }
-                }
-            }
-            GitHubSetupStep::CreatingRepo => {
-                if setup_data.username.is_none() {
-                    error!("Invalid state: username not set in CreatingRepo step");
-                    let state = self.storage_setup_screen.get_state_mut();
-                    state.error_message = Some(
-                        "❌ Internal error: Username not available. Please try again.".to_string(),
-                    );
-                    state.status_message = None;
-                    state.step = StorageSetupStep::Input;
-                    state.setup_data = None;
-                    return Ok(());
-                }
-
-                let token = setup_data.token.clone();
-                let repo_name = setup_data.repo_name.clone();
-                let is_private = setup_data.is_private;
-
-                let create_result = self.runtime.block_on(async {
-                    let client = GitHubClient::new(token.clone());
-                    client
-                        .create_repo(&repo_name, "My dotfiles managed by dotstate", is_private)
-                        .await
-                });
-
-                match create_result {
-                    Ok(_) => {
-                        setup_data.delay_until =
-                            Some(std::time::Instant::now() + Duration::from_millis(500));
-                        setup_data.is_new_repo = true;
-
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.step =
-                            StorageSetupStep::Processing(GitHubSetupStep::InitializingRepo);
-                        state.status_message =
-                            Some("⚙️  Initializing local repository...".to_string());
-                        state.setup_data = Some(setup_data);
-                    }
-                    Err(e) => {
-                        // GitHub API failed to create repo - ensure config is clean
-                        self.cleanup_failed_setup(false); // No local repo to clean
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.error_message =
-                            Some(format!("❌ Failed to create repository: {}", e));
-                        return Ok(());
-                    }
-                }
-            }
-            GitHubSetupStep::InitializingRepo => {
-                let username = match setup_data.username.as_ref() {
-                    Some(u) => u.clone(),
-                    None => {
-                        error!("Invalid state: username not set in InitializingRepo step");
-                        self.cleanup_failed_setup(false);
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.error_message = Some(
-                            "❌ Internal error: Username not available. Please try again."
-                                .to_string(),
-                        );
-                        return Ok(());
-                    }
-                };
-
-                let token = setup_data.token.clone();
-                let repo_name = setup_data.repo_name.clone();
-                let repo_path = self.config.repo_path.clone();
-                let default_branch = self.config.default_branch.clone();
-                let active_profile = self.config.active_profile.clone();
-
-                // Wrap all fallible operations - if any fail, we clean up
-                let init_result: Result<String> = (|| {
-                    std::fs::create_dir_all(&repo_path)
-                        .context("Failed to create repository directory")?;
-
-                    let mut git_mgr = GitManager::open_or_init(&repo_path)?;
-
-                    // Add remote
-                    let remote_url = format!(
-                        "https://{}@github.com/{}/{}.git",
-                        token, username, repo_name
-                    );
-                    git_mgr.add_remote("origin", &remote_url)?;
-
-                    // Create initial commit
-                    std::fs::write(
-                        repo_path.join("README.md"),
-                        format!("# {}\n\nDotfiles managed by dotstate", repo_name),
-                    )?;
-
-                    // Create profile manifest with default profile
-                    let default_profile_name = if active_profile.is_empty() {
-                        "Personal".to_string()
-                    } else {
-                        active_profile.clone()
-                    };
-
-                    let manifest = crate::utils::ProfileManifest {
-                        common: crate::utils::profile_manifest::CommonSection::default(),
-                        profiles: vec![crate::utils::profile_manifest::ProfileInfo {
-                            name: default_profile_name.clone(),
-                            description: None,
-                            synced_files: Vec::new(),
-                            packages: Vec::new(),
-                        }],
-                    };
-                    manifest.save(&repo_path)?;
-
-                    git_mgr.commit_all("Initial commit")?;
-
-                    let current_branch = git_mgr
-                        .get_current_branch()
-                        .unwrap_or_else(|| default_branch.clone());
-
-                    // Before pushing, fetch and merge any remote commits
-                    if let Err(e) = git_mgr.pull("origin", &current_branch, Some(&token)) {
-                        info!(
-                            "Could not pull from remote (this is normal for new repos): {}",
-                            e
-                        );
-                    } else {
-                        info!("Successfully pulled from remote before pushing");
-                    }
-
-                    git_mgr
-                        .push("origin", &current_branch, Some(&token))
-                        .context("Failed to push to remote. Check your token permissions:\n• Fine-grained tokens: needs 'Contents' set to 'Read and write'\n• Classic tokens: needs 'repo' scope")?;
-
-                    if let Err(e) = git_mgr.set_upstream_tracking("origin", &current_branch) {
-                        // Non-fatal - log and continue
-                        warn!("Failed to set upstream tracking: {}", e);
-                    }
-
-                    Ok(default_profile_name)
-                })();
-
-                let default_profile_name = match init_result {
-                    Ok(name) => name,
-                    Err(e) => {
-                        error!("Failed to initialize repository: {}", e);
-                        // Clean up the partially created local repo and reset config
-                        self.cleanup_failed_setup(true);
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.error_message = Some(format!("❌ {}", e));
-                        return Ok(());
-                    }
-                };
-
-                // Update config
-                self.config.github = Some(GitHubConfig {
-                    owner: username.clone(),
-                    repo: repo_name.clone(),
-                    token: Some(token.clone()),
-                });
-                self.config.repo_name = repo_name.clone();
-                self.config.active_profile = default_profile_name.clone();
-                self.config
-                    .save(&self.config_path)
-                    .context("Failed to save configuration")?;
-
-                // Load manifest and populate profile selection state
-                let manifest = crate::utils::ProfileManifest::load_or_backfill(&repo_path)?;
-                self.ui_state.profile_selection.profiles =
-                    manifest.profiles.iter().map(|p| p.name.clone()).collect();
-                info!(
-                    "InitializingRepo: loaded {} profiles: {:?}",
-                    self.ui_state.profile_selection.profiles.len(),
-                    self.ui_state.profile_selection.profiles
-                );
-                if !self.ui_state.profile_selection.profiles.is_empty() {
-                    self.ui_state.profile_selection.list_state.select(Some(0));
-                }
-
-                // Move to complete step with delay
-                setup_data.delay_until =
-                    Some(std::time::Instant::now() + Duration::from_millis(2000));
-                setup_data.is_new_repo = true;
-
-                let state = self.storage_setup_screen.get_state_mut();
-                state.step = StorageSetupStep::Processing(GitHubSetupStep::Complete);
-                self.config = Config::load_or_create(&self.config_path)?;
-                state.status_message = Some(format!(
-                    "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nPreparing profile selection...",
-                    username, repo_name, repo_path
-                ));
-                state.setup_data = Some(setup_data);
-            }
-            GitHubSetupStep::DiscoveringProfiles => {
-                let repo_path = self.config.repo_path.clone();
-
-                // Load manifest - if this fails, clean up and reset
-                let manifest = match crate::utils::ProfileManifest::load_or_backfill(&repo_path) {
-                    Ok(mut m) => {
-                        // Backfill synced_files if empty
-                        for profile_info in &mut m.profiles {
-                            if profile_info.synced_files.is_empty() {
-                                let profile_dir = repo_path.join(&profile_info.name);
-                                if profile_dir.exists() && profile_dir.is_dir() {
-                                    profile_info.synced_files =
-                                        list_files_in_profile_dir(&profile_dir, &repo_path)
-                                            .unwrap_or_default();
-                                }
-                            }
-                        }
-                        if let Err(e) = m.save(&repo_path) {
-                            warn!("Failed to save manifest: {}", e);
-                        }
-                        m
-                    }
-                    Err(e) => {
-                        error!("Failed to load manifest: {}", e);
-                        self.cleanup_failed_setup(true);
-                        let state = self.storage_setup_screen.get_state_mut();
-                        state.error_message =
-                            Some(format!("❌ Failed to discover profiles: {}", e));
-                        return Ok(());
-                    }
-                };
-
-                // If no profiles found (e.g., empty repo from failed previous setup), create a default
-                let mut manifest = manifest;
-                if manifest.profiles.is_empty() {
-                    info!("No profiles found in repository, creating default 'Personal' profile");
-                    let default_profile = crate::utils::profile_manifest::ProfileInfo {
-                        name: "Personal".to_string(),
-                        description: None,
-                        synced_files: Vec::new(),
-                        packages: Vec::new(),
-                    };
-                    manifest.profiles.push(default_profile);
-
-                    // Create the profile directory
-                    let profile_dir = repo_path.join("Personal");
-                    if let Err(e) = std::fs::create_dir_all(&profile_dir) {
-                        warn!("Failed to create profile directory: {}", e);
-                    }
-
-                    // Save the manifest
-                    if let Err(e) = manifest.save(&repo_path) {
-                        warn!("Failed to save manifest with default profile: {}", e);
-                    }
-
-                    // Mark this as a new repo so we go to dotfile scanning
-                    setup_data.is_new_repo = true;
-                }
-
-                if !manifest.profiles.is_empty() && self.config.active_profile.is_empty() {
-                    self.config.active_profile = manifest.profiles[0].name.clone();
-                    if let Err(e) = self.config.save(&self.config_path) {
-                        warn!("Failed to save config with active profile: {}", e);
-                    }
-                }
-
-                // Set up profile selection state
-                let profiles: Vec<String> =
-                    manifest.profiles.iter().map(|p| p.name.clone()).collect();
-
-                self.ui_state.profile_selection.profiles = profiles.clone();
-                info!(
-                    "DiscoveringProfiles: loaded {} profiles: {:?}",
-                    profiles.len(),
-                    profiles
-                );
-                if !self.ui_state.profile_selection.profiles.is_empty() {
-                    self.ui_state.profile_selection.list_state.select(Some(0));
-                }
-                self.profile_selection_screen.set_profiles(profiles);
-
-                // Move to complete step
-                let profile_count = self.ui_state.profile_selection.profiles.len();
-                setup_data.delay_until =
-                    Some(std::time::Instant::now() + Duration::from_millis(2000));
-
-                let state = self.storage_setup_screen.get_state_mut();
-                state.step = StorageSetupStep::Processing(GitHubSetupStep::Complete);
-                if profile_count > 0 {
-                    state.status_message = Some(format!(
-                        "✅ Setup complete!\n\nFound {} profile(s) in the repository.\n\nPreparing profile selection...",
-                        profile_count
-                    ));
-                } else {
-                    let username = setup_data
-                        .username
-                        .as_ref()
-                        .or_else(|| self.config.github.as_ref().map(|g| &g.owner))
-                        .unwrap_or(&setup_data.repo_name);
-                    state.status_message = Some(format!(
-                        "✅ Setup complete!\n\nRepository: {}/{}\nLocal path: {:?}\n\nNo profiles found. You can create one from the main menu.\n\nPreparing main menu...",
-                        username, setup_data.repo_name, repo_path
-                    ));
-                }
-                state.setup_data = Some(setup_data);
-            }
-            GitHubSetupStep::Complete => {
-                // Delay complete, transition to next screen
-                let profile_count = self.ui_state.profile_selection.profiles.len();
-                let is_new_repo = setup_data.is_new_repo;
-
-                info!(
-                    "Setup complete: profile_count={}, is_new_repo={}, profiles={:?}",
-                    profile_count, is_new_repo, self.ui_state.profile_selection.profiles
-                );
-
-                // Determine target screen
-                let should_scan_dotfiles = is_new_repo && profile_count == 1;
-                let target_screen = if profile_count > 0 {
-                    if should_scan_dotfiles {
-                        Screen::DotfileSelection
-                    } else {
-                        Screen::ProfileSelection
-                    }
-                } else {
-                    Screen::MainMenu
-                };
+            StepResult::Complete {
+                setup_data: _,
+                github_config,
+                profiles,
+                is_new_repo,
+            } => {
+                // Update config with GitHub info
+                self.config.github = Some(github_config.clone());
+                self.config.repo_name = github_config.repo;
+                self.config.save(&self.config_path)?;
 
                 // Reset screen state
-                let state = self.storage_setup_screen.get_state_mut();
-                state.step = StorageSetupStep::Input;
-                state.status_message = None;
-                state.setup_data = None;
+                self.storage_setup_screen.reset();
 
-                if should_scan_dotfiles {
+                // Update profile selection screen with discovered profiles
+                self.profile_selection_screen.set_profiles(profiles.clone());
+                self.ui_state.profile_selection.profiles = profiles.clone();
+                if !profiles.is_empty() {
+                    self.ui_state.profile_selection.list_state.select(Some(0));
+                }
+
+                // Navigate based on profiles found
+                if profiles.is_empty() {
+                    self.ui_state.current_screen = Screen::MainMenu;
+                } else if is_new_repo && profiles.len() == 1 {
+                    // New repo with single profile - go to dotfile selection
+                    self.config.active_profile = profiles[0].clone();
+                    self.config.save(&self.config_path)?;
+
+                    // Initialize dotfile selection screen
                     let dotfile_state = self.dotfile_selection_screen.get_state_mut();
                     dotfile_state.backup_enabled = self.config.backup_enabled;
                     dotfile_state.status_message = None;
-                    Self::scan_dotfiles_into(&self.config, dotfile_state)?;
+                    self.dotfile_selection_screen.scan_dotfiles(&self.config)?;
+
+                    self.ui_state.current_screen = Screen::DotfileSelection;
+                    self.call_on_enter(Screen::DotfileSelection)?;
+                } else {
+                    // Multiple profiles - show selection
+                    self.ui_state.current_screen = Screen::ProfileSelection;
                 }
-
-                self.ui_state.current_screen = target_screen;
-                return Ok(());
             }
-        }
-
-        Ok(())
-    }
-
-    /// Add a single file to sync (copy to repo, create symlink, update manifest)
-    fn add_file_to_sync_with_state(
-        config: &crate::config::Config,
-        state: &mut DotfileSelectionState,
-        file_index: usize,
-    ) -> Result<()> {
-        use crate::services::SyncService;
-
-        if file_index >= state.dotfiles.len() {
-            warn!(
-                "File index {} out of bounds ({} files)",
-                file_index,
-                state.dotfiles.len()
-            );
-            return Ok(());
-        }
-
-        let dotfile = &state.dotfiles[file_index];
-        let relative_str = dotfile.relative_path.to_string_lossy().to_string();
-        let full_path = dotfile.original_path.clone();
-        let backup_enabled = state.backup_enabled;
-
-        // Use service to add file to sync
-        match SyncService::add_file_to_sync(config, &full_path, &relative_str, backup_enabled)? {
-            crate::services::sync_service::AddFileResult::Success => {
-                state.selected_for_sync.insert(file_index);
-                state.dotfiles[file_index].synced = true;
-                info!("Successfully added file to sync: {}", relative_str);
-            }
-            crate::services::sync_service::AddFileResult::AlreadySynced => {
-                state.selected_for_sync.insert(file_index);
-                debug!("File already synced: {}", relative_str);
-            }
-            crate::services::sync_service::AddFileResult::ValidationFailed(error_msg) => {
-                state.status_message = Some(format!("Error: {}", error_msg));
-                warn!("Validation failed for {}: {}", relative_str, error_msg);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle adding a custom file to sync, including state and config updates
-    fn handle_add_custom_file_to_sync(
-        &mut self,
-        full_path: PathBuf,
-        relative_path: String,
-    ) -> Result<()> {
-        use crate::services::SyncService;
-
-        let backup_enabled = self.dotfile_selection_screen.get_state().backup_enabled;
-
-        // Use service to add file to sync
-        match SyncService::add_file_to_sync(
-            &self.config,
-            &full_path,
-            &relative_path,
-            backup_enabled,
-        )? {
-            crate::services::sync_service::AddFileResult::Success => {
-                // Check if this is a custom file (not in default dotfile candidates)
-                if SyncService::is_custom_file(&relative_path) {
-                    // Add to config.custom_files if not already there
-                    if !self.config.custom_files.contains(&relative_path) {
-                        self.config.custom_files.push(relative_path.clone());
-                        self.config.save(&self.config_path)?;
-                    }
-                }
-                info!("Successfully added custom file to sync: {}", relative_path);
-
-                // Re-scan to refresh the list
-                let state = self.dotfile_selection_screen.get_state_mut();
-                Self::scan_dotfiles_into(&self.config, state)?;
-
-                // Find and select the file in the list
-                let state = self.dotfile_selection_screen.get_state_mut();
-                if let Some(index) = state
-                    .dotfiles
-                    .iter()
-                    .position(|d| d.relative_path.to_string_lossy() == relative_path)
-                {
-                    state.dotfile_list_state.select(Some(index));
-                    state.selected_for_sync.insert(index);
-                }
-                // Show success toast
-                self.toast_manager
-                    .success(format!("Added: {}", relative_path));
-            }
-            crate::services::sync_service::AddFileResult::AlreadySynced => {
-                debug!("Custom file already synced: {}", relative_path);
-            }
-            crate::services::sync_service::AddFileResult::ValidationFailed(error_msg) => {
-                warn!(
-                    "Validation failed for custom file {}: {}",
-                    relative_path, error_msg
+            StepResult::Failed {
+                error_message,
+                cleanup_repo,
+            } => {
+                crate::services::StorageSetupService::cleanup_failed_setup(
+                    &mut self.config,
+                    &self.config_path,
+                    cleanup_repo,
                 );
-                self.dialog_state = Some(DialogState {
-                    title: "Sync Failed".to_string(),
-                    content: error_msg,
-                    variant: DialogVariant::Error,
-                });
+
+                // Also reset UI state that may have been populated during failed setup
+                self.ui_state.profile_selection.profiles.clear();
+                self.ui_state.profile_selection.list_state.select(None);
+                self.profile_selection_screen.set_profiles(Vec::new());
+
+                let state = self.storage_setup_screen.get_state_mut();
+                state.error_message = Some(error_message);
+                state.step = StorageSetupStep::Input;
+                state.setup_data = None;
             }
         }
-
-        Ok(())
-    }
-
-    /// Remove a single file from sync (restore from repo, remove symlink, update manifest)
-    fn remove_file_from_sync_with_state(
-        config: &crate::config::Config,
-        state: &mut DotfileSelectionState,
-        file_index: usize,
-    ) -> Result<()> {
-        use crate::services::SyncService;
-
-        if file_index >= state.dotfiles.len() {
-            warn!(
-                "File index {} out of bounds ({} files)",
-                file_index,
-                state.dotfiles.len()
-            );
-            return Ok(());
-        }
-
-        let relative_str = state.dotfiles[file_index]
-            .relative_path
-            .to_string_lossy()
-            .to_string();
-
-        // Use service to remove file from sync
-        match SyncService::remove_file_from_sync(config, &relative_str)? {
-            crate::services::sync_service::RemoveFileResult::Success => {
-                // Unmark as selected and synced
-                state.selected_for_sync.remove(&file_index);
-                state.dotfiles[file_index].synced = false;
-                info!("Successfully removed file from sync: {}", relative_str);
-            }
-            crate::services::sync_service::RemoveFileResult::NotSynced => {
-                debug!("File not synced, skipping removal: {}", relative_str);
-                state.selected_for_sync.remove(&file_index);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Scan for dotfiles and populate the selection state
-    fn scan_dotfiles_into(
-        config: &crate::config::Config,
-        state: &mut DotfileSelectionState,
-    ) -> Result<()> {
-        use crate::services::SyncService;
-
-        // Use service to scan dotfiles
-        let found = SyncService::scan_dotfiles(config)?;
-
-        // Build selected indices for synced files
-        let selected_indices: std::collections::HashSet<usize> = found
-            .iter()
-            .enumerate()
-            .filter(|(_, d)| d.synced)
-            .map(|(i, _)| i)
-            .collect();
-
-        // Update state
-        state.dotfiles = found;
-        state.preview_index = None;
-        state.preview_scroll = 0;
-        state.selected_for_sync = selected_indices;
-
-        // Initialize ListState with first item selected if available
-        if !state.dotfiles.is_empty() {
-            state.dotfile_list_state.select(Some(0));
-        } else {
-            state.dotfile_list_state.select(None);
-        }
-
-        Ok(())
-    }
-
-    /// Refresh file browser entries for current directory
-    fn refresh_file_browser_into(
-        config: &crate::config::Config,
-        state: &mut DotfileSelectionState,
-    ) -> Result<()> {
-        let path = &state.file_browser_path;
-
-        let mut entries = Vec::new();
-
-        // Add parent directory if not at root
-        if path != Path::new("/") && path.parent().is_some() {
-            entries.push(PathBuf::from(".."));
-        }
-
-        // Add special marker for "add this folder" (only if it's a directory and safe to add)
-        let repo_path = &config.repo_path;
-        let (is_safe, _) = crate::utils::is_safe_to_add(path, repo_path);
-        if is_safe && path.is_dir() {
-            entries.push(PathBuf::from(".")); // Special marker for "add this folder"
-        }
-
-        // Read directory entries
-        if let Ok(entries_iter) = std::fs::read_dir(path) {
-            for entry in entries_iter.flatten() {
-                let entry_path = entry.path();
-                // Show all files for now (user can navigate)
-                entries.push(entry_path);
-            }
-        }
-
-        // Sort: special entries first (.. and .), then directories, then files, both alphabetically
-        entries.sort_by(|a, b| {
-            let a_is_special = a == Path::new("..") || a == Path::new(".");
-            let b_is_special = b == Path::new("..") || b == Path::new(".");
-
-            // Special entries come first, with .. before .
-            if a_is_special && b_is_special {
-                if a == Path::new("..") {
-                    return std::cmp::Ordering::Less;
-                } else {
-                    return std::cmp::Ordering::Greater;
-                }
-            }
-            if a_is_special {
-                return std::cmp::Ordering::Less;
-            }
-            if b_is_special {
-                return std::cmp::Ordering::Greater;
-            }
-
-            let a_is_dir = a.is_dir();
-            let b_is_dir = b.is_dir();
-
-            match (a_is_dir, b_is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    a_name.cmp(b_name)
-                }
-            }
-        });
-
-        state.file_browser_entries = entries;
-
-        // Update ListState selection to be within bounds
-        if let Some(current_selection) = state.file_browser_list_state.selected() {
-            if current_selection >= state.file_browser_entries.len() {
-                if state.file_browser_entries.is_empty() {
-                    state.file_browser_list_state.select(None);
-                } else {
-                    state
-                        .file_browser_list_state
-                        .select(Some(state.file_browser_entries.len() - 1));
-                }
-            }
-        } else if !state.file_browser_entries.is_empty() {
-            // If nothing selected, select first item
-            state.file_browser_list_state.select(Some(0));
-        }
-
         Ok(())
     }
 
@@ -2221,150 +1429,11 @@ impl App {
         crate::services::ProfileService::load_manifest(&self.config.repo_path)
     }
 
-    /// Helper: Reset setup state when setup fails partway through
-    /// This ensures the app returns to a clean "unconfigured" state
-    fn cleanup_failed_setup(&mut self, cleanup_repo: bool) {
-        use tracing::{info, warn};
-
-        info!("Cleaning up failed setup state");
-
-        // Clean up repo directory if requested and it exists
-        if cleanup_repo && self.config.repo_path.exists() {
-            // Only clean up if it's a dotstate-created repo (has .git)
-            if self.config.repo_path.join(".git").exists() {
-                info!(
-                    "Removing partially created repo at {:?}",
-                    self.config.repo_path
-                );
-                if let Err(e) = std::fs::remove_dir_all(&self.config.repo_path) {
-                    warn!("Failed to clean up repo directory: {}", e);
-                }
-            }
-        }
-
-        // Reset config to unconfigured state
-        self.config.reset_to_unconfigured();
-
-        // Save the reset config
-        if let Err(e) = self.config.save(&self.config_path) {
-            warn!("Failed to save reset config: {}", e);
-        }
-
-        // Reset storage setup screen state
-        self.storage_setup_screen.reset();
-
-        // Reset UI state that may have been populated during failed setup
-        self.ui_state.profile_selection.profiles.clear();
-        self.ui_state.profile_selection.list_state.select(None);
-        self.profile_selection_screen.set_profiles(Vec::new());
-    }
-
     /// Helper: Get active profile info from manifest
     fn get_active_profile_info(&self) -> Result<Option<crate::utils::ProfileInfo>> {
         crate::services::ProfileService::get_profile_info(
             &self.config.repo_path,
             &self.config.active_profile,
         )
-    }
-
-    /// Switch to a different profile
-    fn switch_profile(&mut self, target_profile_name: &str) -> Result<()> {
-        use crate::services::ProfileService;
-
-        // Don't switch if already active
-        if self.config.active_profile == target_profile_name {
-            return Ok(());
-        }
-
-        let old_profile_name = self.config.active_profile.clone();
-
-        // Use service to switch profiles
-        let switch_result = ProfileService::switch_profile(
-            &self.config.repo_path,
-            &old_profile_name,
-            target_profile_name,
-            self.config.backup_enabled,
-        )?;
-
-        // Update active profile in config
-        self.config.active_profile = target_profile_name.to_string();
-        self.config.save(&self.config_path)?;
-
-        // Check packages after profile switch if the new profile has packages
-        if !switch_result.packages.is_empty() {
-            info!(
-                "Profile '{}' has {} packages, checking installation status",
-                target_profile_name,
-                switch_result.packages.len()
-            );
-            // Initialize package checking state
-            self.manage_packages_screen
-                .update_packages(switch_result.packages, target_profile_name);
-            self.manage_packages_screen.start_checking();
-        }
-
-        Ok(())
-    }
-
-    /// Rename a profile
-    fn rename_profile(&mut self, old_name: &str, new_name: &str) -> Result<()> {
-        use crate::services::ProfileService;
-
-        let was_active = self.config.active_profile == old_name;
-        let is_activated = self.config.profile_activated && was_active;
-
-        // Use service to rename profile
-        let sanitized_name = ProfileService::rename_profile(
-            &self.config.repo_path,
-            old_name,
-            new_name,
-            is_activated,
-            self.config.backup_enabled,
-        )?;
-
-        // Update active profile name if this was the active profile
-        if was_active {
-            self.config.active_profile = sanitized_name;
-            self.config.save(&self.config_path)?;
-        }
-
-        Ok(())
-    }
-
-    /// Activate a profile after GitHub setup (includes syncing files from repo)
-    fn activate_profile_after_setup(&mut self, profile_name: &str) -> Result<()> {
-        use crate::services::ProfileService;
-
-        info!("Activating profile '{}' after setup", profile_name);
-
-        // Set as active profile
-        self.config.active_profile = profile_name.to_string();
-        self.config.save(&self.config_path)?;
-
-        // Use service to activate profile
-        let activation_result = ProfileService::activate_profile(
-            &self.config.repo_path,
-            profile_name,
-            self.config.backup_enabled,
-        )?;
-
-        // Mark as activated
-        self.config.profile_activated = true;
-        self.config.save(&self.config_path)?;
-
-        // Check packages after activation if the profile has packages
-        if !activation_result.packages.is_empty() {
-            info!(
-                "Profile '{}' has {} packages, checking installation status",
-                profile_name,
-                activation_result.packages.len()
-            );
-            // Initialize package checking state
-            self.manage_packages_screen
-                .update_packages(activation_result.packages, profile_name);
-            self.manage_packages_screen.start_checking();
-        }
-
-        Ok(())
     }
 }

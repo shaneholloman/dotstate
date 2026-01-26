@@ -2,11 +2,12 @@ use crate::components::footer::Footer;
 use crate::components::header::Header;
 use crate::config::Config;
 use crate::keymap::{Action, Keymap};
-use crate::screens::{RenderContext, Screen, ScreenAction, ScreenContext};
+use crate::screens::{ActionResult, RenderContext, Screen, ScreenAction, ScreenContext};
+use crate::services::ProfileService;
 use crate::styles::{theme, LIST_HIGHLIGHT_SYMBOL};
 use crate::ui::Screen as ScreenId;
 use crate::utils::{create_standard_layout, focused_border_style, unfocused_border_style};
-use crate::widgets::{TextInputWidget, TextInputWidgetExt};
+use crate::widgets::{DialogVariant, TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::prelude::*;
@@ -14,6 +15,8 @@ use ratatui::widgets::{
     Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
     Wrap,
 };
+use std::path::Path;
+use tracing::{error, info, warn};
 
 /// Profile manager popup types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +34,23 @@ pub enum CreateField {
     Name,
     Description,
     CopyFrom,
+}
+
+/// Actions that can be processed by the manage profiles screen
+#[derive(Debug, Clone)]
+pub enum ProfileAction {
+    /// Create a new profile
+    CreateProfile {
+        name: String,
+        description: Option<String>,
+        copy_from: Option<usize>,
+    },
+    /// Switch to a different profile
+    SwitchProfile { name: String },
+    /// Rename an existing profile
+    RenameProfile { old_name: String, new_name: String },
+    /// Delete a profile
+    DeleteProfile { name: String },
 }
 
 /// Profile manager component state
@@ -103,6 +123,237 @@ impl ManageProfilesScreen {
             self.state.list_state.select(Some(0));
         }
         Ok(())
+    }
+
+    /// Process a profile action and return the result.
+    ///
+    /// This is the main entry point for handling profile operations.
+    /// It dispatches to the appropriate helper method based on the action type.
+    pub fn process_action(
+        &mut self,
+        action: ProfileAction,
+        config: &mut Config,
+        config_path: &Path,
+    ) -> Result<ActionResult> {
+        match action {
+            ProfileAction::CreateProfile {
+                name,
+                description,
+                copy_from,
+            } => self.create_profile(config, &name, description, copy_from),
+            ProfileAction::SwitchProfile { name } => {
+                self.switch_profile(config, config_path, &name)
+            }
+            ProfileAction::RenameProfile { old_name, new_name } => {
+                self.rename_profile(config, config_path, &old_name, &new_name)
+            }
+            ProfileAction::DeleteProfile { name } => self.delete_profile(config, &name),
+        }
+    }
+
+    /// Create a new profile.
+    fn create_profile(
+        &mut self,
+        config: &Config,
+        name: &str,
+        description: Option<String>,
+        copy_from: Option<usize>,
+    ) -> Result<ActionResult> {
+        info!("Creating profile: {}", name);
+
+        match ProfileService::create_profile(&config.repo_path, name, description, copy_from) {
+            Ok(sanitized_name) => {
+                info!("Profile '{}' created successfully", sanitized_name);
+
+                // Refresh the profiles list
+                if let Err(e) = self.refresh_profiles(&config.repo_path) {
+                    warn!("Failed to refresh profiles after creation: {}", e);
+                }
+
+                Ok(ActionResult::ShowToast {
+                    message: format!("Profile '{}' created", sanitized_name),
+                    variant: crate::widgets::ToastVariant::Success,
+                })
+            }
+            Err(e) => {
+                error!("Failed to create profile '{}': {}", name, e);
+                Ok(ActionResult::ShowDialog {
+                    title: "Error Creating Profile".to_string(),
+                    content: format!("Failed to create profile: {}", e),
+                    variant: DialogVariant::Error,
+                })
+            }
+        }
+    }
+
+    /// Switch to a different profile.
+    fn switch_profile(
+        &mut self,
+        config: &mut Config,
+        config_path: &Path,
+        target_name: &str,
+    ) -> Result<ActionResult> {
+        info!(
+            "Switching profile from '{}' to '{}'",
+            config.active_profile, target_name
+        );
+
+        // Don't switch if already on this profile
+        if config.active_profile == target_name {
+            return Ok(ActionResult::ShowToast {
+                message: format!("Already on profile '{}'", target_name),
+                variant: crate::widgets::ToastVariant::Info,
+            });
+        }
+
+        let old_profile = config.active_profile.clone();
+
+        match ProfileService::switch_profile(
+            &config.repo_path,
+            &old_profile,
+            target_name,
+            config.backup_enabled,
+        ) {
+            Ok(result) => {
+                info!(
+                    "Profile switch complete: removed {} symlinks, created {}",
+                    result.removed_count, result.created_count
+                );
+
+                // Update config with new active profile
+                config.active_profile = target_name.to_string();
+                if let Err(e) = config.save(config_path) {
+                    error!("Failed to save config after profile switch: {}", e);
+                    return Ok(ActionResult::ShowDialog {
+                        title: "Warning".to_string(),
+                        content: format!("Profile switched but failed to save config: {}", e),
+                        variant: DialogVariant::Warning,
+                    });
+                }
+
+                // Refresh the profiles list
+                if let Err(e) = self.refresh_profiles(&config.repo_path) {
+                    warn!("Failed to refresh profiles after switch: {}", e);
+                }
+
+                Ok(ActionResult::ShowToast {
+                    message: format!("Switched to profile '{}'", target_name),
+                    variant: crate::widgets::ToastVariant::Success,
+                })
+            }
+            Err(e) => {
+                error!("Failed to switch to profile '{}': {}", target_name, e);
+                Ok(ActionResult::ShowDialog {
+                    title: "Error Switching Profile".to_string(),
+                    content: format!("Failed to switch profile: {}", e),
+                    variant: DialogVariant::Error,
+                })
+            }
+        }
+    }
+
+    /// Rename an existing profile.
+    fn rename_profile(
+        &mut self,
+        config: &mut Config,
+        config_path: &Path,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<ActionResult> {
+        info!("Renaming profile '{}' to '{}'", old_name, new_name);
+
+        let is_active = config.active_profile == old_name;
+
+        match ProfileService::rename_profile(
+            &config.repo_path,
+            old_name,
+            new_name,
+            is_active,
+            config.backup_enabled,
+        ) {
+            Ok(sanitized_name) => {
+                info!(
+                    "Profile renamed from '{}' to '{}'",
+                    old_name, sanitized_name
+                );
+
+                // Update config if this was the active profile
+                if is_active {
+                    config.active_profile = sanitized_name.clone();
+                    if let Err(e) = config.save(config_path) {
+                        error!("Failed to save config after profile rename: {}", e);
+                        return Ok(ActionResult::ShowDialog {
+                            title: "Warning".to_string(),
+                            content: format!("Profile renamed but failed to save config: {}", e),
+                            variant: DialogVariant::Warning,
+                        });
+                    }
+                }
+
+                // Refresh the profiles list
+                if let Err(e) = self.refresh_profiles(&config.repo_path) {
+                    warn!("Failed to refresh profiles after rename: {}", e);
+                }
+
+                Ok(ActionResult::ShowToast {
+                    message: format!("Profile renamed to '{}'", sanitized_name),
+                    variant: crate::widgets::ToastVariant::Success,
+                })
+            }
+            Err(e) => {
+                error!(
+                    "Failed to rename profile '{}' to '{}': {}",
+                    old_name, new_name, e
+                );
+                Ok(ActionResult::ShowDialog {
+                    title: "Error Renaming Profile".to_string(),
+                    content: format!("Failed to rename profile: {}", e),
+                    variant: DialogVariant::Error,
+                })
+            }
+        }
+    }
+
+    /// Delete a profile.
+    fn delete_profile(&mut self, config: &Config, name: &str) -> Result<ActionResult> {
+        info!("Deleting profile: {}", name);
+
+        // Cannot delete active profile
+        if config.active_profile == name {
+            warn!("Attempted to delete active profile '{}'", name);
+            return Ok(ActionResult::ShowDialog {
+                title: "Cannot Delete Active Profile".to_string(),
+                content: format!(
+                    "Profile '{}' is currently active.\nPlease switch to another profile first.",
+                    name
+                ),
+                variant: DialogVariant::Error,
+            });
+        }
+
+        match ProfileService::delete_profile(&config.repo_path, name, &config.active_profile) {
+            Ok(()) => {
+                info!("Profile '{}' deleted successfully", name);
+
+                // Refresh the profiles list
+                if let Err(e) = self.refresh_profiles(&config.repo_path) {
+                    warn!("Failed to refresh profiles after deletion: {}", e);
+                }
+
+                Ok(ActionResult::ShowToast {
+                    message: format!("Profile '{}' deleted", name),
+                    variant: crate::widgets::ToastVariant::Success,
+                })
+            }
+            Err(e) => {
+                error!("Failed to delete profile '{}': {}", name, e);
+                Ok(ActionResult::ShowDialog {
+                    title: "Error Deleting Profile".to_string(),
+                    content: format!("Failed to delete profile: {}", e),
+                    variant: DialogVariant::Error,
+                })
+            }
+        }
     }
 
     fn get_action(&self, key: KeyCode, modifiers: KeyModifiers, keymap: &Keymap) -> Option<Action> {

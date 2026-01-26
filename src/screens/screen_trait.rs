@@ -219,6 +219,31 @@ pub enum ScreenAction {
     },
 }
 
+/// Result of processing a screen-specific action.
+///
+/// This allows screens to signal outcomes without directly modifying app state.
+#[derive(Debug, Clone, Default)]
+pub enum ActionResult {
+    /// No result, action completed successfully
+    #[default]
+    None,
+    /// Show a toast notification
+    ShowToast {
+        message: String,
+        variant: crate::widgets::ToastVariant,
+    },
+    /// Show a modal dialog
+    ShowDialog {
+        title: String,
+        content: String,
+        variant: crate::widgets::DialogVariant,
+    },
+    /// Navigate to a different screen
+    Navigate(ScreenId),
+    /// Request config reload (after external modification)
+    ConfigUpdated,
+}
+
 /// Trait for screen controllers.
 ///
 /// This trait provides a cleaner alternative to the existing `Component` trait.
