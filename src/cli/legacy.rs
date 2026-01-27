@@ -1018,10 +1018,25 @@ impl Cli {
     fn cmd_packages(command: PackagesCommand) -> Result<()> {
         match command {
             PackagesCommand::List { profile, verbose } => Self::cmd_packages_list(profile, verbose),
-            PackagesCommand::Add { .. } => {
-                println!("packages add (stub)");
-                Ok(())
-            }
+            PackagesCommand::Add {
+                profile,
+                name,
+                manager,
+                binary,
+                description,
+                package_name,
+                install_command,
+                existence_check,
+            } => Self::cmd_packages_add(
+                profile,
+                name,
+                manager,
+                binary,
+                description,
+                package_name,
+                install_command,
+                existence_check,
+            ),
             PackagesCommand::Remove { profile, yes, name } => {
                 println!(
                     "packages remove (profile: {:?}, yes: {}, name: {:?})",
@@ -1148,6 +1163,151 @@ impl Cli {
         } else {
             println!("\n{} packages", packages.len());
         }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn cmd_packages_add(
+        profile: Option<String>,
+        name: Option<String>,
+        manager: Option<String>,
+        binary: Option<String>,
+        description: Option<String>,
+        package_name: Option<String>,
+        install_command: Option<String>,
+        existence_check: Option<String>,
+    ) -> Result<()> {
+        use crate::cli::common::{
+            parse_manager, print_error, print_success, prompt_manager, prompt_string,
+            prompt_string_optional, CliContext,
+        };
+        use crate::services::{PackageCreationParams, PackageService};
+
+        let ctx = CliContext::load()?;
+        let profile_name = ctx.resolve_profile(profile.as_deref());
+
+        // Validate profile exists
+        if !ctx.profile_exists(&profile_name) {
+            print_error(&format!("Profile '{}' not found", profile_name));
+            std::process::exit(1);
+        }
+
+        let is_active = ctx.is_active_profile(&profile_name);
+
+        // Get existing packages to check for duplicates
+        let existing = PackageService::get_packages(&ctx.config.repo_path, &profile_name)?;
+
+        // Prompt for missing required fields
+        let name = match name {
+            Some(n) => n,
+            None => prompt_string("Name", None)?,
+        };
+
+        // Check for duplicate
+        if existing.iter().any(|p| p.name == name) {
+            print_error(&format!(
+                "Package '{}' already exists in profile '{}'",
+                name, profile_name
+            ));
+            std::process::exit(1);
+        }
+
+        let manager = match manager {
+            Some(m) => parse_manager(&m).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Invalid manager '{}'. Valid: brew, apt, cargo, npm, pip, custom, etc.",
+                    m
+                )
+            })?,
+            None => prompt_manager(is_active)?,
+        };
+
+        let is_custom = matches!(
+            manager,
+            crate::utils::profile_manifest::PackageManager::Custom
+        );
+
+        let binary = match binary {
+            Some(b) => b,
+            None => prompt_string("Binary name", None)?,
+        };
+
+        // For non-custom, get package_name (defaults to binary)
+        let pkg_name = if is_custom {
+            String::new()
+        } else {
+            match package_name {
+                Some(p) => p,
+                None => prompt_string("Package name in manager", Some(&binary))?,
+            }
+        };
+
+        // For custom, get install_command (required)
+        let install_cmd = if is_custom {
+            match install_command {
+                Some(c) => c,
+                None => prompt_string("Install command", None)?,
+            }
+        } else {
+            String::new()
+        };
+
+        // For custom, get existence_check (optional)
+        let exist_check = if is_custom {
+            match existence_check {
+                Some(c) => Some(c),
+                None => prompt_string_optional("Existence check")?,
+            }
+        } else {
+            None
+        };
+
+        // Description is always optional
+        let desc = match description {
+            Some(d) => d,
+            None => prompt_string_optional("Description")?.unwrap_or_default(),
+        };
+
+        // Validate
+        let validation = PackageService::validate_package(
+            &name,
+            &binary,
+            is_custom,
+            &pkg_name,
+            &install_cmd,
+            Some(&manager),
+        );
+
+        if !validation.is_valid {
+            print_error(
+                &validation
+                    .error_message
+                    .unwrap_or_else(|| "Validation failed".to_string()),
+            );
+            std::process::exit(1);
+        }
+
+        // Create package
+        let package = PackageService::create_package(PackageCreationParams {
+            name: &name,
+            description: &desc,
+            manager: manager.clone(),
+            is_custom,
+            package_name: &pkg_name,
+            binary_name: &binary,
+            install_command: &install_cmd,
+            existence_check: exist_check.as_deref().unwrap_or(""),
+            manager_check: "",
+        });
+
+        // Add to profile
+        PackageService::add_package(&ctx.config.repo_path, &profile_name, package)?;
+
+        print_success(&format!(
+            "Package '{}' added to profile '{}'",
+            name, profile_name
+        ));
 
         Ok(())
     }

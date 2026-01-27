@@ -6,6 +6,8 @@
 //! - Prompt helpers: `prompt_string`, `prompt_string_optional`, `prompt_select`, `prompt_confirm`
 
 use crate::config::Config;
+use crate::services::PackageService;
+use crate::utils::profile_manifest::PackageManager;
 use crate::utils::ProfileManifest;
 use anyhow::{Context, Result};
 use std::io::{self, Write};
@@ -247,6 +249,52 @@ pub fn prompt_select(label: &str, options: &[&str]) -> Result<usize> {
     }
 }
 
+/// Prompt the user to select from a numbered list of options with optional suffixes.
+///
+/// # Arguments
+/// * `label` - The prompt label to display
+/// * `options` - List of (name, optional_suffix) tuples to display (shown as 1-indexed)
+///
+/// # Returns
+/// The 0-indexed position of the selected option
+///
+/// # Panics
+/// Exits with error if options is empty or user enters invalid input
+pub fn prompt_select_with_suffix(label: &str, options: &[(&str, Option<&str>)]) -> Result<usize> {
+    if options.is_empty() {
+        print_error("No options available for selection");
+        std::process::exit(1);
+    }
+
+    println!("{}:", label);
+    for (i, (name, suffix)) in options.iter().enumerate() {
+        if let Some(s) = suffix {
+            println!("  {}. {} {}", i + 1, name, s);
+        } else {
+            println!("  {}. {}", i + 1, name);
+        }
+    }
+    print!("Enter choice [1-{}]: ", options.len());
+    io::stdout().flush().context("Failed to flush stdout")?;
+
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .context("Failed to read input")?;
+
+    let trimmed = input.trim();
+    match trimmed.parse::<usize>() {
+        Ok(n) if n >= 1 && n <= options.len() => Ok(n - 1),
+        _ => {
+            print_error(&format!(
+                "Invalid choice. Please enter a number between 1 and {}",
+                options.len()
+            ));
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Prompt the user for a yes/no confirmation.
 ///
 /// # Arguments
@@ -265,6 +313,77 @@ pub fn prompt_confirm(message: &str) -> Result<bool> {
 
     let trimmed = input.trim().to_lowercase();
     Ok(trimmed == "y" || trimmed == "yes")
+}
+
+// =============================================================================
+// Package Manager Helpers
+// =============================================================================
+
+/// Prompt for package manager selection.
+///
+/// Shows installed markers only if is_active_profile is true.
+///
+/// # Arguments
+/// * `is_active_profile` - Whether to show installed markers
+///
+/// # Returns
+/// The selected PackageManager
+pub fn prompt_manager(is_active_profile: bool) -> Result<PackageManager> {
+    let managers = PackageService::get_available_managers();
+
+    let options: Vec<(&str, Option<&str>)> = managers
+        .iter()
+        .map(|m| {
+            let name = match m {
+                PackageManager::Brew => "brew",
+                PackageManager::Apt => "apt",
+                PackageManager::Yum => "yum",
+                PackageManager::Dnf => "dnf",
+                PackageManager::Pacman => "pacman",
+                PackageManager::Snap => "snap",
+                PackageManager::Cargo => "cargo",
+                PackageManager::Npm => "npm",
+                PackageManager::Pip => "pip",
+                PackageManager::Pip3 => "pip3",
+                PackageManager::Gem => "gem",
+                PackageManager::Custom => "custom",
+            };
+            let suffix = if is_active_profile && PackageService::is_manager_installed(m) {
+                Some("(installed)")
+            } else {
+                None
+            };
+            (name, suffix)
+        })
+        .collect();
+
+    let index = prompt_select_with_suffix("Manager", &options)?;
+    Ok(managers[index].clone())
+}
+
+/// Parse package manager from string.
+///
+/// # Arguments
+/// * `s` - The string to parse
+///
+/// # Returns
+/// The parsed PackageManager, or None if invalid
+pub fn parse_manager(s: &str) -> Option<PackageManager> {
+    match s.to_lowercase().as_str() {
+        "brew" | "homebrew" => Some(PackageManager::Brew),
+        "apt" | "apt-get" => Some(PackageManager::Apt),
+        "yum" => Some(PackageManager::Yum),
+        "dnf" => Some(PackageManager::Dnf),
+        "pacman" => Some(PackageManager::Pacman),
+        "snap" => Some(PackageManager::Snap),
+        "cargo" => Some(PackageManager::Cargo),
+        "npm" => Some(PackageManager::Npm),
+        "pip" => Some(PackageManager::Pip),
+        "pip3" => Some(PackageManager::Pip3),
+        "gem" => Some(PackageManager::Gem),
+        "custom" => Some(PackageManager::Custom),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
