@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CLI**: `dotstate packages` subcommand for managing packages from command line
+  - `packages list` - List packages for a profile (with installation status for active profile)
+  - `packages add` - Add a package interactively or via flags
+  - `packages remove` - Remove a package by name or interactive selection
+  - `packages check` - Check installation status of packages
+  - `packages install` - Install all missing packages
+  - All commands support `--profile` flag to target non-active profiles
+  - Interactive and non-interactive modes for scripting support
+- **CLI**: Modular CLI architecture with `src/cli/` folder structure for better organization
 - **Screens**: New `ActionResult` enum for screens to signal toasts, dialogs, and navigation without mutating app state directly
 - **Screens**: New action enums (`DotfileAction`, `ProfileAction`, `ProfileSelectionAction`) for type-safe screen action handling
 
