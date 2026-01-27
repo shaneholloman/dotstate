@@ -81,6 +81,77 @@ pub enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Manage packages for profiles
+    Packages {
+        #[command(subcommand)]
+        command: PackagesCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PackagesCommand {
+    /// List packages for a profile
+    List {
+        /// Target profile (defaults to active profile)
+        #[arg(short, long)]
+        profile: Option<String>,
+        /// Show detailed package information
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Add a package to a profile
+    Add {
+        /// Target profile (defaults to active profile)
+        #[arg(short, long)]
+        profile: Option<String>,
+        /// Package display name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Package manager (brew, cargo, apt, npm, pip, custom, etc.)
+        #[arg(short, long)]
+        manager: Option<String>,
+        /// Binary name to check for existence
+        #[arg(short, long)]
+        binary: Option<String>,
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+        /// Package name in the manager (defaults to binary name)
+        #[arg(long)]
+        package_name: Option<String>,
+        /// Install command (required for custom manager)
+        #[arg(long)]
+        install_command: Option<String>,
+        /// Command to check if package exists (optional, for custom)
+        #[arg(long)]
+        existence_check: Option<String>,
+    },
+    /// Remove a package from a profile
+    Remove {
+        /// Target profile (defaults to active profile)
+        #[arg(short, long)]
+        profile: Option<String>,
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+        /// Package name to remove
+        name: Option<String>,
+    },
+    /// Check installation status of packages
+    Check {
+        /// Target profile (defaults to active profile)
+        #[arg(short, long)]
+        profile: Option<String>,
+    },
+    /// Install all missing packages
+    Install {
+        /// Target profile (defaults to active profile)
+        #[arg(short, long)]
+        profile: Option<String>,
+        /// Show package manager output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 impl Cli {
@@ -99,6 +170,7 @@ impl Cli {
             Some(Commands::Config) => Self::cmd_config(),
             Some(Commands::Repository) => Self::cmd_repository(),
             Some(Commands::Upgrade { check }) => Self::cmd_upgrade(check),
+            Some(Commands::Packages { command }) => Self::cmd_packages(command),
             None => {
                 // No command provided, launch TUI
                 Ok(())
@@ -941,6 +1013,40 @@ impl Cli {
         }
 
         Ok(())
+    }
+
+    fn cmd_packages(command: PackagesCommand) -> Result<()> {
+        match command {
+            PackagesCommand::List { profile, verbose } => {
+                println!(
+                    "packages list (profile: {:?}, verbose: {})",
+                    profile, verbose
+                );
+                Ok(())
+            }
+            PackagesCommand::Add { .. } => {
+                println!("packages add (stub)");
+                Ok(())
+            }
+            PackagesCommand::Remove { profile, yes, name } => {
+                println!(
+                    "packages remove (profile: {:?}, yes: {}, name: {:?})",
+                    profile, yes, name
+                );
+                Ok(())
+            }
+            PackagesCommand::Check { profile } => {
+                println!("packages check (profile: {:?})", profile);
+                Ok(())
+            }
+            PackagesCommand::Install { profile, verbose } => {
+                println!(
+                    "packages install (profile: {:?}, verbose: {})",
+                    profile, verbose
+                );
+                Ok(())
+            }
+        }
     }
 
     /// Print all available commands with their descriptions (typesafe)
