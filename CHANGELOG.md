@@ -7,25 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+---
 
-- **App Architecture**: Major refactor of `app.rs` - reduced from ~2400 lines to ~1400 lines (40% reduction)
-- **Screens**: `DotfileSelectionScreen`, `ManageProfilesScreen`, `ProfileSelectionScreen` now handle their own actions via `process_action()` methods
-- **Services**: Added `StorageSetupService` for async GitHub repository setup state machine with oneshot channels
+## [0.2.19] - 2025-01-27
 
 ### Added
 
 - **CLI**: `dotstate packages` subcommand for managing packages from command line
-  - `packages list` - List packages for a profile (with installation status for active profile)
-  - `packages add` - Add a package interactively or via flags
-  - `packages remove` - Remove a package by name or interactive selection
-  - `packages check` - Check installation status of packages
+  - `packages list` - List packages with installation status
+  - `packages add` - Add packages interactively or via flags
+  - `packages remove` - Remove packages by name or selection
+  - `packages check` - Check installation status
   - `packages install` - Install all missing packages
-  - All commands support `--profile` flag to target non-active profiles
-  - Interactive and non-interactive modes for scripting support
-- **CLI**: Modular CLI architecture with `src/cli/` folder structure for better organization
-- **Screens**: New `ActionResult` enum for screens to signal toasts, dialogs, and navigation without mutating app state directly
-- **Screens**: New action enums (`DotfileAction`, `ProfileAction`, `ProfileSelectionAction`) for type-safe screen action handling
+  - All commands support `--profile` flag for non-active profiles
+- **CLI**: Modular CLI architecture with `src/cli/` folder structure
+
+### Changed
+
+- **App Architecture**: Major refactor of `app.rs` - reduced from ~2400 to ~1400 lines (40% reduction)
+- **Screens**: Screens now handle their own actions via `process_action()` methods with type-safe action enums
 
 ---
 
