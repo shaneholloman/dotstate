@@ -1038,11 +1038,7 @@ impl Cli {
                 existence_check,
             ),
             PackagesCommand::Remove { profile, yes, name } => {
-                println!(
-                    "packages remove (profile: {:?}, yes: {}, name: {:?})",
-                    profile, yes, name
-                );
-                Ok(())
+                Self::cmd_packages_remove(profile, yes, name)
             }
             PackagesCommand::Check { profile } => {
                 println!("packages check (profile: {:?})", profile);
@@ -1307,6 +1303,95 @@ impl Cli {
         print_success(&format!(
             "Package '{}' added to profile '{}'",
             name, profile_name
+        ));
+
+        Ok(())
+    }
+
+    fn cmd_packages_remove(profile: Option<String>, yes: bool, name: Option<String>) -> Result<()> {
+        use crate::cli::common::{
+            print_error, print_success, prompt_confirm, prompt_select_with_suffix, CliContext,
+        };
+        use crate::services::PackageService;
+
+        let ctx = CliContext::load()?;
+        let profile_name = ctx.resolve_profile(profile.as_deref());
+
+        // Validate profile exists
+        if !ctx.profile_exists(&profile_name) {
+            print_error(&format!("Profile '{}' not found", profile_name));
+            std::process::exit(1);
+        }
+
+        let packages = PackageService::get_packages(&ctx.config.repo_path, &profile_name)?;
+
+        if packages.is_empty() {
+            println!("No packages found in profile '{}'", profile_name);
+            return Ok(());
+        }
+
+        // Find package by name or prompt for selection
+        let (index, package_name, manager_str) = match name {
+            Some(ref n) => {
+                // Find by name
+                match packages.iter().position(|p| p.name == *n) {
+                    Some(i) => {
+                        let mgr = format!("{:?}", packages[i].manager).to_lowercase();
+                        (i, n.clone(), mgr)
+                    }
+                    None => {
+                        print_error(&format!(
+                            "Package '{}' not found in profile '{}'",
+                            n, profile_name
+                        ));
+                        std::process::exit(1);
+                    }
+                }
+            }
+            None => {
+                // Interactive selection
+                println!(
+                    "Select package to remove from profile '{}':\n",
+                    profile_name
+                );
+                let options: Vec<(String, Option<String>)> = packages
+                    .iter()
+                    .map(|p| {
+                        let mgr = format!("{:?}", p.manager).to_lowercase();
+                        let suffix = format!("({})", mgr);
+                        (p.name.clone(), Some(suffix))
+                    })
+                    .collect();
+
+                let options_ref: Vec<(&str, Option<&str>)> = options
+                    .iter()
+                    .map(|(n, s)| (n.as_str(), s.as_deref()))
+                    .collect();
+
+                let selected = prompt_select_with_suffix("Package", &options_ref)?;
+                let mgr = format!("{:?}", packages[selected].manager).to_lowercase();
+                (selected, packages[selected].name.clone(), mgr)
+            }
+        };
+
+        // Confirm unless --yes
+        if !yes {
+            let confirm_msg = format!(
+                "Remove '{}' ({}) from profile '{}'?",
+                package_name, manager_str, profile_name
+            );
+            if !prompt_confirm(&confirm_msg)? {
+                println!("Cancelled.");
+                return Ok(());
+            }
+        }
+
+        // Delete package
+        PackageService::delete_package(&ctx.config.repo_path, &profile_name, index)?;
+
+        print_success(&format!(
+            "Package '{}' removed from profile '{}'",
+            package_name, profile_name
         ));
 
         Ok(())
