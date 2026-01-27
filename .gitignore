@@ -39,3 +39,4 @@ website/dist/
 website/.astro/
 website/.vercel/
 .worktrees/
+docs/
