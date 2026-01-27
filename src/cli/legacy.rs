@@ -1042,11 +1042,7 @@ impl Cli {
             }
             PackagesCommand::Check { profile } => Self::cmd_packages_check(profile),
             PackagesCommand::Install { profile, verbose } => {
-                println!(
-                    "packages install (profile: {:?}, verbose: {})",
-                    profile, verbose
-                );
-                Ok(())
+                Self::cmd_packages_install(profile, verbose)
             }
         }
     }
@@ -1472,6 +1468,115 @@ impl Cli {
 
         if errors > 0 {
             println!("({} check errors)", errors);
+        }
+
+        Ok(())
+    }
+
+    fn cmd_packages_install(profile: Option<String>, verbose: bool) -> Result<()> {
+        use crate::cli::common::{print_error, print_success, print_warning, CliContext};
+        use crate::services::{PackageCheckStatus, PackageService};
+        use crate::utils::package_installer::PackageInstaller;
+        use std::sync::mpsc;
+
+        let ctx = CliContext::load()?;
+        let profile_name = ctx.resolve_profile(profile.as_deref());
+
+        // Validate profile exists
+        if !ctx.profile_exists(&profile_name) {
+            print_error(&format!("Profile '{}' not found", profile_name));
+            std::process::exit(1);
+        }
+
+        // Install can only work for active profile
+        if !ctx.is_active_profile(&profile_name) {
+            print_warning(&format!(
+                "Cannot install packages for non-active profile '{}'",
+                profile_name
+            ));
+            println!("   Switch to this profile first or install manually on the target system.");
+            return Ok(());
+        }
+
+        let packages = PackageService::get_packages(&ctx.config.repo_path, &profile_name)?;
+
+        if packages.is_empty() {
+            println!("No packages configured for profile '{}'", profile_name);
+            return Ok(());
+        }
+
+        // Find missing packages
+        let missing: Vec<_> = packages
+            .iter()
+            .filter(|p| {
+                let result = PackageService::check_package(p);
+                matches!(result.status, PackageCheckStatus::NotInstalled)
+            })
+            .collect();
+
+        if missing.is_empty() {
+            print_success("All packages are already installed");
+            return Ok(());
+        }
+
+        println!(
+            "Installing {} missing package(s) for profile '{}'...\n",
+            missing.len(),
+            profile_name
+        );
+
+        let mut success_count = 0;
+        let mut fail_count = 0;
+
+        for package in missing {
+            let manager_str = format!("{:?}", package.manager).to_lowercase();
+
+            if verbose {
+                println!("Installing {} ({})...", package.name, manager_str);
+            }
+
+            // Use sync install with channel
+            let (tx, rx) = mpsc::channel();
+            PackageInstaller::install(package, tx);
+
+            // Collect output
+            let mut install_success = false;
+            let mut error_msg = None;
+
+            for status in rx {
+                match status {
+                    crate::ui::InstallationStatus::Output(line) => {
+                        if verbose {
+                            println!("{}", line);
+                        }
+                    }
+                    crate::ui::InstallationStatus::Complete { success, error } => {
+                        install_success = success;
+                        error_msg = error;
+                    }
+                }
+            }
+
+            if install_success {
+                success_count += 1;
+                println!("  \u{2713} {} ({})", package.name, manager_str);
+            } else {
+                fail_count += 1;
+                let err = error_msg.unwrap_or_else(|| "Unknown error".to_string());
+                println!("  \u{2717} {} ({}) - {}", package.name, manager_str, err);
+            }
+        }
+
+        println!();
+        if fail_count == 0 {
+            print_success(&format!("{} package(s) installed", success_count));
+        } else {
+            println!(
+                "{} of {} package(s) installed ({} failed)",
+                success_count,
+                success_count + fail_count,
+                fail_count
+            );
         }
 
         Ok(())
