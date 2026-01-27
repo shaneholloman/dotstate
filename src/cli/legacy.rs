@@ -1017,13 +1017,7 @@ impl Cli {
 
     fn cmd_packages(command: PackagesCommand) -> Result<()> {
         match command {
-            PackagesCommand::List { profile, verbose } => {
-                println!(
-                    "packages list (profile: {:?}, verbose: {})",
-                    profile, verbose
-                );
-                Ok(())
-            }
+            PackagesCommand::List { profile, verbose } => Self::cmd_packages_list(profile, verbose),
             PackagesCommand::Add { .. } => {
                 println!("packages add (stub)");
                 Ok(())
@@ -1047,6 +1041,115 @@ impl Cli {
                 Ok(())
             }
         }
+    }
+
+    fn cmd_packages_list(profile: Option<String>, verbose: bool) -> Result<()> {
+        use crate::cli::common::{print_error, CliContext};
+        use crate::services::package_service::{PackageCheckStatus, PackageService};
+
+        let ctx = CliContext::load()?;
+        let profile_name = ctx.resolve_profile(profile.as_deref());
+
+        // Validate profile exists
+        if !ctx.profile_exists(&profile_name) {
+            print_error(&format!("Profile '{}' not found", profile_name));
+            std::process::exit(1);
+        }
+
+        let is_active = ctx.is_active_profile(&profile_name);
+        let packages = PackageService::get_packages(&ctx.config.repo_path, &profile_name)?;
+
+        if packages.is_empty() {
+            println!("No packages configured for profile '{}'", profile_name);
+            println!("Use 'dotstate packages add' to add packages.");
+            return Ok(());
+        }
+
+        println!("Packages for profile '{}':\n", profile_name);
+
+        let mut installed_count = 0;
+        let mut missing_count = 0;
+
+        for package in &packages {
+            let manager_str = format!("{:?}", package.manager).to_lowercase();
+
+            if is_active {
+                // Check installation status for active profile
+                let check_result = PackageService::check_package(package);
+                let status_str = match check_result.status {
+                    PackageCheckStatus::Installed => {
+                        installed_count += 1;
+                        "\u{2713} installed".to_string()
+                    }
+                    PackageCheckStatus::NotInstalled => {
+                        missing_count += 1;
+                        "\u{2717} not installed".to_string()
+                    }
+                    PackageCheckStatus::Error(ref e) => {
+                        format!("? {}", e)
+                    }
+                    PackageCheckStatus::Unknown => "? unknown".to_string(),
+                };
+
+                if verbose {
+                    println!("  {}", package.name);
+                    println!("    Manager: {}", manager_str);
+                    if let Some(ref pkg_name) = package.package_name {
+                        println!("    Package: {}", pkg_name);
+                    }
+                    println!("    Binary: {}", package.binary_name);
+                    if let Some(ref desc) = package.description {
+                        println!("    Description: {}", desc);
+                    }
+                    if let Some(ref cmd) = package.install_command {
+                        println!("    Install: {}", cmd);
+                    }
+                    if let Some(ref check) = package.existence_check {
+                        println!("    Check: {}", check);
+                    }
+                    println!("    Status: {}", status_str);
+                    println!();
+                } else {
+                    println!("  {:<12} {:<8} {}", package.name, manager_str, status_str);
+                }
+            } else {
+                // Non-active profile - no status checks
+                if verbose {
+                    println!("  {}", package.name);
+                    println!("    Manager: {}", manager_str);
+                    if let Some(ref pkg_name) = package.package_name {
+                        println!("    Package: {}", pkg_name);
+                    }
+                    println!("    Binary: {}", package.binary_name);
+                    if let Some(ref desc) = package.description {
+                        println!("    Description: {}", desc);
+                    }
+                    if let Some(ref cmd) = package.install_command {
+                        println!("    Install: {}", cmd);
+                    }
+                    if let Some(ref check) = package.existence_check {
+                        println!("    Check: {}", check);
+                    }
+                    println!();
+                } else {
+                    println!("  {:<12} {}", package.name, manager_str);
+                }
+            }
+        }
+
+        // Summary
+        if is_active {
+            println!(
+                "\n{} packages ({} installed, {} missing)",
+                packages.len(),
+                installed_count,
+                missing_count
+            );
+        } else {
+            println!("\n{} packages", packages.len());
+        }
+
+        Ok(())
     }
 
     /// Print all available commands with their descriptions (typesafe)
