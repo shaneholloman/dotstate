@@ -319,17 +319,42 @@ pub fn prompt_confirm(message: &str) -> Result<bool> {
 // Package Manager Helpers
 // =============================================================================
 
+/// Get all supported package managers (for non-active profiles).
+fn all_package_managers() -> Vec<PackageManager> {
+    vec![
+        PackageManager::Brew,
+        PackageManager::Apt,
+        PackageManager::Yum,
+        PackageManager::Dnf,
+        PackageManager::Pacman,
+        PackageManager::Snap,
+        PackageManager::Cargo,
+        PackageManager::Npm,
+        PackageManager::Pip,
+        PackageManager::Pip3,
+        PackageManager::Gem,
+        PackageManager::Custom,
+    ]
+}
+
 /// Prompt for package manager selection.
 ///
-/// Shows installed markers only if is_active_profile is true.
+/// For active profiles: shows only managers available on current OS with "(installed)" markers.
+/// For non-active profiles: shows ALL supported managers (profile may be for different OS).
 ///
 /// # Arguments
-/// * `is_active_profile` - Whether to show installed markers
+/// * `is_active_profile` - Whether this is the active profile
 ///
 /// # Returns
 /// The selected PackageManager
 pub fn prompt_manager(is_active_profile: bool) -> Result<PackageManager> {
-    let managers = PackageService::get_available_managers();
+    // For active profile: use OS-detected managers with installed markers
+    // For non-active profile: show ALL managers (may be for different OS)
+    let managers = if is_active_profile {
+        PackageService::get_available_managers()
+    } else {
+        all_package_managers()
+    };
 
     let options: Vec<(&str, Option<&str>)> = managers
         .iter()
@@ -348,6 +373,7 @@ pub fn prompt_manager(is_active_profile: bool) -> Result<PackageManager> {
                 PackageManager::Gem => "gem",
                 PackageManager::Custom => "custom",
             };
+            // Only show "(installed)" markers for active profile
             let suffix = if is_active_profile && PackageService::is_manager_installed(m) {
                 Some("(installed)")
             } else {
