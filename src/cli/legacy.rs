@@ -152,6 +152,11 @@ pub enum PackagesCommand {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Show help for packages commands
+    Help {
+        /// Command to show help for
+        command: Option<String>,
+    },
 }
 
 impl Cli {
@@ -1044,7 +1049,103 @@ impl Cli {
             PackagesCommand::Install { profile, verbose } => {
                 Self::cmd_packages_install(profile, verbose)
             }
+            PackagesCommand::Help { command } => Self::cmd_packages_help(command),
         }
+    }
+
+    fn cmd_packages_help(command: Option<String>) -> Result<()> {
+        match command.as_deref() {
+            Some("list") => {
+                println!("Usage: dotstate packages list [OPTIONS]");
+                println!();
+                println!("List packages for a profile");
+                println!();
+                println!("Options:");
+                println!("  -p, --profile <NAME>  Target profile (defaults to active profile)");
+                println!("  -v, --verbose         Show detailed package information");
+            }
+            Some("add") => {
+                println!("Usage: dotstate packages add [OPTIONS]");
+                println!();
+                println!("Add a package to a profile");
+                println!();
+                println!("Options:");
+                println!(
+                    "  -p, --profile <NAME>       Target profile (defaults to active profile)"
+                );
+                println!("  -n, --name <NAME>          Package display name");
+                println!("  -m, --manager <MANAGER>    Package manager (brew, cargo, apt, npm, pip, custom, etc.)");
+                println!("  -b, --binary <NAME>        Binary name to check for existence");
+                println!("      --description <TEXT>   Optional description");
+                println!("      --package-name <NAME>  Package name in the manager (defaults to binary name)");
+                println!(
+                    "      --install-command <CMD>  Install command (required for custom manager)"
+                );
+                println!(
+                    "      --existence-check <CMD>  Command to check if package exists (optional)"
+                );
+                println!();
+                println!("Examples:");
+                println!("  dotstate packages add -n ripgrep -m brew -b rg");
+                println!("  dotstate packages add --profile Work -n neovim -m apt -b nvim");
+                println!("  dotstate packages add  # Interactive mode");
+            }
+            Some("remove") => {
+                println!("Usage: dotstate packages remove [OPTIONS] [NAME]");
+                println!();
+                println!("Remove a package from a profile");
+                println!();
+                println!("Options:");
+                println!("  -p, --profile <NAME>  Target profile (defaults to active profile)");
+                println!("  -y, --yes             Skip confirmation prompt");
+                println!();
+                println!("Examples:");
+                println!("  dotstate packages remove ripgrep");
+                println!("  dotstate packages remove --profile Work neovim");
+                println!("  dotstate packages remove  # Interactive selection");
+            }
+            Some("check") => {
+                println!("Usage: dotstate packages check [OPTIONS]");
+                println!();
+                println!("Check installation status of packages");
+                println!();
+                println!("Options:");
+                println!("  -p, --profile <NAME>  Target profile (defaults to active profile)");
+            }
+            Some("install") => {
+                println!("Usage: dotstate packages install [OPTIONS]");
+                println!();
+                println!("Install all missing packages for a profile");
+                println!();
+                println!("Options:");
+                println!("  -p, --profile <NAME>  Target profile (defaults to active profile)");
+                println!("  -v, --verbose         Show package manager output");
+            }
+            Some(cmd) => {
+                eprintln!("Unknown command: {}", cmd);
+                eprintln!("Available commands: list, add, remove, check, install");
+                std::process::exit(1);
+            }
+            None => {
+                println!("dotstate packages - Manage packages for profiles");
+                println!();
+                println!("Usage: dotstate packages <COMMAND>");
+                println!();
+                println!("Commands:");
+                println!("  list     List packages for a profile");
+                println!("  add      Add a package to a profile");
+                println!("  remove   Remove a package from a profile");
+                println!("  check    Check installation status of packages");
+                println!("  install  Install all missing packages");
+                println!("  help     Show help for a command");
+                println!();
+                println!("Options:");
+                println!("  -h, --help  Print help");
+                println!();
+                println!("Run 'dotstate packages help <command>' for more info on a command.");
+            }
+        }
+        Ok(())
     }
 
     fn cmd_packages_list(profile: Option<String>, verbose: bool) -> Result<()> {
