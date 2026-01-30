@@ -180,7 +180,7 @@ Generate completions for your shell:
 source <(dotstate completions bash)
 
 # Fish
-dotstate generate fish | source
+dotstate completions fish | source
 
 # Zsh
 source <(dotstate completions zsh)
