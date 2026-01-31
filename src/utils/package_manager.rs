@@ -5,7 +5,30 @@ use std::process::Command;
 /// Package manager implementation utilities
 pub struct PackageManagerImpl;
 
+/// Environment variables that Homebrew needs to function correctly.
+/// These must be explicitly passed to child processes because some systems
+/// (especially custom Homebrew installations) rely on these being set.
+const HOMEBREW_ENV_VARS: &[&str] = &[
+    "HOMEBREW_PREFIX",
+    "HOMEBREW_CELLAR",
+    "HOMEBREW_REPOSITORY",
+    "HOMEBREW_SHELLENV_PREFIX",
+];
+
 impl PackageManagerImpl {
+    /// Create a brew Command with the necessary Homebrew environment variables.
+    /// This ensures brew works correctly on systems with custom installations.
+    #[must_use]
+    pub fn brew_command() -> Command {
+        let mut cmd = Command::new("brew");
+        // Explicitly pass Homebrew environment variables from parent process
+        for var in HOMEBREW_ENV_VARS {
+            if let Ok(value) = std::env::var(var) {
+                cmd.env(var, value);
+            }
+        }
+        cmd
+    }
     /// Check if binary exists in PATH (no shell, no injection risk)
     /// Implements PATH-walk in Rust for maximum security
     #[must_use]
@@ -84,7 +107,7 @@ impl PackageManagerImpl {
     pub fn build_install_command(manager: &PackageManager, package_name: &str) -> Command {
         match manager {
             PackageManager::Brew => {
-                let mut cmd = Command::new("brew");
+                let mut cmd = Self::brew_command();
                 cmd.arg("install").arg(package_name);
                 cmd
             }
@@ -190,7 +213,7 @@ impl PackageManagerImpl {
                 // If user adds a cask (e.g., via custom package or by using cask name),
                 // binary check will work, and this fallback will also work
                 // For formulas, this works. For casks, this also works.
-                let mut cmd = Command::new("brew");
+                let mut cmd = Self::brew_command();
                 cmd.arg("list").arg(package_name);
                 Some(cmd)
             }

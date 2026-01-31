@@ -1050,7 +1050,8 @@ impl MainMenuScreen {
         }
 
         let item = self.selected_item();
-        let is_setup = ctx.config.repo_path.exists();
+        // Use proper is_repo_configured check, not just directory existence
+        let is_setup = ctx.config.is_repo_configured();
 
         // Check if item requires setup
         if item.requires_setup() && !is_setup {

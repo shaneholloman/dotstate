@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Package Installation**: Fixed Homebrew commands failing on systems with custom installations by explicitly passing HOMEBREW_* environment variables
+- **Package Installation**: Fixed CLI output delay - package manager output now streams in real-time instead of appearing only after completion
+- **Package Installation**: Fixed TUI appearing hung during installation by using faster poll timeout (50ms) during active operations
+- **Package Installation**: Fixed installation output auto-scroll stopping prematurely by disabling line wrapping in output area
+- **Storage Setup**: Fixed GitHub setup progress popup content being clipped due to insufficient height
+- **Main Menu**: Fixed "requires setup" check using proper is_repo_configured() instead of just directory existence
+
 ---
 
 ## [0.2.21] - 2025-01-30

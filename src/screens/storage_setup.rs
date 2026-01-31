@@ -726,8 +726,9 @@ impl StorageSetupScreen {
         let t = theme();
 
         // Center the progress box
+        // Height: 8 steps + 1 empty line + 2 status lines + 2 borders = 13 minimum, use 15 for safety
         let popup_width = 50u16.min(area.width.saturating_sub(4));
-        let popup_height = 12u16.min(area.height.saturating_sub(2));
+        let popup_height = 15u16.min(area.height.saturating_sub(2));
         let popup_area = crate::utils::center_popup(area, popup_width, popup_height);
 
         // Clear the popup area

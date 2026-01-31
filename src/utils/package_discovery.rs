@@ -4,6 +4,7 @@
 //! various package managers, focusing on explicitly installed packages
 //! (not dependencies).
 
+use crate::utils::package_manager::PackageManagerImpl;
 use anyhow::{Context, Result};
 use std::process::Command;
 use std::sync::mpsc;
@@ -159,7 +160,7 @@ pub struct HomebrewDiscoverer;
 
 impl PackageDiscoverer for HomebrewDiscoverer {
     fn is_available(&self) -> bool {
-        Command::new("brew")
+        PackageManagerImpl::brew_command()
             .arg("--version")
             .output()
             .map(|o| o.status.success())
@@ -174,14 +175,14 @@ impl PackageDiscoverer for HomebrewDiscoverer {
         info!("Discovering Homebrew packages...");
 
         // Use `brew leaves` to get only explicitly installed packages (not dependencies)
-        let output = Command::new("brew")
+        let output = PackageManagerImpl::brew_command()
             .args(["leaves", "--installed-on-request"])
             .output()
             .context("Failed to run brew leaves")?;
 
         if !output.status.success() {
             // Fallback to just `brew leaves` if --installed-on-request isn't supported
-            let output = Command::new("brew")
+            let output = PackageManagerImpl::brew_command()
                 .arg("leaves")
                 .output()
                 .context("Failed to run brew leaves")?;
@@ -206,7 +207,7 @@ impl PackageDiscoverer for HomebrewDiscoverer {
         }
 
         // Try to list files installed by the package and find executables
-        let output = Command::new("brew")
+        let output = PackageManagerImpl::brew_command()
             .args(["list", "--formula", package_name])
             .output()
             .ok()?;

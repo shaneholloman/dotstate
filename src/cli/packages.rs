@@ -605,6 +605,7 @@ fn cmd_check(profile: Option<String>) -> Result<()> {
 fn cmd_install(profile: Option<String>, verbose: bool) -> Result<()> {
     use crate::utils::package_installer::PackageInstaller;
     use std::sync::mpsc;
+    use std::thread;
 
     let ctx = CliContext::load()?;
     let profile_name = ctx.resolve_profile(profile.as_deref());
@@ -661,11 +662,14 @@ fn cmd_install(profile: Option<String>, verbose: bool) -> Result<()> {
             println!("Installing {} ({})...", package.name, manager_str);
         }
 
-        // Use sync install with channel
+        // Spawn install in background thread so we can stream output in real-time
         let (tx, rx) = mpsc::channel();
-        PackageInstaller::install(package, tx);
+        let pkg_clone = package.clone();
+        thread::spawn(move || {
+            PackageInstaller::install(&pkg_clone, tx);
+        });
 
-        // Collect output
+        // Stream output as it arrives
         let mut install_success = false;
         let mut error_msg = None;
 

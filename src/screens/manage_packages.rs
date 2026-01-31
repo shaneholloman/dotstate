@@ -2598,6 +2598,8 @@ impl ManagePackagesScreen {
                     0
                 };
 
+                // Don't wrap output - package manager output is meant to be read as-is,
+                // and wrapping breaks the scroll calculation (it counts logical lines, not display lines)
                 let output_para = Paragraph::new(output_text)
                     .block(
                         Block::default()
@@ -2605,7 +2607,6 @@ impl ManagePackagesScreen {
                             .border_type(theme().border_type(false))
                             .title(" Output "),
                     )
-                    .wrap(Wrap { trim: true })
                     .scroll((scroll_offset, 0))
                     .style(t.text_style());
                 frame.render_widget(output_para, chunks[2]);

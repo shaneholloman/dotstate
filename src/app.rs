@@ -277,19 +277,29 @@ impl App {
 
             // Process package checking and installation (managed by screen)
             // We call tick() on the manage_packages_screen to handle background tasks
-            match self.manage_packages_screen.tick() {
-                Ok(crate::screens::ScreenAction::Refresh) => {
-                    // Redraw requested by tick (e.g. progress update)
-                    // self.draw() happens next loop anyway if we don't block.
-                    // But poll_event blocks.
-                    // We rely on the poll timeout (250ms) to allow redraws.
+            let needs_fast_refresh = match self.manage_packages_screen.tick() {
+                Ok(crate::screens::ScreenAction::Refresh) => true,
+                Ok(action) => {
+                    self.process_screen_action(action)?;
+                    false
                 }
-                Ok(action) => self.process_screen_action(action)?,
-                Err(e) => error!("Error in package manager tick: {}", e),
-            }
+                Err(e) => {
+                    error!("Error in package manager tick: {}", e);
+                    false
+                }
+            };
 
-            // Poll for events with 250ms timeout
-            if let Some(event) = self.tui.poll_event(Duration::from_millis(250))? {
+            // Poll for events - use short timeout during active operations for responsive UI
+            let poll_timeout = if needs_fast_refresh
+                || self.setup_step_handle.is_some()
+                || self.manage_packages_screen.get_state_mut().is_checking
+            {
+                Duration::from_millis(50) // Fast refresh for active operations
+            } else {
+                Duration::from_millis(250) // Normal polling
+            };
+
+            if let Some(event) = self.tui.poll_event(poll_timeout)? {
                 trace!("Event received: {:?}", event);
                 if let Err(e) = self.handle_event(event) {
                     error!("Error handling event: {}", e);
