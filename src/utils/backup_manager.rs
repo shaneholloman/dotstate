@@ -10,9 +10,15 @@ pub struct BackupManager {
 
 impl BackupManager {
     /// Create a new `BackupManager`
+    ///
+    /// In tests, set `DOTSTATE_TEST_BACKUP_DIR` env var to override the backup location.
     pub fn new() -> Result<Self> {
-        let home_dir = crate::utils::get_home_dir();
-        let backup_root = home_dir.join(".dotstate-backups");
+        let backup_root = if let Ok(test_backup) = std::env::var("DOTSTATE_TEST_BACKUP_DIR") {
+            PathBuf::from(test_backup)
+        } else {
+            let home_dir = crate::utils::get_home_dir();
+            home_dir.join(".dotstate-backups")
+        };
 
         // Ensure backup directory exists
         fs::create_dir_all(&backup_root).context("Failed to create backup directory")?;

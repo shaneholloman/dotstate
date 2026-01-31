@@ -1,8 +1,13 @@
 use std::path::{Path, PathBuf};
 
 /// Get the home directory, with fallback to "/"
+///
+/// In tests, set `DOTSTATE_TEST_HOME` env var to override.
 #[must_use]
 pub fn get_home_dir() -> PathBuf {
+    if let Ok(test_home) = std::env::var("DOTSTATE_TEST_HOME") {
+        return PathBuf::from(test_home);
+    }
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
 }
 
@@ -58,8 +63,13 @@ pub fn is_safe_to_add(path: &Path, repo_path: &Path) -> (bool, Option<String>) {
 }
 
 /// Get the config directory path (always ~/.config/dotstate, regardless of OS)
+///
+/// In tests, set `DOTSTATE_TEST_CONFIG_DIR` env var to override.
 #[must_use]
 pub fn get_config_dir() -> PathBuf {
+    if let Ok(test_config) = std::env::var("DOTSTATE_TEST_CONFIG_DIR") {
+        return PathBuf::from(test_config);
+    }
     get_home_dir().join(".config").join("dotstate")
 }
 
