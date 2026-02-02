@@ -3,7 +3,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+
+/// Current version of the `package_status.json` file format.
+/// Increment this when making breaking changes to the schema.
+const CURRENT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageCacheEntry {
@@ -13,11 +17,44 @@ pub struct PackageCacheEntry {
     pub output: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PackageCacheData {
+    #[serde(default)]
     pub version: u32,
     // Key format: "profile_name::package_name"
+    #[serde(default)]
     pub entries: HashMap<String, PackageCacheEntry>,
+}
+
+impl Default for PackageCacheData {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_VERSION,
+            entries: HashMap::new(),
+        }
+    }
+}
+
+impl PackageCacheData {
+    // ==================== Migration Methods ====================
+
+    /// Run all necessary migrations to bring cache data to current version.
+    fn migrate(mut data: Self) -> Result<Self> {
+        if data.version == 0 {
+            data = Self::migrate_v0_to_v1(data)?;
+        }
+        // Future migrations:
+        // if data.version == 1 { data = Self::migrate_v1_to_v2(data)?; }
+        Ok(data)
+    }
+
+    /// Migrate from v0 (no version field) to v1.
+    /// This is a no-op migration that just sets the version field.
+    fn migrate_v0_to_v1(mut data: Self) -> Result<Self> {
+        debug!("Migrating package_status.json v0 -> v1");
+        data.version = 1;
+        Ok(data)
+    }
 }
 
 #[derive(Debug)]
@@ -53,7 +90,7 @@ impl PackageCache {
         let config_dir = crate::utils::get_config_dir();
         let cache_file = config_dir.join("package_status.json");
 
-        let data = if cache_file.exists() {
+        let mut data: PackageCacheData = if cache_file.exists() {
             match std::fs::read_to_string(&cache_file) {
                 Ok(content) => match serde_json::from_str(&content) {
                     Ok(data) => data,
@@ -70,6 +107,23 @@ impl PackageCache {
         } else {
             PackageCacheData::default()
         };
+
+        // Migrate if needed
+        if cache_file.exists() && data.version < CURRENT_VERSION {
+            let old_version = data.version;
+            info!(
+                "Migrating package_status.json from v{} to v{}",
+                old_version, CURRENT_VERSION
+            );
+            data = PackageCacheData::migrate(data)?;
+
+            // Backup, save, cleanup
+            let cache_json =
+                serde_json::to_string_pretty(&data).context("Failed to serialize package cache")?;
+            super::migrate_file(&cache_file, old_version, "json", || {
+                std::fs::write(&cache_file, &cache_json).context("Failed to write package cache")
+            })?;
+        }
 
         Ok(Self { cache_file, data })
     }

@@ -390,13 +390,13 @@ impl StorageSetupService {
         };
 
         let manifest = ProfileManifest {
-            common: crate::utils::profile_manifest::CommonSection::default(),
             profiles: vec![crate::utils::profile_manifest::ProfileInfo {
                 name: default_profile_name.clone(),
                 description: None,
                 synced_files: Vec::new(),
                 packages: Vec::new(),
             }],
+            ..Default::default()
         };
         manifest.save(repo_path)?;
 

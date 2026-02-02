@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Current version of the manifest file format.
+/// Increment this when making breaking changes to the schema.
+const CURRENT_VERSION: u32 = 1;
+
 /// Package manager types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -63,13 +67,27 @@ pub struct CommonSection {
 pub const RESERVED_PROFILE_NAMES: &[&str] = &["common"];
 
 /// Profile manifest stored in the repository root
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileManifest {
+    /// Schema version for migration support. Missing = v0.
+    #[serde(default)]
+    pub version: u32,
     /// Common files shared across all profiles
     #[serde(default)]
     pub common: CommonSection,
     /// List of profile names
+    #[serde(default)]
     pub profiles: Vec<ProfileInfo>,
+}
+
+impl Default for ProfileManifest {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_VERSION,
+            common: CommonSection::default(),
+            profiles: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,7 +112,8 @@ impl ProfileManifest {
         repo_path.join(".dotstate-profiles.toml")
     }
 
-    /// Load the manifest from the repository
+    /// Load the manifest from the repository.
+    /// Automatically migrates old manifest versions to the current version.
     pub fn load(repo_path: &Path) -> Result<Self> {
         let manifest_path = Self::manifest_path(repo_path);
 
@@ -103,6 +122,22 @@ impl ProfileManifest {
                 .with_context(|| format!("Failed to read profile manifest: {manifest_path:?}"))?;
             let mut manifest: ProfileManifest =
                 toml::from_str(&content).with_context(|| "Failed to parse profile manifest")?;
+
+            // Migrate if needed
+            if manifest.version < CURRENT_VERSION {
+                let old_version = manifest.version;
+                tracing::info!(
+                    "Migrating manifest from v{} to v{}",
+                    old_version,
+                    CURRENT_VERSION
+                );
+                manifest = Self::migrate(manifest)?;
+
+                // Backup, save, cleanup
+                super::migrate_file(&manifest_path, old_version, "toml", || {
+                    manifest.save(repo_path)
+                })?;
+            }
 
             // Sort synced_files alphabetically to ensure consistent ordering
             manifest.common.synced_files.sort();
@@ -346,6 +381,26 @@ impl ProfileManifest {
             .contains(&relative_path.to_string())
     }
 
+    // ==================== Migration Methods ====================
+
+    /// Run all necessary migrations to bring manifest to current version.
+    fn migrate(mut manifest: Self) -> Result<Self> {
+        if manifest.version == 0 {
+            manifest = Self::migrate_v0_to_v1(manifest)?;
+        }
+        // Future migrations:
+        // if manifest.version == 1 { manifest = Self::migrate_v1_to_v2(manifest)?; }
+        Ok(manifest)
+    }
+
+    /// Migrate from v0 (no version field) to v1.
+    /// This is a no-op migration that just sets the version field.
+    fn migrate_v0_to_v1(mut manifest: Self) -> Result<Self> {
+        tracing::debug!("Migrating manifest v0 -> v1");
+        manifest.version = 1;
+        Ok(manifest)
+    }
+
     /// Move a file from a profile to common
     pub fn move_to_common(&mut self, profile_name: &str, relative_path: &str) -> Result<()> {
         // Remove from profile
@@ -502,5 +557,71 @@ mod tests {
         assert!(!manifest.is_common_file(".gitconfig"));
         let profile = manifest.profiles.iter().find(|p| p.name == "work").unwrap();
         assert!(profile.synced_files.contains(&".gitconfig".to_string()));
+    }
+
+    #[test]
+    fn test_manifest_migration_v0_to_v1() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Write a v0 manifest (no version field)
+        let v0_manifest = r#"
+[common]
+synced_files = [".gitconfig"]
+
+[[profiles]]
+name = "work"
+synced_files = [".zshrc"]
+"#;
+        std::fs::write(ProfileManifest::manifest_path(repo_path), v0_manifest).unwrap();
+
+        // Load should auto-migrate to v1
+        let loaded = ProfileManifest::load(repo_path).unwrap();
+        assert_eq!(loaded.version, 1);
+        assert!(loaded.is_common_file(".gitconfig"));
+        assert!(loaded.has_profile("work"));
+
+        // File should be updated with version
+        let content = std::fs::read_to_string(ProfileManifest::manifest_path(repo_path)).unwrap();
+        assert!(content.contains("version = 1"));
+
+        // Backup should be cleaned up
+        let backup_path =
+            ProfileManifest::manifest_path(repo_path).with_extension("toml.backup-v0");
+        assert!(!backup_path.exists());
+    }
+
+    #[test]
+    fn test_manifest_already_at_current_version() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Write a v1 manifest
+        let v1_manifest = r#"
+version = 1
+
+[common]
+synced_files = []
+
+[[profiles]]
+name = "test"
+synced_files = []
+"#;
+        std::fs::write(ProfileManifest::manifest_path(repo_path), v1_manifest).unwrap();
+
+        // Load should not create backup (no migration needed)
+        let loaded = ProfileManifest::load(repo_path).unwrap();
+        assert_eq!(loaded.version, 1);
+
+        // No backup should exist
+        let backup_path =
+            ProfileManifest::manifest_path(repo_path).with_extension("toml.backup-v0");
+        assert!(!backup_path.exists());
+    }
+
+    #[test]
+    fn test_new_manifest_has_current_version() {
+        let manifest = ProfileManifest::default();
+        assert_eq!(manifest.version, 1);
     }
 }

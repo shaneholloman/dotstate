@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Current version of the config file format.
+/// Increment this when making breaking changes to the schema.
+const CURRENT_VERSION: u32 = 1;
+
 /// Repository setup mode
 /// Determines how the repository was configured and how sync operations authenticate
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -46,6 +50,9 @@ fn default_update_check_interval() -> u64 {
 /// This config only stores local settings like backup preferences and active profile name.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Schema version for migration support. Missing = v0.
+    #[serde(default)]
+    pub version: u32,
     /// Repository setup mode (GitHub API or local/user-provided)
     #[serde(default)]
     pub repo_mode: RepoMode,
@@ -121,6 +128,7 @@ fn default_backup_enabled() -> bool {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            version: CURRENT_VERSION,
             repo_mode: RepoMode::default(),
             github: None,
             active_profile: String::new(),
@@ -145,6 +153,7 @@ impl Default for Config {
 impl Config {
     /// Load configuration from file or create default
     /// If config doesn't exist, attempts to discover profiles from the repo manifest
+    /// Automatically migrates old config versions to the current version.
     pub fn load_or_create(config_path: &Path) -> Result<Self> {
         if config_path.exists() {
             tracing::debug!("Loading config from: {:?}", config_path);
@@ -152,6 +161,22 @@ impl Config {
                 .with_context(|| format!("Failed to read config file: {config_path:?}"))?;
             let mut config: Config =
                 toml::from_str(&content).with_context(|| "Failed to parse config file")?;
+
+            // Migrate if needed
+            if config.version < CURRENT_VERSION {
+                let old_version = config.version;
+                tracing::info!(
+                    "Migrating config from v{} to v{}",
+                    old_version,
+                    CURRENT_VERSION
+                );
+                config = Self::migrate(config)?;
+
+                // Backup, save, cleanup
+                crate::utils::migrate_file(config_path, old_version, "toml", || {
+                    config.save(config_path)
+                })?;
+            }
 
             // Set defaults for missing fields (for backward compatibility)
             if config.repo_name.is_empty() {
@@ -287,6 +312,26 @@ impl Config {
 
     // Profile-related methods removed - use ProfileManifest directly
     // Helper method removed as it's not used - profiles are accessed via App::get_profiles() instead
+
+    // ==================== Migration Methods ====================
+
+    /// Run all necessary migrations to bring config to current version.
+    fn migrate(mut config: Self) -> Result<Self> {
+        if config.version == 0 {
+            config = Self::migrate_v0_to_v1(config)?;
+        }
+        // Future migrations:
+        // if config.version == 1 { config = Self::migrate_v1_to_v2(config)?; }
+        Ok(config)
+    }
+
+    /// Migrate from v0 (no version field) to v1.
+    /// This is a no-op migration that just sets the version field.
+    fn migrate_v0_to_v1(mut config: Self) -> Result<Self> {
+        tracing::debug!("Migrating config v0 -> v1");
+        config.version = 1;
+        Ok(config)
+    }
 }
 
 #[cfg(test)]
@@ -493,5 +538,77 @@ check_enabled = false
         assert!(!loaded.updates.check_enabled);
         // Should still have default interval even when disabled
         assert_eq!(loaded.updates.check_interval_hours, 24);
+    }
+
+    #[test]
+    fn test_config_migration_v0_to_v1() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let repo_path = temp_dir.path().join("repo");
+
+        // Write a v0 config (no version field)
+        let v0_config = format!(
+            r#"
+active_profile = "test"
+repo_path = "{}"
+repo_name = "dotstate-storage"
+default_branch = "main"
+backup_enabled = true
+profile_activated = true
+custom_files = []
+"#,
+            repo_path.display()
+        );
+        std::fs::write(&config_path, v0_config).unwrap();
+
+        // Load should auto-migrate to v1
+        let loaded = Config::load_or_create(&config_path).unwrap();
+        assert_eq!(loaded.version, 1);
+        assert_eq!(loaded.active_profile, "test");
+
+        // File should be updated with version
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("version = 1"));
+
+        // Backup should be cleaned up
+        let backup_path = config_path.with_extension("toml.backup-v0");
+        assert!(!backup_path.exists());
+    }
+
+    #[test]
+    fn test_config_already_at_current_version() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let repo_path = temp_dir.path().join("repo");
+
+        // Write a v1 config
+        let v1_config = format!(
+            r#"
+version = 1
+active_profile = "test"
+repo_path = "{}"
+repo_name = "dotstate-storage"
+default_branch = "main"
+backup_enabled = true
+profile_activated = true
+custom_files = []
+"#,
+            repo_path.display()
+        );
+        std::fs::write(&config_path, v1_config).unwrap();
+
+        // Load should not create backup (no migration needed)
+        let loaded = Config::load_or_create(&config_path).unwrap();
+        assert_eq!(loaded.version, 1);
+
+        // No backup should exist
+        let backup_path = config_path.with_extension("toml.backup-v0");
+        assert!(!backup_path.exists());
+    }
+
+    #[test]
+    fn test_new_config_has_current_version() {
+        let config = Config::default();
+        assert_eq!(config.version, 1);
     }
 }

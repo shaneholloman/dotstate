@@ -6,6 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
+/// Current version of the symlinks.json file format.
+/// Increment this when making breaking changes to the schema.
+const CURRENT_VERSION: u32 = 1;
+
 /// Represents a symlink operation (create or remove)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymlinkOperation {
@@ -75,10 +79,32 @@ pub struct SymlinkTracking {
 impl Default for SymlinkTracking {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: CURRENT_VERSION,
             active_profile: String::new(),
             symlinks: Vec::new(),
         }
+    }
+}
+
+impl SymlinkTracking {
+    // ==================== Migration Methods ====================
+
+    /// Run all necessary migrations to bring tracking to current version.
+    fn migrate(mut tracking: Self) -> Result<Self> {
+        if tracking.version == 0 {
+            tracking = Self::migrate_v0_to_v1(tracking)?;
+        }
+        // Future migrations:
+        // if tracking.version == 1 { tracking = Self::migrate_v1_to_v2(tracking)?; }
+        Ok(tracking)
+    }
+
+    /// Migrate from v0 (no version field) to v1.
+    /// This is a no-op migration that just sets the version field.
+    fn migrate_v0_to_v1(mut tracking: Self) -> Result<Self> {
+        debug!("Migrating symlinks.json v0 -> v1");
+        tracking.version = 1;
+        Ok(tracking)
     }
 }
 
@@ -127,13 +153,30 @@ impl SymlinkManager {
         let tracking_file = config_dir.join("symlinks.json");
 
         // Load existing tracking data or create new
-        let tracking = if tracking_file.exists() {
+        let mut tracking: SymlinkTracking = if tracking_file.exists() {
             let data =
                 fs::read_to_string(&tracking_file).context("Failed to read tracking file")?;
             serde_json::from_str(&data).context("Failed to parse tracking file")?
         } else {
             SymlinkTracking::default()
         };
+
+        // Migrate if needed
+        if tracking_file.exists() && tracking.version < CURRENT_VERSION {
+            let old_version = tracking.version;
+            info!(
+                "Migrating symlinks.json from v{} to v{}",
+                old_version, CURRENT_VERSION
+            );
+            tracking = SymlinkTracking::migrate(tracking)?;
+
+            // Backup, save, cleanup
+            let tracking_json =
+                serde_json::to_string_pretty(&tracking).context("Failed to serialize tracking")?;
+            super::migrate_file(&tracking_file, old_version, "json", || {
+                fs::write(&tracking_file, &tracking_json).context("Failed to write tracking file")
+            })?;
+        }
 
         let backup_manager = if backup_enabled {
             Some(BackupManager::new()?)

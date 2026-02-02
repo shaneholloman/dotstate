@@ -16,6 +16,7 @@ pub mod sync_validation;
 pub mod syntax_theme;
 pub mod text;
 pub mod text_input;
+pub mod versioned;
 
 // Export utilities that are used
 pub use backup_manager::BackupManager;
@@ -37,6 +38,7 @@ pub use style::{
 pub use symlink_manager::SymlinkManager;
 pub use syntax_theme::get_current_syntax_theme;
 pub use text_input::TextInput;
+pub use versioned::migrate_file;
 
 // Package discovery
 pub use package_discovery::{

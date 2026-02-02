@@ -42,13 +42,13 @@ fn local_setup_creates_repo_and_config() -> Result<()> {
 
     // 3. Create manifest with default profile
     let manifest = dotstate::utils::profile_manifest::ProfileManifest {
-        common: Default::default(),
         profiles: vec![ProfileInfo {
             name: "default".to_string(),
             description: Some("Default profile".to_string()),
             synced_files: Vec::new(),
             packages: Vec::new(),
         }],
+        ..Default::default()
     };
     manifest.save(&repo_path)?;
 
@@ -177,13 +177,13 @@ fn github_setup_clones_existing_repo() -> Result<()> {
     fs::create_dir_all(temp_repo.join("common"))?;
 
     let manifest = dotstate::utils::profile_manifest::ProfileManifest {
-        common: Default::default(),
         profiles: vec![ProfileInfo {
             name: "default".to_string(),
             description: None,
             synced_files: vec![".existing-file".to_string()],
             packages: Vec::new(),
         }],
+        ..Default::default()
     };
     manifest.save(&temp_repo)?;
 
@@ -293,13 +293,13 @@ fn github_clone_empty_repo() -> Result<()> {
     fs::create_dir_all(clone_path.join("common"))?;
 
     let manifest = dotstate::utils::profile_manifest::ProfileManifest {
-        common: Default::default(),
         profiles: vec![ProfileInfo {
             name: "default".to_string(),
             description: Some("Default profile".to_string()),
             synced_files: Vec::new(),
             packages: Vec::new(),
         }],
+        ..Default::default()
     };
     manifest.save(&clone_path)?;
 
@@ -389,13 +389,13 @@ fn setup_when_repo_path_is_already_git() -> Result<()> {
     fs::create_dir_all(repo_path.join("common"))?;
 
     let manifest = dotstate::utils::profile_manifest::ProfileManifest {
-        common: Default::default(),
         profiles: vec![ProfileInfo {
             name: "default".to_string(),
             description: None,
             synced_files: Vec::new(),
             packages: Vec::new(),
         }],
+        ..Default::default()
     };
     manifest.save(&repo_path)?;
 
@@ -436,6 +436,7 @@ fn github_clone_existing_dotstate_repo() -> Result<()> {
     fs::write(temp_repo.join("common/.gitconfig"), "shared config")?;
 
     let manifest = dotstate::utils::profile_manifest::ProfileManifest {
+        version: 1,
         common: dotstate::utils::profile_manifest::CommonSection {
             synced_files: vec![".gitconfig".to_string()],
         },

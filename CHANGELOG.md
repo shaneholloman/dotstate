@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **File Versioning**: Added schema versioning to all config/data files (`config.toml`, `.dotstate-profiles.toml`, `symlinks.json`, `package_status.json`) with automatic migration on load. Files without a version field are treated as v0 and auto-migrated with backup safety.
+
 ### Fixed
 
 - **Package Installation**: Fixed Homebrew commands failing on systems with custom installations by explicitly passing HOMEBREW_* environment variables
