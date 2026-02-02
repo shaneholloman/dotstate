@@ -169,7 +169,11 @@ impl PackageCache {
         Ok(())
     }
 
+    /// Save package cache to file.
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
     fn save(&self) -> Result<()> {
+        let temp_path = self.cache_file.with_extension("json.tmp");
+
         if let Some(parent) = self.cache_file.parent() {
             std::fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
@@ -177,7 +181,12 @@ impl PackageCache {
         let json = serde_json::to_string_pretty(&self.data)
             .context("Failed to serialize package cache")?;
 
-        std::fs::write(&self.cache_file, json).context("Failed to write package cache file")?;
+        // Write to temp file first
+        std::fs::write(&temp_path, &json).context("Failed to write temp package cache")?;
+
+        // Atomic rename (on POSIX systems)
+        std::fs::rename(&temp_path, &self.cache_file)
+            .context("Failed to rename temp package cache")?;
 
         debug!("Package cache saved to {:?}", self.cache_file);
         Ok(())

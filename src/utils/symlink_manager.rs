@@ -897,17 +897,24 @@ impl SymlinkManager {
         Ok(())
     }
 
-    /// Save tracking data to disk
+    /// Save tracking data to disk.
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
     pub fn save_tracking(&self) -> Result<()> {
         let json = serde_json::to_string_pretty(&self.tracking)
             .context("Failed to serialize tracking data")?;
+        let temp_path = self.tracking_file.with_extension("json.tmp");
 
         // Ensure config directory exists
         if let Some(parent) = self.tracking_file.parent() {
             fs::create_dir_all(parent).context("Failed to create config directory")?;
         }
 
-        fs::write(&self.tracking_file, json).context("Failed to write tracking file")?;
+        // Write to temp file first
+        fs::write(&temp_path, &json).context("Failed to write temp tracking file")?;
+
+        // Atomic rename (on POSIX systems)
+        fs::rename(&temp_path, &self.tracking_file)
+            .context("Failed to rename temp tracking file")?;
 
         debug!("Tracking data saved to: {:?}", self.tracking_file);
         Ok(())

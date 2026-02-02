@@ -226,30 +226,36 @@ impl Config {
         }
     }
 
-    /// Save configuration to file with secure permissions
+    /// Save configuration to file with secure permissions.
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
     pub fn save(&self, config_path: &Path) -> Result<()> {
         let content = toml::to_string_pretty(self).with_context(|| "Failed to serialize config")?;
+        let temp_path = config_path.with_extension("toml.tmp");
 
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create config directory: {parent:?}"))?;
         }
 
-        // Write file
-        std::fs::write(config_path, content)
-            .with_context(|| format!("Failed to write config file: {config_path:?}"))?;
+        // Write to temp file first
+        std::fs::write(&temp_path, &content)
+            .with_context(|| format!("Failed to write temp config: {temp_path:?}"))?;
 
-        // Set secure permissions (600: owner read/write only)
+        // Set secure permissions on temp file (600: owner read/write only)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(config_path)
-                .with_context(|| format!("Failed to get file metadata: {config_path:?}"))?
+            let mut perms = std::fs::metadata(&temp_path)
+                .with_context(|| format!("Failed to get file metadata: {temp_path:?}"))?
                 .permissions();
             perms.set_mode(0o600);
-            std::fs::set_permissions(config_path, perms)
-                .with_context(|| format!("Failed to set file permissions: {config_path:?}"))?;
+            std::fs::set_permissions(&temp_path, perms)
+                .with_context(|| format!("Failed to set file permissions: {temp_path:?}"))?;
         }
+
+        // Atomic rename (on POSIX systems)
+        std::fs::rename(&temp_path, config_path)
+            .with_context(|| format!("Failed to rename temp config to {config_path:?}"))?;
 
         Ok(())
     }

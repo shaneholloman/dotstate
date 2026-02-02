@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **File Versioning**: Added schema versioning to all config/data files (`config.toml`, `.dotstate-profiles.toml`, `symlinks.json`, `package_status.json`) with automatic migration on load. Files without a version field are treated as v0 and auto-migrated with backup safety.
+- **Atomic Saves**: All config/data file saves now use atomic write (temp file + rename) to prevent corruption if the process crashes mid-write.
 
 ### Fixed
 

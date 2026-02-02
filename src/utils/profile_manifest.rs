@@ -265,15 +265,22 @@ impl ProfileManifest {
         }
     }
 
-    /// Save the manifest to the repository
+    /// Save the manifest to the repository.
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
     pub fn save(&self, repo_path: &Path) -> Result<()> {
         let manifest_path = Self::manifest_path(repo_path);
+        let temp_path = manifest_path.with_extension("toml.tmp");
 
         let content =
             toml::to_string_pretty(self).with_context(|| "Failed to serialize profile manifest")?;
 
-        std::fs::write(&manifest_path, content)
-            .with_context(|| format!("Failed to write profile manifest: {manifest_path:?}"))?;
+        // Write to temp file first
+        std::fs::write(&temp_path, &content)
+            .with_context(|| format!("Failed to write temp manifest: {temp_path:?}"))?;
+
+        // Atomic rename (on POSIX systems)
+        std::fs::rename(&temp_path, &manifest_path)
+            .with_context(|| format!("Failed to rename temp manifest to {manifest_path:?}"))?;
 
         Ok(())
     }
