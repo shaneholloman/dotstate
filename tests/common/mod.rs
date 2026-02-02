@@ -64,17 +64,17 @@ impl Drop for EnvGuard {
 ///
 /// Automatically cleaned up when dropped. If env overrides are enabled,
 /// the original environment is restored on drop.
+#[allow(dead_code)]
 pub struct TestEnv {
-    #[allow(dead_code)]
     temp_dir: TempDir,
     pub home_dir: PathBuf,
     pub repo_path: PathBuf,
     pub config_dir: PathBuf,
     pub backup_dir: PathBuf,
-    #[allow(dead_code)]
     env_guard: Option<EnvGuard>,
 }
 
+#[allow(dead_code)]
 impl TestEnv {
     /// Create a new TestEnvBuilder for fluent configuration.
     pub fn new() -> TestEnvBuilder {
@@ -461,6 +461,7 @@ impl TestEnv {
 
 /// Builder for TestEnv with fluent configuration.
 #[derive(Default)]
+#[allow(dead_code)]
 pub struct TestEnvBuilder {
     profiles: Vec<(String, Option<String>)>, // (name, description)
     active_profile: Option<String>,
@@ -473,6 +474,7 @@ pub struct TestEnvBuilder {
     env_override: bool,
 }
 
+#[allow(dead_code)]
 impl TestEnvBuilder {
     /// Add a profile to the manifest.
     pub fn with_profile(mut self, name: &str) -> Self {
