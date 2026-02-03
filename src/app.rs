@@ -41,7 +41,7 @@ pub struct App {
     storage_setup_screen: StorageSetupScreen,
     dotfile_selection_screen: crate::screens::DotfileSelectionScreen,
     sync_with_remote_screen: SyncWithRemoteScreen,
-    profile_selection_screen: crate::screens::ProfileSelectionScreen,
+    profile_selection_popup: crate::components::ProfileSelectionPopup,
     manage_profiles_screen: ManageProfilesScreen,
     manage_packages_screen: ManagePackagesScreen,
     settings_screen: crate::screens::SettingsScreen,
@@ -102,7 +102,7 @@ impl App {
             storage_setup_screen: StorageSetupScreen::new(),
             dotfile_selection_screen: crate::screens::DotfileSelectionScreen::new(),
             sync_with_remote_screen: SyncWithRemoteScreen::new(),
-            profile_selection_screen: crate::screens::ProfileSelectionScreen::new(),
+            profile_selection_popup: crate::components::ProfileSelectionPopup::new(),
             manage_profiles_screen: ManageProfilesScreen::new(),
             manage_packages_screen: ManagePackagesScreen::new(),
             settings_screen: crate::screens::SettingsScreen::new(),
@@ -538,18 +538,9 @@ impl App {
                     }
                 }
                 Screen::ProfileSelection => {
-                    // Router pattern - delegate to screen's render method
-                    use crate::screens::{RenderContext, Screen as ScreenTrait};
-                    let syntax_theme = crate::utils::get_current_syntax_theme(&self.theme_set);
-                    let ctx = RenderContext::new(
-                        &self.config,
-                        &self.syntax_set,
-                        &self.theme_set,
-                        syntax_theme,
-                    );
-                    if let Err(e) = self.profile_selection_screen.render(frame, area, &ctx) {
-                        error!("Failed to render profile selection screen: {}", e);
-                    }
+                    // Profile selection is now a popup, not a screen
+                    // If we somehow get here, redirect to main menu or storage setup
+                    warn!("ProfileSelection screen is deprecated, using popup instead");
                 }
                 Screen::Settings => {
                     // Router pattern - delegate to screen's render method
@@ -566,6 +557,10 @@ impl App {
                     }
                 }
             }
+
+            // Render profile selection popup on top of screen content
+            self.profile_selection_popup
+                .render(frame, area, &config_clone);
 
             // Render dialog on top of screen content (modal overlay)
             if let Some(ref dialog) = self.dialog_state {
@@ -606,11 +601,8 @@ impl App {
                 self.dotfile_selection_screen.is_input_focused()
             }
 
-            // Profile Selection - create popup name input
-            Screen::ProfileSelection => {
-                use crate::screens::Screen as ScreenTrait;
-                self.profile_selection_screen.is_input_focused()
-            }
+            // Profile Selection - now handled by popup
+            Screen::ProfileSelection => self.profile_selection_popup.is_visible(),
 
             // Manage Profiles - delegated to screen
             Screen::ManageProfiles => {
@@ -751,6 +743,22 @@ impl App {
             return Ok(());
         }
 
+        // Handle profile selection popup events
+        if self.profile_selection_popup.is_visible() {
+            if let Event::Key(key) = event {
+                if key.kind == KeyEventKind::Press {
+                    if let Some(result) = self.profile_selection_popup.handle_key(
+                        key.code,
+                        key.modifiers,
+                        &self.config,
+                    ) {
+                        self.handle_profile_selection_result(result)?;
+                    }
+                }
+            }
+            return Ok(());
+        }
+
         // Let components handle events first (for mouse support)
         match self.ui_state.current_screen {
             Screen::MainMenu => {
@@ -804,11 +812,12 @@ impl App {
                 Ok(())
             }
             Screen::ProfileSelection => {
-                // Router pattern - delegate to screen's handle_event method
-                use crate::screens::ScreenContext;
-                let ctx = ScreenContext::new(&self.config, &self.config_path);
-                let action = self.profile_selection_screen.handle_event(event, &ctx)?;
-                self.process_screen_action(action)?;
+                // Profile selection is now a popup - if we get here, show the popup
+                if !self.profile_selection_popup.is_visible() {
+                    if let Err(e) = self.profile_selection_popup.show(&self.config.repo_path) {
+                        error!("Failed to show profile selection popup: {}", e);
+                    }
+                }
                 Ok(())
             }
             Screen::ManagePackages => {
@@ -965,6 +974,14 @@ impl App {
                     option_index,
                 );
                 if changed {
+                    // Special handling for credential embedding - update remote URL
+                    if setting == "Embed Credentials in URL" {
+                        if let Err(e) = self.update_remote_credentials() {
+                            warn!("Failed to update remote URL: {}", e);
+                            // Don't fail the setting change, just log
+                        }
+                    }
+
                     // Save config
                     if let Err(e) = self.config.save(&self.config_path) {
                         error!("Failed to save config after settings change: {}", e);
@@ -1010,15 +1027,16 @@ impl App {
                     self.main_menu_screen.update_config(self.config.clone());
                     self.ui_state.current_screen = Screen::MainMenu;
                 } else {
-                    // Show profile selection
-                    self.ui_state.profile_selection.profiles = profiles.clone();
-                    self.ui_state.profile_selection.list_state.select(Some(0));
-
-                    // Update the screen controller state as well
-                    self.profile_selection_screen.set_profiles(profiles);
-
+                    // Show profile selection popup
                     self.storage_setup_screen.reset();
-                    self.ui_state.current_screen = Screen::ProfileSelection;
+                    if let Err(e) = self.profile_selection_popup.show(&self.config.repo_path) {
+                        error!("Failed to show profile selection popup: {}", e);
+                        self.dialog_state = Some(DialogState {
+                            title: "Error".to_string(),
+                            content: format!("Failed to load profiles: {e}"),
+                            variant: DialogVariant::Error,
+                        });
+                    }
                 }
             }
             ScreenAction::StartGitHubSetup {
@@ -1125,31 +1143,23 @@ impl App {
                     }
                 }
             }
-            ScreenAction::ShowProfileSelection { profiles } => {
-                self.profile_selection_screen.set_profiles(profiles.clone());
-                // Also update ui_state for legacy code
-                self.ui_state.profile_selection.profiles = profiles;
-                self.ui_state.profile_selection.list_state.select(Some(0));
-                self.ui_state.current_screen = Screen::ProfileSelection;
+            ScreenAction::ShowProfileSelection { profiles: _ } => {
+                // Show the profile selection popup (it loads profiles from manifest)
+                if let Err(e) = self.profile_selection_popup.show(&self.config.repo_path) {
+                    error!("Failed to show profile selection popup: {}", e);
+                    self.dialog_state = Some(DialogState {
+                        title: "Error".to_string(),
+                        content: format!("Failed to load profiles: {e}"),
+                        variant: DialogVariant::Error,
+                    });
+                }
             }
-            // Profile selection actions - delegate to ProfileSelectionScreen
+            // Profile selection actions - these are now triggered by the popup result handler
             ScreenAction::CreateAndActivateProfile { name } => {
-                use crate::screens::profile_selection::ProfileSelectionAction;
-                let result = self.profile_selection_screen.process_action(
-                    ProfileSelectionAction::CreateAndActivateProfile { name },
-                    &mut self.config,
-                    &self.config_path,
-                )?;
-                self.handle_action_result(result)?;
+                self.activate_profile_internal(&name, true)?;
             }
             ScreenAction::ActivateProfile { name } => {
-                use crate::screens::profile_selection::ProfileSelectionAction;
-                let result = self.profile_selection_screen.process_action(
-                    ProfileSelectionAction::ActivateProfile { name },
-                    &mut self.config,
-                    &self.config_path,
-                )?;
-                self.handle_action_result(result)?;
+                self.activate_profile_internal(&name, false)?;
             }
             // Dotfile selection actions
             // Dotfile selection actions - delegate to screen
@@ -1319,10 +1329,123 @@ impl App {
             Screen::StorageSetup => self.storage_setup_screen.on_enter(&ctx)?,
             Screen::SyncWithRemote => self.sync_with_remote_screen.on_enter(&ctx)?,
             Screen::ManageProfiles => self.manage_profiles_screen.on_enter(&ctx)?,
-            Screen::ProfileSelection => self.profile_selection_screen.on_enter(&ctx)?,
+            Screen::ProfileSelection => {
+                // Profile selection is now a popup, show it instead
+                if let Err(e) = self.profile_selection_popup.show(&self.config.repo_path) {
+                    error!("Failed to show profile selection popup: {}", e);
+                }
+            }
             Screen::ManagePackages => self.manage_packages_screen.on_enter(&ctx)?,
             Screen::Settings => self.settings_screen.on_enter(&ctx)?,
         }
+        Ok(())
+    }
+
+    /// Handle the result from the profile selection popup
+    fn handle_profile_selection_result(
+        &mut self,
+        result: crate::components::ProfileSelectionResult,
+    ) -> Result<()> {
+        use crate::components::ProfileSelectionResult;
+
+        match result {
+            ProfileSelectionResult::SelectExisting(name) => {
+                self.profile_selection_popup.hide();
+                self.activate_profile_internal(&name, false)?;
+            }
+            ProfileSelectionResult::CreateNew(name) => {
+                self.profile_selection_popup.hide();
+                self.activate_profile_internal(&name, true)?;
+            }
+            ProfileSelectionResult::Cancelled => {
+                self.profile_selection_popup.hide();
+                // Navigate to main menu when cancelled
+                self.ui_state.current_screen = Screen::MainMenu;
+            }
+        }
+        Ok(())
+    }
+
+    /// Internal helper to activate a profile (create if needed)
+    fn activate_profile_internal(&mut self, name: &str, create_first: bool) -> Result<()> {
+        use crate::services::ProfileService;
+
+        // Create the profile first if requested
+        if create_first {
+            match ProfileService::create_profile(&self.config.repo_path, name, None, None) {
+                Ok(sanitized_name) => {
+                    info!("Created profile '{}' during setup", sanitized_name);
+                    // Use the sanitized name for activation
+                    return self.activate_profile_internal(&sanitized_name, false);
+                }
+                Err(e) => {
+                    error!("Failed to create profile '{}': {}", name, e);
+                    self.dialog_state = Some(DialogState {
+                        title: "Profile Creation Failed".to_string(),
+                        content: format!("Failed to create profile '{name}': {e}"),
+                        variant: DialogVariant::Error,
+                    });
+                    return Ok(());
+                }
+            }
+        }
+
+        // Set active profile and save config
+        self.config.active_profile = name.to_string();
+        if let Err(e) = self.config.save(&self.config_path) {
+            error!("Failed to save config with active profile: {}", e);
+            self.dialog_state = Some(DialogState {
+                title: "Configuration Error".to_string(),
+                content: format!("Failed to save configuration: {e}"),
+                variant: DialogVariant::Error,
+            });
+            return Ok(());
+        }
+
+        // Call ProfileService to activate the profile (create symlinks)
+        match ProfileService::activate_profile(
+            &self.config.repo_path,
+            name,
+            self.config.backup_enabled,
+        ) {
+            Ok(result) => {
+                info!(
+                    "Activated profile '{}' with {} files",
+                    name, result.success_count
+                );
+
+                // Mark as activated and save config again
+                self.config.profile_activated = true;
+                if let Err(e) = self.config.save(&self.config_path) {
+                    error!("Failed to save config after activation: {}", e);
+                    self.dialog_state = Some(DialogState {
+                        title: "Configuration Error".to_string(),
+                        content: format!("Failed to save configuration after activation: {e}"),
+                        variant: DialogVariant::Error,
+                    });
+                    return Ok(());
+                }
+
+                // Navigate to main menu
+                self.ui_state.current_screen = Screen::MainMenu;
+                self.call_on_enter(Screen::MainMenu)?;
+
+                // Show success toast
+                self.toast_manager.push(Toast::new(
+                    format!("Profile '{}' activated", name),
+                    crate::widgets::ToastVariant::Success,
+                ));
+            }
+            Err(e) => {
+                error!("Failed to activate profile '{}': {}", name, e);
+                self.dialog_state = Some(DialogState {
+                    title: "Activation Failed".to_string(),
+                    content: format!("Failed to activate profile '{name}': {e}"),
+                    variant: DialogVariant::Error,
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -1387,13 +1510,6 @@ impl App {
                 // Reset screen state
                 self.storage_setup_screen.reset();
 
-                // Update profile selection screen with discovered profiles
-                self.profile_selection_screen.set_profiles(profiles.clone());
-                self.ui_state.profile_selection.profiles = profiles.clone();
-                if !profiles.is_empty() {
-                    self.ui_state.profile_selection.list_state.select(Some(0));
-                }
-
                 // Navigate based on profiles found
                 if profiles.is_empty() {
                     self.ui_state.current_screen = Screen::MainMenu;
@@ -1411,8 +1527,15 @@ impl App {
                     self.ui_state.current_screen = Screen::DotfileSelection;
                     self.call_on_enter(Screen::DotfileSelection)?;
                 } else {
-                    // Multiple profiles - show selection
-                    self.ui_state.current_screen = Screen::ProfileSelection;
+                    // Multiple profiles - show selection popup
+                    if let Err(e) = self.profile_selection_popup.show(&self.config.repo_path) {
+                        error!("Failed to show profile selection popup: {}", e);
+                        self.dialog_state = Some(DialogState {
+                            title: "Error".to_string(),
+                            content: format!("Failed to load profiles: {e}"),
+                            variant: DialogVariant::Error,
+                        });
+                    }
                 }
             }
             StepResult::Failed {
@@ -1431,7 +1554,7 @@ impl App {
                 // Also reset UI state that may have been populated during failed setup
                 self.ui_state.profile_selection.profiles.clear();
                 self.ui_state.profile_selection.list_state.select(None);
-                self.profile_selection_screen.set_profiles(Vec::new());
+                self.profile_selection_popup.hide();
 
                 let state = self.storage_setup_screen.get_state_mut();
                 state.error_message = Some(error_message);
@@ -1454,5 +1577,32 @@ impl App {
             &self.config.repo_path,
             &self.config.active_profile,
         )
+    }
+
+    /// Update remote URL based on `embed_credentials_in_url` setting.
+    /// Called when the setting is toggled to update the existing remote URL.
+    fn update_remote_credentials(&self) -> Result<()> {
+        use crate::git::GitManager;
+
+        if !self.config.repo_path.exists() {
+            return Ok(()); // No repo yet
+        }
+
+        let mut git_mgr = GitManager::open_or_init(&self.config.repo_path)?;
+
+        // Get token from config
+        let token = self.config.get_github_token();
+
+        git_mgr.update_remote_credentials(
+            "origin",
+            token.as_deref(),
+            self.config.embed_credentials_in_url,
+        )?;
+
+        info!(
+            "Updated remote credentials embedding: {}",
+            self.config.embed_credentials_in_url
+        );
+        Ok(())
     }
 }

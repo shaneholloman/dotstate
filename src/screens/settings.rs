@@ -33,6 +33,7 @@ pub enum SettingItem {
     KeymapPreset,
     Backups,
     CheckForUpdates,
+    EmbedCredentials,
 }
 
 impl SettingItem {
@@ -44,6 +45,7 @@ impl SettingItem {
             SettingItem::KeymapPreset,
             SettingItem::Backups,
             SettingItem::CheckForUpdates,
+            SettingItem::EmbedCredentials,
         ]
     }
 
@@ -55,6 +57,7 @@ impl SettingItem {
             SettingItem::KeymapPreset => "Keymap Preset",
             SettingItem::Backups => "Backups",
             SettingItem::CheckForUpdates => "Check for Updates",
+            SettingItem::EmbedCredentials => "Embed Credentials in URL",
         }
     }
 
@@ -157,6 +160,12 @@ impl SettingsScreen {
                 vec![
                     ("Enabled".to_string(), config.updates.check_enabled),
                     ("Disabled".to_string(), !config.updates.check_enabled),
+                ]
+            }
+            Some(SettingItem::EmbedCredentials) => {
+                vec![
+                    ("Enabled".to_string(), config.embed_credentials_in_url),
+                    ("Disabled".to_string(), !config.embed_credentials_in_url),
                 ]
             }
             None => vec![],
@@ -297,6 +306,36 @@ impl SettingsScreen {
                 ];
                 Text::from(lines)
             }
+            Some(SettingItem::EmbedCredentials) => {
+                let lines = vec![
+                    Line::from(Span::styled("Embed Credentials in URL", t.title_style())),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "When enabled, the GitHub token is embedded directly in the git remote URL (e.g., https://token@github.com/...).",
+                        t.text_style(),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "This bypasses gitconfig URL rewrites but may be rejected by some corporate environments.",
+                        t.text_style(),
+                    )),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(icons.warning(), Style::default().fg(t.warning)),
+                        Span::styled(" Changing this updates the remote URL.", t.muted_style()),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(icons.lightbulb(), Style::default().fg(t.secondary)),
+                        Span::styled(" Current: ", t.muted_style()),
+                        Span::styled(
+                            if config.embed_credentials_in_url { "Enabled" } else { "Disabled" },
+                            t.emphasis_style(),
+                        ),
+                    ]),
+                ];
+                Text::from(lines)
+            }
             None => Text::from(""),
         }
     }
@@ -352,6 +391,10 @@ impl SettingsScreen {
                 config.updates.check_enabled = option_index == 0;
                 return true;
             }
+            "Embed Credentials in URL" => {
+                config.embed_credentials_in_url = option_index == 0;
+                return true;
+            }
             _ => {}
         }
         false
@@ -387,6 +430,13 @@ impl SettingsScreen {
                     }
                     SettingItem::CheckForUpdates => {
                         if config.updates.check_enabled {
+                            "On".to_string()
+                        } else {
+                            "Off".to_string()
+                        }
+                    }
+                    SettingItem::EmbedCredentials => {
+                        if config.embed_credentials_in_url {
                             "On".to_string()
                         } else {
                             "Off".to_string()

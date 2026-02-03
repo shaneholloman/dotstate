@@ -23,6 +23,52 @@ pub fn redact_credentials(url: &str) -> String {
     url.to_string()
 }
 
+/// Remove credentials from a git URL.
+///
+/// Transforms:
+/// - `https://token@github.com/user/repo.git` -> `https://github.com/user/repo.git`
+/// - `https://user:pass@github.com/user/repo.git` -> `https://github.com/user/repo.git`
+#[must_use]
+pub fn remove_credentials_from_url(url: &str) -> String {
+    if let Some(protocol_end) = url.find("://") {
+        let after_protocol = &url[protocol_end + 3..];
+        if let Some(at_pos) = after_protocol.find('@') {
+            let host_and_path = &after_protocol[at_pos + 1..];
+            return format!("{}://{}", &url[..protocol_end], host_and_path);
+        }
+    }
+    url.to_string()
+}
+
+/// Add credentials to a git URL.
+///
+/// Transforms:
+/// - `https://github.com/user/repo.git` + token -> `https://token@github.com/user/repo.git`
+///
+/// If URL already has credentials, they are replaced.
+#[must_use]
+pub fn add_credentials_to_url(url: &str, token: &str) -> String {
+    // First remove any existing credentials
+    let clean_url = remove_credentials_from_url(url);
+
+    // Then add the new token
+    if clean_url.starts_with("https://") {
+        clean_url.replacen("https://", &format!("https://{token}@"), 1)
+    } else {
+        clean_url
+    }
+}
+
+/// Check if a URL has embedded credentials.
+#[must_use]
+pub fn url_has_credentials(url: &str) -> bool {
+    if let Some(protocol_end) = url.find("://") {
+        let after_protocol = &url[protocol_end + 3..];
+        return after_protocol.contains('@');
+    }
+    false
+}
+
 /// Git operations for managing the dotfiles repository
 pub struct GitManager {
     repo: Repository,
@@ -319,6 +365,8 @@ impl GitManager {
     /// If token is provided, it will be used for authentication.
     /// Otherwise, attempts to extract token from remote URL.
     pub fn push(&self, remote_name: &str, branch: &str, token: Option<&str>) -> Result<()> {
+        use std::cell::RefCell;
+        use std::rc::Rc;
         use tracing::info;
         info!("Pushing to remote: {} (branch: {})", remote_name, branch);
 
@@ -337,6 +385,20 @@ impl GitManager {
             .or_else(|| Self::extract_token_from_url(remote_url));
         Self::setup_credentials(&mut callbacks, token_to_use);
 
+        // Capture push errors from server-side hooks/rejections
+        // The push_update_reference callback is called for each ref being updated,
+        // and if the server rejects it (e.g., due to hooks), the error message is passed here.
+        let push_errors: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let push_errors_clone = push_errors.clone();
+        callbacks.push_update_reference(move |refname, status| {
+            if let Some(error_msg) = status {
+                push_errors_clone
+                    .borrow_mut()
+                    .push(format!("{refname}: {error_msg}"));
+            }
+            Ok(())
+        });
+
         let mut push_options = git2::PushOptions::new();
         push_options.remote_callbacks(callbacks);
 
@@ -349,6 +411,15 @@ impl GitManager {
                 remote
                     .push(&[&refspec], Some(&mut push_options))
                     .with_context(|| format!("Failed to push to remote '{remote_name}'"))?;
+
+                // Check for server-side rejections
+                let errors = push_errors.borrow();
+                if !errors.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "Push rejected by remote:\n{}",
+                        errors.join("\n")
+                    ));
+                }
                 return Ok(());
             }
             return Err(anyhow::anyhow!(
@@ -357,10 +428,13 @@ impl GitManager {
         }
 
         let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-        remote.push(&[&refspec], Some(&mut push_options))
+        remote
+            .push(&[&refspec], Some(&mut push_options))
             .with_context(|| {
                 // Get more detailed error information - redact credentials for safety
-                let remote_url = remote.url().map_or_else(|| "unknown".to_string(), redact_credentials);
+                let remote_url = remote
+                    .url()
+                    .map_or_else(|| "unknown".to_string(), redact_credentials);
                 format!(
                     "Failed to push to remote '{remote_name}' (URL: {remote_url}).\n\n\
                     Check token permissions:\n\
@@ -371,6 +445,16 @@ impl GitManager {
                     • You have push access to this repository"
                 )
             })?;
+
+        // Check for server-side rejections (e.g., pre-receive hooks, push rules)
+        // The push transport may succeed but the server can still reject individual refs
+        let errors = push_errors.borrow();
+        if !errors.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Push rejected by remote:\n{}",
+                errors.join("\n")
+            ));
+        }
 
         info!("Successfully pushed to {}:{}", remote_name, branch);
         Ok(())
@@ -956,6 +1040,62 @@ impl GitManager {
         Ok(())
     }
 
+    /// Update the remote URL to either embed or remove credentials based on setting.
+    ///
+    /// # Arguments
+    /// * `remote_name` - Name of the remote (usually "origin")
+    /// * `token` - The token to embed (if `embed_credentials` is true)
+    /// * `embed_credentials` - Whether to embed credentials in the URL
+    pub fn update_remote_credentials(
+        &mut self,
+        remote_name: &str,
+        token: Option<&str>,
+        embed_credentials: bool,
+    ) -> Result<()> {
+        let remote = self
+            .repo
+            .find_remote(remote_name)
+            .with_context(|| format!("Remote '{remote_name}' not found"))?;
+
+        let current_url = remote
+            .url()
+            .ok_or_else(|| anyhow::anyhow!("Remote '{remote_name}' has no URL"))?;
+
+        let new_url = if embed_credentials {
+            if let Some(token) = token {
+                add_credentials_to_url(current_url, token)
+            } else {
+                // No token available, can't embed
+                return Ok(());
+            }
+        } else {
+            remove_credentials_from_url(current_url)
+        };
+
+        // Only update if URL actually changed
+        if new_url == current_url {
+            return Ok(());
+        }
+
+        // Delete and recreate remote with new URL
+        self.repo
+            .remote_delete(remote_name)
+            .with_context(|| format!("Failed to delete remote '{remote_name}'"))?;
+
+        self.repo
+            .remote(remote_name, &new_url)
+            .with_context(|| format!("Failed to recreate remote '{remote_name}' with new URL"))?;
+
+        // Reconfigure tracking
+        self.configure_remote_tracking(remote_name)?;
+
+        info!(
+            "Updated remote URL: embed_credentials={}",
+            embed_credentials
+        );
+        Ok(())
+    }
+
     /// Update the token embedded in a remote URL
     ///
     /// This is useful when the user updates their GitHub token - the remote URL
@@ -1249,6 +1389,22 @@ impl GitManager {
     /// * `path` - Local path for the repository
     /// * `token` - Optional GitHub token for authentication
     pub fn clone_or_open(url: &str, path: &Path, token: Option<&str>) -> Result<(Self, bool)> {
+        Self::clone_or_open_with_options(url, path, token, true)
+    }
+
+    /// Clone or open a repository with explicit control over credential embedding.
+    ///
+    /// # Arguments
+    /// * `url` - The remote URL to clone from
+    /// * `path` - Local path for the repository
+    /// * `token` - Optional GitHub token for authentication
+    /// * `embed_credentials` - Whether to embed credentials in the URL
+    pub fn clone_or_open_with_options(
+        url: &str,
+        path: &Path,
+        token: Option<&str>,
+        embed_credentials: bool,
+    ) -> Result<(Self, bool)> {
         // Check if repository already exists
         if path.join(".git").exists() {
             debug!(
@@ -1258,7 +1414,7 @@ impl GitManager {
 
             match Self::open_or_init(path) {
                 Ok(git_manager) => {
-                    // Validate remote URL matches
+                    // Validate remote URL matches (comparing without credentials)
                     if let Err(e) = git_manager.validate_remote_url("origin", url) {
                         info!(
                             "Existing repo remote mismatch: {}. Will remove and clone fresh.",
@@ -1267,7 +1423,8 @@ impl GitManager {
                         // Remove and clone fresh
                         std::fs::remove_dir_all(path)
                             .with_context(|| format!("Failed to remove directory {path:?}"))?;
-                        let manager = Self::clone(url, path, token)?;
+                        let manager =
+                            Self::clone_with_options(url, path, token, embed_credentials)?;
                         return Ok((manager, false));
                     }
 
@@ -1295,7 +1452,7 @@ impl GitManager {
         }
 
         // Clone fresh
-        let manager = Self::clone(url, path, token)?;
+        let manager = Self::clone_with_options(url, path, token, embed_credentials)?;
         Ok((manager, false))
     }
 
@@ -1350,33 +1507,75 @@ impl GitManager {
 
     /// Clone a repository from a remote URL
     ///
-    /// This function handles authentication by embedding the token directly in the URL
+    /// This function handles authentication by optionally embedding the token directly in the URL
     /// (format: <https://token@github.com>/...) to bypass gitconfig URL rewrites
     /// (e.g., `url."git@github.com:".insteadOf = "https://github.com/"`).
     ///
+    /// # Arguments
+    /// * `url` - The remote URL to clone from
+    /// * `path` - Local path for the repository
+    /// * `token` - Optional GitHub token for authentication
+    /// * `embed_credentials` - Whether to embed the token in the URL (default behavior if not specified)
+    ///
     /// Note: Consider using `clone_or_open` instead, which handles existing repositories gracefully.
     pub fn clone(url: &str, path: &Path, token: Option<&str>) -> Result<Self> {
-        // Embed token directly in URL to bypass gitconfig URL rewrites
+        Self::clone_with_options(url, path, token, true)
+    }
+
+    /// Clone a repository with explicit control over credential embedding.
+    pub fn clone_with_options(
+        url: &str,
+        path: &Path,
+        token: Option<&str>,
+        embed_credentials: bool,
+    ) -> Result<Self> {
+        // Optionally embed token directly in URL to bypass gitconfig URL rewrites
         // This prevents issues when users have .gitconfig settings like:
         // [url "git@github.com:"]
         //     insteadOf = "https://github.com/"
-        let url_with_token = if let Some(token) = token {
-            // If token is not already in URL, embed it
-            if !url.contains('@') && url.starts_with("https://") {
-                // Insert token after "https://"
-                url.replacen("https://", &format!("https://{token}@"), 1)
+        let clone_url = if embed_credentials {
+            if let Some(token) = token {
+                // If token is not already in URL, embed it
+                if !url.contains('@') && url.starts_with("https://") {
+                    // Insert token after "https://"
+                    url.replacen("https://", &format!("https://{token}@"), 1)
+                } else {
+                    // Token already in URL or not HTTPS, use as-is
+                    url.to_string()
+                }
             } else {
-                // Token already in URL or not HTTPS, use as-is
                 url.to_string()
             }
         } else {
-            url.to_string()
+            // Don't embed credentials - use URL as-is (or clean it if it has credentials)
+            remove_credentials_from_url(url)
         };
 
         let mut builder = RepoBuilder::new();
 
+        // Set up credentials callback for authentication (used when not embedding in URL)
+        if !embed_credentials {
+            if let Some(token) = token {
+                let token_clone = token.to_string();
+                let mut callbacks = RemoteCallbacks::new();
+                callbacks.credentials(move |_url, username_from_url, allowed_types| {
+                    if !allowed_types.is_user_pass_plaintext() {
+                        return Err(git2::Error::from_str(
+                            "User/password authentication not allowed",
+                        ));
+                    }
+                    let username = username_from_url.unwrap_or("x-access-token");
+                    Cred::userpass_plaintext(username, &token_clone)
+                });
+
+                let mut fetch_opts = FetchOptions::new();
+                fetch_opts.remote_callbacks(callbacks);
+                builder.fetch_options(fetch_opts);
+            }
+        }
+
         // Clone with improved error handling
-        let repo = builder.clone(&url_with_token, path).map_err(|e| {
+        let repo = builder.clone(&clone_url, path).map_err(|e| {
             // Provide more detailed error message
             let error_msg = e.message();
             anyhow::anyhow!(

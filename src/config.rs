@@ -89,6 +89,15 @@ pub struct Config {
     /// Keymap configuration (preset and overrides)
     #[serde(default)]
     pub keymap: crate::keymap::Keymap,
+    /// Whether to embed credentials (token) in the git remote URL.
+    /// Default: true (for backward compatibility and to bypass gitconfig URL rewrites).
+    /// Set to false if your environment rejects URLs with embedded credentials.
+    #[serde(default = "default_embed_credentials")]
+    pub embed_credentials_in_url: bool,
+}
+
+fn default_embed_credentials() -> bool {
+    true
 }
 
 fn default_theme() -> String {
@@ -146,6 +155,7 @@ impl Default for Config {
             theme: default_theme(),
             icon_set: default_icon_set(),
             keymap: crate::keymap::Keymap::default(),
+            embed_credentials_in_url: default_embed_credentials(),
         }
     }
 }

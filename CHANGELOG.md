@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Settings**: New "Embed Credentials in URL" toggle - allows disabling credential embedding in git remote URLs for environments that reject URLs with embedded tokens
+
+### Changed
+
+- **Profile Selection**: Converted from full-screen to popup dialog during onboarding. Features inline "Create New Profile" input (no nested popups), profile preview panel showing synced files, and cleaner UX
+
+### Fixed
+
+- **Profile Selection**: Fixed text input where global keybindings (q, m, j, k, etc.) interfered with typing profile names
+- **Git Sync**: Fixed silent push failures - server-side rejections (e.g., pre-receive hooks, credential policies) are now properly captured and reported instead of showing false success
+
 ---
 
 ## [0.2.22] - 2026-02-01

@@ -11,10 +11,10 @@ use crate::styles::theme;
 use crate::ui::{ProfileSelectionState, Screen as ScreenId};
 use crate::widgets::{DialogVariant, TextInputWidget, TextInputWidgetExt};
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyEventKind};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::layout::Rect;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
 use std::path::Path;
 use tracing::{error, info};
@@ -97,33 +97,7 @@ impl ProfileSelectionScreen {
 
     /// Render the create profile popup.
     fn render_create_popup(&mut self, frame: &mut Frame, area: Rect, config: &Config) {
-        use crate::components::footer::Footer;
-        use crate::utils::center_popup;
-
-        let popup_area = center_popup(area, 50, 20);
-        frame.render_widget(Clear, popup_area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(5),
-                Constraint::Min(0),
-                Constraint::Length(2),
-            ])
-            .split(popup_area);
-
-        let custom_block = Block::default()
-            .title(" Create New Profile ")
-            .borders(Borders::ALL)
-            .border_type(theme().border_type(false))
-            .border_style(Style::default().fg(Color::Cyan));
-
-        let widget = TextInputWidget::new(&self.state.create_name_input)
-            .placeholder("Enter profile name...")
-            .focused(true)
-            .block(custom_block);
-
-        frame.render_text_input_widget(widget, chunks[0]);
+        use crate::components::Popup;
 
         let footer_text = format!(
             "{}: Create  |  {}: Cancel",
@@ -134,7 +108,21 @@ impl ProfileSelectionScreen {
                 .keymap
                 .get_key_display_for_action(crate::keymap::Action::Cancel)
         );
-        let _ = Footer::render(frame, chunks[2], &footer_text);
+
+        let result = Popup::new()
+            .width(50)
+            .height(12)
+            .title("Create New Profile")
+            .dim_background(true)
+            .footer(&footer_text)
+            .render(frame, area);
+
+        let widget = TextInputWidget::new(&self.state.create_name_input)
+            .title("Profile Name")
+            .placeholder("Enter profile name...")
+            .focused(true);
+
+        frame.render_text_input_widget(widget, result.content_area);
     }
 
     /// Render the main profile list.
@@ -362,16 +350,56 @@ impl Screen for ProfileSelectionScreen {
                 return Ok(ScreenAction::None);
             }
 
+            // When popup is shown, handle character input FIRST
+            // This ensures vim bindings like h/l/j/k don't interfere with typing
+            if self.state.show_create_popup {
+                if let KeyCode::Char(c) = key.code {
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+                    {
+                        self.state.create_name_input.insert_char(c);
+                        return Ok(ScreenAction::Refresh);
+                    }
+                }
+            }
+
             let action = ctx.config.keymap.get_action(key.code, key.modifiers);
 
             if let Some(action) = action {
                 use crate::keymap::Action;
+
+                // Handle popup-specific actions
+                if self.state.show_create_popup {
+                    match action {
+                        Action::Confirm => {
+                            let profile_name =
+                                self.state.create_name_input.text_trimmed().to_string();
+                            if !profile_name.is_empty() {
+                                self.state.show_create_popup = false;
+                                return Ok(ScreenAction::CreateAndActivateProfile {
+                                    name: profile_name,
+                                });
+                            }
+                            return Ok(ScreenAction::None);
+                        }
+                        Action::Cancel => {
+                            self.state.show_create_popup = false;
+                            self.state.create_name_input.clear();
+                            return Ok(ScreenAction::Refresh);
+                        }
+                        _ => {
+                            // Forward navigation and editing actions to the input
+                            self.state.create_name_input.handle_action(action);
+                            return Ok(ScreenAction::Refresh);
+                        }
+                    }
+                }
+
+                // Handle list navigation (not in popup)
                 match action {
                     Action::MoveUp => {
-                        if self.state.show_create_popup {
-                            // In popup, handle cursor movement
-                            self.state.create_name_input.handle_action(Action::MoveUp);
-                        } else if let Some(current) = self.state.list_state.selected() {
+                        if let Some(current) = self.state.list_state.selected() {
                             if current > 0 {
                                 self.state.list_state.select(Some(current - 1));
                             } else {
@@ -387,9 +415,7 @@ impl Screen for ProfileSelectionScreen {
                         }
                     }
                     Action::MoveDown => {
-                        if self.state.show_create_popup {
-                            self.state.create_name_input.handle_action(Action::MoveDown);
-                        } else if let Some(current) = self.state.list_state.selected() {
+                        if let Some(current) = self.state.list_state.selected() {
                             if current < self.state.profiles.len() {
                                 self.state.list_state.select(Some(current + 1));
                             } else {
@@ -401,16 +427,7 @@ impl Screen for ProfileSelectionScreen {
                         }
                     }
                     Action::Confirm => {
-                        if self.state.show_create_popup {
-                            let profile_name =
-                                self.state.create_name_input.text_trimmed().to_string();
-                            if !profile_name.is_empty() {
-                                self.state.show_create_popup = false;
-                                return Ok(ScreenAction::CreateAndActivateProfile {
-                                    name: profile_name,
-                                });
-                            }
-                        } else if let Some(idx) = self.state.list_state.selected() {
+                        if let Some(idx) = self.state.list_state.selected() {
                             if idx == self.state.profiles.len() {
                                 // "Create New Profile" selected
                                 self.state.show_create_popup = true;
@@ -422,24 +439,9 @@ impl Screen for ProfileSelectionScreen {
                         }
                     }
                     Action::Quit | Action::Cancel => {
-                        if self.state.show_create_popup {
-                            self.state.show_create_popup = false;
-                            self.state.create_name_input.clear();
-                        } else {
-                            self.state.show_exit_warning = true;
-                        }
+                        self.state.show_exit_warning = true;
                     }
-                    _ => {
-                        // Forward other actions (like Backspace, etc.) to input if focused
-                        if self.state.show_create_popup {
-                            self.state.create_name_input.handle_action(action);
-                        }
-                    }
-                }
-            } else {
-                // Raw input for create popup
-                if self.state.show_create_popup {
-                    self.state.create_name_input.handle_key(key.code);
+                    _ => {}
                 }
             }
         }
