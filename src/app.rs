@@ -24,6 +24,8 @@ struct DialogState {
     title: String,
     content: String,
     variant: DialogVariant,
+    /// Scroll offset for long content
+    scroll_offset: u16,
 }
 
 /// Main application state
@@ -142,6 +144,7 @@ impl App {
                     self.config.active_profile
                 ),
                 variant: DialogVariant::Warning,
+                scroll_offset: 0,
             });
         }
 
@@ -564,10 +567,11 @@ impl App {
 
             // Render dialog on top of screen content (modal overlay)
             if let Some(ref dialog) = self.dialog_state {
-                let footer = "Press any key to continue";
+                let footer = "↑↓/jk: Scroll  Enter: Close";
                 let dlg = Dialog::new(&dialog.title, &dialog.content)
                     .variant(dialog.variant)
-                    .height(30)
+                    .height(50) // Increased height for better visibility
+                    .scroll(dialog.scroll_offset)
                     .footer(footer);
                 frame.render_widget(dlg, area);
             }
@@ -733,11 +737,32 @@ impl App {
             }
         }
 
-        // Handle dialog events - any key dismisses it
-        if self.dialog_state.is_some() {
+        // Handle dialog events - scroll with up/down, dismiss with Enter/Esc
+        if let Some(ref mut dialog) = self.dialog_state {
             if let Event::Key(key) = event {
                 if key.kind == KeyEventKind::Press {
-                    self.dialog_state = None;
+                    match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            dialog.scroll_offset = dialog.scroll_offset.saturating_sub(1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            dialog.scroll_offset = dialog.scroll_offset.saturating_add(1);
+                        }
+                        KeyCode::PageUp => {
+                            dialog.scroll_offset = dialog.scroll_offset.saturating_sub(10);
+                        }
+                        KeyCode::PageDown => {
+                            dialog.scroll_offset = dialog.scroll_offset.saturating_add(10);
+                        }
+                        KeyCode::Home => {
+                            dialog.scroll_offset = 0;
+                        }
+                        // Dismiss on Enter, Esc, or 'q'
+                        KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
+                            self.dialog_state = None;
+                        }
+                        _ => {}
+                    }
                 }
             }
             return Ok(());
@@ -947,6 +972,7 @@ impl App {
                     title,
                     content,
                     variant: DialogVariant::Error,
+                    scroll_offset: 0,
                 });
             }
             ScreenAction::ShowToast { message, variant } => {
@@ -1035,6 +1061,7 @@ impl App {
                             title: "Error".to_string(),
                             content: format!("Failed to load profiles: {e}"),
                             variant: DialogVariant::Error,
+                            scroll_offset: 0,
                         });
                     }
                 }
@@ -1151,6 +1178,7 @@ impl App {
                         title: "Error".to_string(),
                         content: format!("Failed to load profiles: {e}"),
                         variant: DialogVariant::Error,
+                        scroll_offset: 0,
                     });
                 }
             }
@@ -1305,6 +1333,7 @@ impl App {
                     title,
                     content,
                     variant,
+                    scroll_offset: 0,
                 });
             }
             ActionResult::Navigate(screen) => {
@@ -1384,6 +1413,7 @@ impl App {
                         title: "Profile Creation Failed".to_string(),
                         content: format!("Failed to create profile '{name}': {e}"),
                         variant: DialogVariant::Error,
+                        scroll_offset: 0,
                     });
                     return Ok(());
                 }
@@ -1398,6 +1428,7 @@ impl App {
                 title: "Configuration Error".to_string(),
                 content: format!("Failed to save configuration: {e}"),
                 variant: DialogVariant::Error,
+                scroll_offset: 0,
             });
             return Ok(());
         }
@@ -1422,6 +1453,7 @@ impl App {
                         title: "Configuration Error".to_string(),
                         content: format!("Failed to save configuration after activation: {e}"),
                         variant: DialogVariant::Error,
+                        scroll_offset: 0,
                     });
                     return Ok(());
                 }
@@ -1442,6 +1474,7 @@ impl App {
                     title: "Activation Failed".to_string(),
                     content: format!("Failed to activate profile '{name}': {e}"),
                     variant: DialogVariant::Error,
+                    scroll_offset: 0,
                 });
             }
         }
@@ -1534,6 +1567,7 @@ impl App {
                             title: "Error".to_string(),
                             content: format!("Failed to load profiles: {e}"),
                             variant: DialogVariant::Error,
+                            scroll_offset: 0,
                         });
                     }
                 }

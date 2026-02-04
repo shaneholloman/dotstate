@@ -361,6 +361,104 @@ impl GitManager {
         Ok(())
     }
 
+    /// Reset the last commit, keeping changes staged (git reset --soft HEAD~1)
+    ///
+    /// This is useful when a push is rejected - we can undo the commit while
+    /// preserving the staged changes so the user can fix the issue and re-commit.
+    pub fn reset_soft_head(&self) -> Result<()> {
+        use tracing::info;
+
+        // Get HEAD commit
+        let head = self.repo.head().context("Failed to get HEAD reference")?;
+        let head_commit = head.peel_to_commit().context("Failed to get HEAD commit")?;
+
+        // Get parent commit (HEAD~1)
+        let parent = head_commit
+            .parent(0)
+            .context("Cannot reset: no parent commit (this is the initial commit)")?;
+
+        // Reset to parent commit with soft mode (keeps changes staged)
+        self.repo
+            .reset(parent.as_object(), git2::ResetType::Soft, None)
+            .context("Failed to reset to parent commit")?;
+
+        info!(
+            "Reset HEAD from {} to {} (soft)",
+            head_commit.id(),
+            parent.id()
+        );
+        Ok(())
+    }
+
+    /// Cleanup after a failed operation: abort any in-progress rebase and checkout the branch
+    ///
+    /// This ensures the repository is in a clean state after a failed pull/rebase.
+    pub fn cleanup_failed_operation(&self, branch: &str) -> Result<()> {
+        use tracing::{info, warn};
+
+        // Check if there's a rebase in progress and abort it
+        let rebase_merge_dir = self.repo.path().join("rebase-merge");
+        let rebase_apply_dir = self.repo.path().join("rebase-apply");
+
+        if rebase_merge_dir.exists() || rebase_apply_dir.exists() {
+            info!("Aborting in-progress rebase");
+            // Use git2's state to check and handle rebase
+            match self.repo.state() {
+                git2::RepositoryState::Rebase
+                | git2::RepositoryState::RebaseMerge
+                | git2::RepositoryState::RebaseInteractive
+                | git2::RepositoryState::ApplyMailboxOrRebase => {
+                    // Clean up rebase state by removing the directories
+                    if rebase_merge_dir.exists() {
+                        let _ = std::fs::remove_dir_all(&rebase_merge_dir);
+                    }
+                    if rebase_apply_dir.exists() {
+                        let _ = std::fs::remove_dir_all(&rebase_apply_dir);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Checkout the specified branch
+        let branch_ref = format!("refs/heads/{branch}");
+        if let Ok(reference) = self.repo.find_reference(&branch_ref) {
+            // Set HEAD to point to the branch
+            self.repo
+                .set_head(&branch_ref)
+                .context("Failed to set HEAD to branch")?;
+
+            // Get the commit the branch points to
+            let commit = reference
+                .peel_to_commit()
+                .context("Failed to get branch commit")?;
+
+            // Reset working directory to match the branch
+            self.repo
+                .reset(commit.as_object(), git2::ResetType::Hard, None)
+                .context("Failed to reset to branch")?;
+
+            info!("Checked out branch: {}", branch);
+        } else {
+            warn!("Branch '{}' not found, cannot checkout", branch);
+        }
+
+        Ok(())
+    }
+
+    /// Build error message for push rejection with sideband context
+    fn build_push_rejection_error(errors: &[String], sideband: &[String]) -> String {
+        let mut full_error = String::from("Push rejected by remote:");
+        // Include sideband messages as additional context (hook output)
+        if !sideband.is_empty() {
+            full_error.push_str("\n\n");
+            full_error.push_str(&sideband.join("\n"));
+        }
+        full_error.push_str("\n\nRef errors:\n");
+        full_error.push_str(&errors.join("\n"));
+        full_error
+    }
+
     /// Push to remote
     /// If token is provided, it will be used for authentication.
     /// Otherwise, attempts to extract token from remote URL.
@@ -399,6 +497,21 @@ impl GitManager {
             Ok(())
         });
 
+        // Capture sideband progress messages - this is where full hook output is sent
+        // Git hooks send their verbose output (e.g., pre-receive hook messages) through
+        // the sideband channel, not through the ref update status.
+        let sideband_messages: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let sideband_clone = sideband_messages.clone();
+        callbacks.sideband_progress(move |data| {
+            if let Ok(msg) = std::str::from_utf8(data) {
+                let trimmed = msg.trim();
+                if !trimmed.is_empty() {
+                    sideband_clone.borrow_mut().push(trimmed.to_string());
+                }
+            }
+            true // Continue receiving messages
+        });
+
         let mut push_options = git2::PushOptions::new();
         push_options.remote_callbacks(callbacks);
 
@@ -414,10 +527,13 @@ impl GitManager {
 
                 // Check for server-side rejections
                 let errors = push_errors.borrow();
+                let sideband = sideband_messages.borrow();
+                // Only error if there are actual ref update failures
+                // Sideband messages alone are just progress info, not errors
                 if !errors.is_empty() {
                     return Err(anyhow::anyhow!(
-                        "Push rejected by remote:\n{}",
-                        errors.join("\n")
+                        "{}",
+                        Self::build_push_rejection_error(&errors, &sideband)
                     ));
                 }
                 return Ok(());
@@ -449,10 +565,13 @@ impl GitManager {
         // Check for server-side rejections (e.g., pre-receive hooks, push rules)
         // The push transport may succeed but the server can still reject individual refs
         let errors = push_errors.borrow();
+        let sideband = sideband_messages.borrow();
+        // Only error if there are actual ref update failures
+        // Sideband messages alone are just progress info, not errors
         if !errors.is_empty() {
             return Err(anyhow::anyhow!(
-                "Push rejected by remote:\n{}",
-                errors.join("\n")
+                "{}",
+                Self::build_push_rejection_error(&errors, &sideband)
             ));
         }
 

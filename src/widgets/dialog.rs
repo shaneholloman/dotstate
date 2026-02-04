@@ -49,6 +49,8 @@ pub struct Dialog<'a> {
     pub dim_background: bool,
     /// Footer text to display below the dialog (optional)
     pub footer: Option<&'a str>,
+    /// Scroll offset for long content
+    pub scroll_offset: u16,
 }
 
 impl<'a> Dialog<'a> {
@@ -68,6 +70,7 @@ impl<'a> Dialog<'a> {
             variant: DialogVariant::Default,
             dim_background: true,
             footer: None,
+            scroll_offset: 0,
         }
     }
 
@@ -118,6 +121,13 @@ impl<'a> Dialog<'a> {
     #[must_use]
     pub fn footer(mut self, footer: &'a str) -> Self {
         self.footer = Some(footer);
+        self
+    }
+
+    /// Set scroll offset for long content
+    #[must_use]
+    pub fn scroll(mut self, offset: u16) -> Self {
+        self.scroll_offset = offset;
         self
     }
 
@@ -245,11 +255,12 @@ impl<'a> Dialog<'a> {
         let content_inner = content_block.inner(layout[1]);
         Widget::render(content_block, layout[1], buf);
 
-        // Render content text (left-aligned, wrapped)
+        // Render content text (left-aligned, wrapped, with scrolling)
         let content_para = Paragraph::new(self.content)
             .wrap(Wrap { trim: true })
             .alignment(Alignment::Left)
-            .style(t.text_style());
+            .style(t.text_style())
+            .scroll((self.scroll_offset, 0));
         Widget::render(content_para, content_inner, buf);
 
         // Footer block (bottom) - optional

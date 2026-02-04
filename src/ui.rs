@@ -161,6 +161,7 @@ pub struct SyncWithRemoteState {
     pub scrollbar_state: ScrollbarState,
     pub diff_content: Option<String>, // Content of the diff for preview
     pub preview_scroll: usize,        // Scroll state for preview
+    pub result_scroll: u16,           // Scroll state for result popup
     pub git_status: Option<crate::services::git_service::GitStatus>, // Detailed git status
 }
 
@@ -177,6 +178,7 @@ impl Default for SyncWithRemoteState {
             scrollbar_state: ScrollbarState::new(0),
             diff_content: None,
             preview_scroll: 0,
+            result_scroll: 0,
             git_status: None,
         }
     }

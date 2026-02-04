@@ -317,6 +317,7 @@ impl GitService {
         // Step 1: Only commit if there are uncommitted changes
         // This prevents creating empty commits on retry after a failed push
         let has_changes = git_mgr.has_uncommitted_changes().unwrap_or(false);
+        let mut made_commit = false;
 
         if has_changes {
             let commit_msg = git_mgr
@@ -330,25 +331,87 @@ impl GitService {
                     pulled_count: None,
                 };
             }
+            made_commit = true;
         }
 
         // Step 2: Pull with rebase
         let pulled_count = match git_mgr.pull_with_rebase("origin", &branch, token) {
             Ok(count) => count,
             Err(e) => {
+                // Pull/rebase failed - the rebase.abort() inside pull_with_rebase should
+                // have restored the repo state. Try to reset our commit to preserve user's changes.
+                if made_commit {
+                    if let Err(reset_err) = git_mgr.reset_soft_head() {
+                        // reset_soft_head failed - repo might be in a bad state (mid-rebase)
+                        // Try cleanup as fallback (this will lose changes but at least recover)
+                        warn!("Failed to reset commit: {}, trying cleanup", reset_err);
+                        if let Err(cleanup_err) = git_mgr.cleanup_failed_operation(&branch) {
+                            warn!("Failed to cleanup after pull failure: {}", cleanup_err);
+                            return SyncResult {
+                                success: false,
+                                message: format!(
+                                    "{}\n\nRepository may be in an inconsistent state.\n\
+                                    Run 'git status' and 'git rebase --abort' if needed.",
+                                    Self::format_error_chain("Failed to pull from remote", &e)
+                                ),
+                                pulled_count: None,
+                            };
+                        }
+                        // Cleanup succeeded but changes were lost
+                        return SyncResult {
+                            success: false,
+                            message: format!(
+                                "{}\n\nYour changes could not be preserved.\n\
+                                The repository has been reset to a clean state.",
+                                Self::format_error_chain("Failed to pull from remote", &e)
+                            ),
+                            pulled_count: None,
+                        };
+                    }
+                }
                 return SyncResult {
                     success: false,
-                    message: Self::format_error_chain("Failed to pull from remote", &e),
+                    message: if made_commit {
+                        format!(
+                            "{}\n\nThe commit has been undone. Your changes are still staged.\n\
+                            Fix any issues and try syncing again.",
+                            Self::format_error_chain("Failed to pull from remote", &e)
+                        )
+                    } else {
+                        Self::format_error_chain("Failed to pull from remote", &e)
+                    },
                     pulled_count: None,
-                }
+                };
             }
         };
 
         // Step 3: Push to remote
         if let Err(e) = git_mgr.push("origin", &branch, token) {
+            // Push failed - reset the commit so user can fix the issue and retry
+            // This prevents the bad commit from blocking future pushes
+            if made_commit {
+                if let Err(reset_err) = git_mgr.reset_soft_head() {
+                    warn!("Failed to reset commit after push failure: {}", reset_err);
+                    // Include reset failure in the error message
+                    return SyncResult {
+                        success: false,
+                        message: format!(
+                            "{}\n\nAdditionally, failed to reset the commit: {}\n\
+                            You may need to manually run: git reset --soft HEAD~1",
+                            Self::format_error_chain("Failed to push to remote", &e),
+                            reset_err
+                        ),
+                        pulled_count: Some(pulled_count),
+                    };
+                }
+            }
             return SyncResult {
                 success: false,
-                message: Self::format_error_chain("Failed to push to remote", &e),
+                message: format!(
+                    "{}\n\nThe commit has been undone. Your changes are still staged.\n\
+                    Fix the issue and try syncing again.",
+                    Self::format_error_chain("Failed to push to remote", &e)
+                ),
                 pulled_count: Some(pulled_count),
             };
         }

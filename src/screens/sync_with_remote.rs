@@ -105,6 +105,7 @@ impl SyncWithRemoteScreen {
         self.state.sync_result = Some(result.message);
         self.state.pulled_changes_count = result.pulled_count;
         self.state.show_result_popup = true;
+        self.state.result_scroll = 0; // Reset scroll for new result
 
         Ok(())
     }
@@ -129,7 +130,10 @@ impl SyncWithRemoteScreen {
             || result_text.to_lowercase().contains("failed");
 
         let k = |a| config.keymap.get_key_display_for_action(a);
-        let footer_text = format!("{}: Close", k(crate::keymap::Action::Confirm));
+        let footer_text = format!(
+            "↑↓/jk: Scroll  {}: Close",
+            k(crate::keymap::Action::Confirm)
+        );
 
         let dialog = Dialog::new(
             if is_error {
@@ -145,6 +149,7 @@ impl SyncWithRemoteScreen {
         } else {
             DialogVariant::Default
         })
+        .scroll(self.state.result_scroll)
         .footer(&footer_text);
         frame.render_widget(dialog, area);
 
@@ -425,6 +430,7 @@ impl Screen for SyncWithRemoteScreen {
                                 self.state.show_result_popup = false;
                                 self.state.sync_result = None;
                                 self.state.pulled_changes_count = None;
+                                self.state.result_scroll = 0;
                                 return Ok(ScreenAction::Navigate(ScreenId::MainMenu));
                             }
 
@@ -448,30 +454,57 @@ impl Screen for SyncWithRemoteScreen {
                                 self.state.show_result_popup = false;
                                 self.state.sync_result = None;
                                 self.state.pulled_changes_count = None;
+                                self.state.result_scroll = 0;
                                 return Ok(ScreenAction::Navigate(ScreenId::MainMenu));
                             }
                             return Ok(ScreenAction::Navigate(ScreenId::MainMenu));
                         }
                         Action::MoveUp => {
-                            self.state.list_state.select_previous();
-                            self.update_diff_preview(ctx);
+                            if self.state.show_result_popup {
+                                // Scroll result popup up
+                                self.state.result_scroll =
+                                    self.state.result_scroll.saturating_sub(1);
+                            } else {
+                                self.state.list_state.select_previous();
+                                self.update_diff_preview(ctx);
+                            }
                             return Ok(ScreenAction::None);
                         }
                         Action::MoveDown => {
-                            self.state.list_state.select_next();
-                            self.update_diff_preview(ctx);
+                            if self.state.show_result_popup {
+                                // Scroll result popup down
+                                self.state.result_scroll =
+                                    self.state.result_scroll.saturating_add(1);
+                            } else {
+                                self.state.list_state.select_next();
+                                self.update_diff_preview(ctx);
+                            }
                             return Ok(ScreenAction::None);
                         }
                         Action::ScrollUp => {
-                            self.state.preview_scroll = self.state.preview_scroll.saturating_sub(1);
+                            if self.state.show_result_popup {
+                                self.state.result_scroll =
+                                    self.state.result_scroll.saturating_sub(1);
+                            } else {
+                                self.state.preview_scroll =
+                                    self.state.preview_scroll.saturating_sub(1);
+                            }
                             return Ok(ScreenAction::None);
                         }
                         Action::ScrollDown => {
-                            self.state.preview_scroll += 1;
+                            if self.state.show_result_popup {
+                                self.state.result_scroll =
+                                    self.state.result_scroll.saturating_add(1);
+                            } else {
+                                self.state.preview_scroll += 1;
+                            }
                             return Ok(ScreenAction::None);
                         }
                         Action::PageUp => {
-                            if let Some(current) = self.state.list_state.selected() {
+                            if self.state.show_result_popup {
+                                self.state.result_scroll =
+                                    self.state.result_scroll.saturating_sub(10);
+                            } else if let Some(current) = self.state.list_state.selected() {
                                 let new_index = current.saturating_sub(10);
                                 self.state.list_state.select(Some(new_index));
                                 self.update_diff_preview(ctx);
@@ -479,7 +512,10 @@ impl Screen for SyncWithRemoteScreen {
                             return Ok(ScreenAction::None);
                         }
                         Action::PageDown => {
-                            if let Some(current) = self.state.list_state.selected() {
+                            if self.state.show_result_popup {
+                                self.state.result_scroll =
+                                    self.state.result_scroll.saturating_add(10);
+                            } else if let Some(current) = self.state.list_state.selected() {
                                 let new_index = (current + 10)
                                     .min(self.state.changed_files.len().saturating_sub(1));
                                 self.state.list_state.select(Some(new_index));
@@ -488,13 +524,19 @@ impl Screen for SyncWithRemoteScreen {
                             return Ok(ScreenAction::None);
                         }
                         Action::GoToTop => {
-                            self.state.list_state.select_first();
-                            self.update_diff_preview(ctx);
+                            if self.state.show_result_popup {
+                                self.state.result_scroll = 0;
+                            } else {
+                                self.state.list_state.select_first();
+                                self.update_diff_preview(ctx);
+                            }
                             return Ok(ScreenAction::None);
                         }
                         Action::GoToEnd => {
-                            self.state.list_state.select_last();
-                            self.update_diff_preview(ctx);
+                            if !self.state.show_result_popup {
+                                self.state.list_state.select_last();
+                                self.update_diff_preview(ctx);
+                            }
                             return Ok(ScreenAction::None);
                         }
                         _ => {}
@@ -502,16 +544,26 @@ impl Screen for SyncWithRemoteScreen {
                 }
             }
         } else if let Event::Mouse(mouse) = event {
-            // Handle mouse events for list navigation
+            // Handle mouse events
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    self.state.list_state.select_previous();
-                    self.update_diff_preview(ctx);
+                    if self.state.show_result_popup {
+                        // Scroll popup up
+                        self.state.result_scroll = self.state.result_scroll.saturating_sub(3);
+                    } else {
+                        self.state.list_state.select_previous();
+                        self.update_diff_preview(ctx);
+                    }
                     return Ok(ScreenAction::None);
                 }
                 MouseEventKind::ScrollDown => {
-                    self.state.list_state.select_next();
-                    self.update_diff_preview(ctx);
+                    if self.state.show_result_popup {
+                        // Scroll popup down
+                        self.state.result_scroll = self.state.result_scroll.saturating_add(3);
+                    } else {
+                        self.state.list_state.select_next();
+                        self.update_diff_preview(ctx);
+                    }
                     return Ok(ScreenAction::None);
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
@@ -521,6 +573,7 @@ impl Screen for SyncWithRemoteScreen {
                         self.state.show_result_popup = false;
                         self.state.sync_result = None;
                         self.state.pulled_changes_count = None;
+                        self.state.result_scroll = 0;
                         return Ok(ScreenAction::Navigate(ScreenId::MainMenu));
                     }
                 }
