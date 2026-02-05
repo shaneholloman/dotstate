@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.2.25] - 2026-02-04
+
 ### Fixed
 
 - **Git SSH**: Use system git for SSH remote operations (fetch, push, pull, clone) to fix compatibility with 1Password SSH Agent, YubiKey Agent, Secretive, and other non-standard SSH agent implementations. HTTPS operations continue to use git2 as before.
