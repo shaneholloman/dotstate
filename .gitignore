@@ -25,12 +25,9 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
-.llm_docs/
 
 homebrew-dotstate
-notes/
-.claude/
-CLAUDE.md
+.claude/settings.local.json
 .cursor/
 
 # Website

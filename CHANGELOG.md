@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings**: Renamed "Embed Credentials in URL" to "Token in Remote URL" with clearer description explaining the two authentication modes
+- **Settings**: Hide "Token in Remote URL" option when repository is in local mode (tokens are only relevant for GitHub repos)
+
 ---
 
 ## [0.2.25] - 2026-02-04

@@ -6,7 +6,7 @@
 
 use crate::components::footer::Footer;
 use crate::components::header::Header;
-use crate::config::Config;
+use crate::config::{Config, RepoMode};
 use crate::icons::Icons;
 use crate::keymap::{Action, KeymapPreset};
 use crate::screens::screen_trait::{RenderContext, Screen, ScreenAction, ScreenContext};
@@ -38,15 +38,18 @@ pub enum SettingItem {
 
 impl SettingItem {
     #[must_use]
-    pub fn all() -> Vec<SettingItem> {
-        vec![
+    pub fn all(repo_mode: RepoMode) -> Vec<SettingItem> {
+        let mut items = vec![
             SettingItem::Theme,
             SettingItem::IconSet,
             SettingItem::KeymapPreset,
             SettingItem::Backups,
             SettingItem::CheckForUpdates,
-            SettingItem::EmbedCredentials,
-        ]
+        ];
+        if repo_mode == RepoMode::GitHub {
+            items.push(SettingItem::EmbedCredentials);
+        }
+        items
     }
 
     #[must_use]
@@ -57,13 +60,13 @@ impl SettingItem {
             SettingItem::KeymapPreset => "Keymap Preset",
             SettingItem::Backups => "Backups",
             SettingItem::CheckForUpdates => "Check for Updates",
-            SettingItem::EmbedCredentials => "Embed Credentials in URL",
+            SettingItem::EmbedCredentials => "Token in Remote URL",
         }
     }
 
     #[must_use]
-    pub fn from_index(index: usize) -> Option<SettingItem> {
-        Self::all().get(index).copied()
+    pub fn from_index(index: usize, repo_mode: RepoMode) -> Option<SettingItem> {
+        Self::all(repo_mode).get(index).copied()
     }
 }
 
@@ -114,16 +117,16 @@ impl SettingsScreen {
         }
     }
 
-    fn selected_setting(&self) -> Option<SettingItem> {
+    fn selected_setting(&self, repo_mode: RepoMode) -> Option<SettingItem> {
         self.state
             .list_state
             .selected()
-            .and_then(SettingItem::from_index)
+            .and_then(|i| SettingItem::from_index(i, repo_mode))
     }
 
     /// Get available options for the current setting
     fn get_options(&self, config: &Config) -> Vec<(String, bool)> {
-        match self.selected_setting() {
+        match self.selected_setting(config.repo_mode) {
             Some(SettingItem::Theme) => {
                 let current = &config.theme;
                 ThemeType::all()
@@ -177,7 +180,7 @@ impl SettingsScreen {
         let t = theme();
         let icons = Icons::from_config(config);
 
-        match self.selected_setting() {
+        match self.selected_setting(config.repo_mode) {
             Some(SettingItem::Theme) => {
                 let lines = vec![
                     Line::from(Span::styled("Color Theme", t.title_style())),
@@ -308,21 +311,36 @@ impl SettingsScreen {
             }
             Some(SettingItem::EmbedCredentials) => {
                 let lines = vec![
-                    Line::from(Span::styled("Embed Credentials in URL", t.title_style())),
+                    Line::from(Span::styled("Token in Remote URL", t.title_style())),
                     Line::from(""),
                     Line::from(Span::styled(
-                        "When enabled, the GitHub token is embedded directly in the git remote URL (e.g., https://token@github.com/...).",
-                        t.text_style(),
-                    )),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "This bypasses gitconfig URL rewrites but may be rejected by some corporate environments.",
+                        "Controls how DotState authenticates with GitHub when syncing your dotfiles.",
                         t.text_style(),
                     )),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled(icons.warning(), Style::default().fg(t.warning)),
-                        Span::styled(" Changing this updates the remote URL.", t.muted_style()),
+                        Span::styled("  • ", t.muted_style()),
+                        Span::styled("Enabled", t.emphasis_style()),
+                        Span::styled(
+                            ": Token is stored in the remote URL",
+                            t.text_style(),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("  • ", t.muted_style()),
+                        Span::styled("Disabled", t.emphasis_style()),
+                        Span::styled(
+                            ": Uses your system's git credential manager",
+                            t.text_style(),
+                        ),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(icons.lightbulb(), Style::default().fg(t.secondary)),
+                        Span::styled(
+                            " Disable if your environment blocks URLs with embedded tokens.",
+                            t.muted_style(),
+                        ),
                     ]),
                     Line::from(""),
                     Line::from(vec![
@@ -391,7 +409,7 @@ impl SettingsScreen {
                 config.updates.check_enabled = option_index == 0;
                 return true;
             }
-            "Embed Credentials in URL" => {
+            "Token in Remote URL" => {
                 config.embed_credentials_in_url = option_index == 0;
                 return true;
             }
@@ -414,7 +432,7 @@ impl SettingsScreen {
         let icons = Icons::from_config(config);
         let is_focused = self.state.focus == SettingsFocus::List;
 
-        let items: Vec<ListItem> = SettingItem::all()
+        let items: Vec<ListItem> = SettingItem::all(config.repo_mode)
             .iter()
             .map(|item| {
                 let current_value = match item {
@@ -634,7 +652,7 @@ impl Screen for SettingsScreen {
                                 // Apply the selected option
                                 return Ok(ScreenAction::UpdateSetting {
                                     setting: self
-                                        .selected_setting()
+                                        .selected_setting(ctx.config.repo_mode)
                                         .map(|s| s.name().to_string())
                                         .unwrap_or_default(),
                                     option_index: self.state.option_index,

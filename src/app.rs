@@ -1001,7 +1001,7 @@ impl App {
                 );
                 if changed {
                     // Special handling for credential embedding - update remote URL
-                    if setting == "Embed Credentials in URL" {
+                    if setting == "Token in Remote URL" {
                         if let Err(e) = self.update_remote_credentials() {
                             warn!("Failed to update remote URL: {}", e);
                             // Don't fail the setting change, just log
