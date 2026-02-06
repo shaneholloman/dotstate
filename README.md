@@ -4,6 +4,10 @@
 
 DotState is a terminal-based tool that helps you manage your dotfiles effortlessly. Whether you're syncing your configuration across multiple machines or setting up a new development environment, DotState makes it simple, safe, and fast.
 
+<img width="1130" height="868" alt="gruvbox-dark" src="https://github.com/user-attachments/assets/c5aa8e6f-98fd-4a1d-afc1-3d6525e047a9" />
+
+
+
 ## Demo
 
 https://github.com/user-attachments/assets/9be0df5e-87ce-4b61-ae0f-1c8ffe94cb36
