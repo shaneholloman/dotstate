@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Docs**: Add profile workflow documentation to README and website (closes #42)
+
 ---
 
 ## [0.3.0] - 2026-02-05

@@ -207,6 +207,59 @@ Then add `fpath=(~/.zsh/completions $fpath)` to your .zshrc before your framewor
 4. **Common Files**: Files that are shared across all profiles are stored in the `common` section and linked regardless of the active profile
 5. **Sync**: Changes are committed and synced with GitHub automatically
 
+## Working with Profiles
+
+Profiles are how DotState organizes your dotfiles for different machines or contexts. Each profile has its own set of files, while **Common Files** are shared across all profiles automatically.
+
+```
+               ┌────────────────────┐
+               │ Common Files       │
+               ├────────────────────┤
+               │ .tmux.conf         │
+               │ .gitconfig         │       ┌────────────────────┐
+               │ .vimrc             │       │ Server             │
+               │                    │       ├────────────────────┤
+               │                    ├──────►│ .bashrc            │
+               │                    │       │ .profile           │
+               └─┬─────────────────┬┘       │ .config.toml       │
+                 │                 │        └────────────────────┘
+                 │                 │
+                 ▼                 ▼
+┌────────────────────┐           ┌────────────────────┐
+│ Personal           │           │ Work               │
+├────────────────────┤           ├────────────────────┤
+│ .zshrc             │           │ .zshrc             │
+│ .sshconfig         │  Copy     │ .sshconfig         │
+│ ...                ├──────────►│ ...                │
+│                    │           │ workfile.sh        │
+└────────────────────┘           └────────────────────┘
+```
+
+### Creating Profiles
+
+In the TUI, go to **Manage Profiles** and press `C` to create a new profile. You can:
+
+- **Start blank** for a completely new setup
+- **Copy from an existing profile** to carry over files and packages — great for setting up a similar machine quickly
+
+### Switching Profiles
+
+Select a profile and press `Enter` to switch. DotState will remove symlinks for the old profile and create symlinks for the new one automatically. Common files stay linked regardless of which profile is active.
+
+### Common Files
+
+You decide which files are shared. Move any file to **Common** and it will be symlinked in every profile. Common files stay linked when you switch profiles. To move a file between profile-specific and common:
+
+1. Go to **Manage Files**
+2. Select a file
+3. Press `M` to move it to Common (or back to the active profile)
+
+### Use Cases
+
+- **Multi-machine**: Use a `Personal` profile on your laptop, `Work` on your work machine, and `Server` for headless setups. Keep shared configs (`.gitconfig`, `.tmux.conf`) in Common.
+- **Same computer, different contexts**: Create profiles like `day`, `night`, or `focus` with different terminal themes and defaults, and switch between them instantly.
+- **Quick duplication**: When setting up a second machine, create a new profile by copying from an existing one, then tweak what's different.
+
 ## Configuration
 
 ### Repository Setup Modes

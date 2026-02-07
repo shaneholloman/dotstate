@@ -76,6 +76,8 @@ const sections = [
                     <div class="section-content">
                         <p><strong>DotState</strong> is a terminal-based <strong>dotfile manager</strong> that helps you manage your dotfiles effortlessly. Whether you're syncing your configuration across multiple machines or setting up a new development environment, DotState makes it simple, safe, and fast.</p>
 
+                        <img src="/screenshot.png" alt="DotState TUI screenshot showing the main menu with Tokyo Night dark theme" class="screenshot" width="1130" height="868" loading="eager" />
+
                         <InstallWidget />
 
                         <h3>Why Use a Dotfile Manager?</h3>
@@ -122,6 +124,10 @@ const sections = [
                         <Tip>
                             <strong>Tip:</strong> When you select a file, it's automatically copied to your repository and a symlink is created in its place. This means your files are safely backed up and version controlled.
                         </Tip>
+
+                        <h3>Profiles & Common Files</h3>
+                        <p>Organize your dotfiles with <strong>profiles</strong> for different machines or contexts. Files you choose to mark as <strong>common</strong> are shared across all profiles — the rest stay profile-specific. See <a href="#examples" class="section-link" data-section="examples">Examples</a> for workflows.</p>
+                        <CodeBlock code={"Common Files (shared)     Profile-specific\n─────────────────────    ─────────────────\n .gitconfig               Personal/\n .tmux.conf      ───►      .zshrc\n .vimrc                    .ssh/config\n                          Work/\n                           .zshrc\n                           work-scripts/"} />
                     </div>
 
                     <StatusGrid />
@@ -400,20 +406,28 @@ const sections = [
                         </ExampleCard>
 
                         <ExampleCard title="Managing multiple profiles">
-                            <p>Create separate profiles for different contexts:</p>
+                            <p>Profiles let you organize dotfiles for different machines or contexts. Each profile has its own files, while <strong>Common Files</strong> are shared across all profiles.</p>
                             <ul>
-                                <li><strong>Personal:</strong> Your personal dotfiles</li>
-                                <li><strong>Work:</strong> Work-specific configurations</li>
-                                <li><strong>Mac/Linux:</strong> OS-specific settings</li>
+                                <li><strong>Create a profile:</strong> Press <kbd>C</kbd> in Manage Profiles</li>
+                                <li><strong>Copy from existing:</strong> When creating, choose an existing profile to start with — copies all files and packages</li>
+                                <li><strong>Switch profiles:</strong> Select a profile and press <kbd>Enter</kbd> — symlinks are swapped automatically</li>
+                            </ul>
+                            <p><strong>Example setups:</strong></p>
+                            <ul>
+                                <li><strong>Multi-machine:</strong> <code>Personal</code> on your laptop, <code>Work</code> on your work machine, <code>Server</code> for headless setups</li>
+                                <li><strong>Same computer:</strong> <code>day</code>, <code>night</code>, or <code>focus</code> profiles with different terminal themes</li>
                             </ul>
                         </ExampleCard>
 
                         <ExampleCard title="Sharing common files">
+                            <p>You decide which files are shared. Move any file to <strong>Common</strong> and it will be symlinked in every profile. Files stay in Common when you switch profiles.</p>
                             <ol>
-                                <li>Add a file like <code>.gitconfig</code> to your collection</li>
-                                <li>Move it to the <strong>Common</strong> section</li>
-                                <li>The file will now be symlinked in every profile</li>
+                                <li>Go to <strong>Manage Files</strong></li>
+                                <li>Select a file from your profile</li>
+                                <li>Press <kbd>M</kbd> to move it to Common</li>
                             </ol>
+                            <p>Press <kbd>M</kbd> again on a common file to move it back to the active profile.</p>
+                            <CodeBlock code={"Common Files (you choose)   Profiles (per-machine)\n─────────────────────────  ──────────────────────\n .gitconfig       ┌──────► Personal/.zshrc\n .tmux.conf  ─────┤        Personal/.ssh/config\n .vimrc           └──────► Work/.zshrc\n                           Work/work-scripts/"} />
                         </ExampleCard>
                     </div>
                 </article>
@@ -794,6 +808,11 @@ const sections = [
 </Layout>
 
 <style>
+    .screenshot {
+        width: 100%;
+        height: auto;
+    }
+
     .requirements-list {
         list-style: none;
         margin-left: 0;
