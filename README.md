@@ -2,23 +2,10 @@
 
 <a href="https://app.stele-ai.dev/explore/dotstate">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?metric=powered&style=ledger&theme=dark&logo=stele">
-    <img src="https://app.stele-ai.dev/badge/dotstate?metric=powered&style=ledger&theme=light&logo=stele" alt="powered by">
+    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?label=AI+Memory+by&message=stele&style=for-the-badge&color=blue&theme=dark&logo=stele">
+    <img src="https://app.stele-ai.dev/badge/dotstate?label=AI+Memory+by&message=stele&style=for-the-badge&color=blue&theme=light&logo=stele" alt="AI Memory by stele">
   </picture>
 </a>
-<a href="https://app.stele-ai.dev/explore/dotstate">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?metric=knowledge&style=ledger&theme=dark">
-    <img src="https://app.stele-ai.dev/badge/dotstate?metric=knowledge&style=ledger&theme=light" alt="knowledge">
-  </picture>
-</a>
-<a href="https://app.stele-ai.dev/explore/dotstate">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?metric=tasks&style=ledger&theme=dark">
-    <img src="https://app.stele-ai.dev/badge/dotstate?metric=tasks&style=ledger&theme=light" alt="tasks">
-  </picture>
-</a>
-
 
 **A modern, secure, and user-friendly dotfile manager built with Rust**
 
