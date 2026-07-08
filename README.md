@@ -18,7 +18,9 @@
     <img src="https://app.stele-ai.dev/badge/dotstate?metric=tasks&style=ledger&theme=light" alt="tasks">
   </picture>
 </a>
-> **A modern, secure, and user-friendly dotfile manager built with Rust**
+
+
+**A modern, secure, and user-friendly dotfile manager built with Rust**
 
 DotState is a terminal-based tool that helps you manage your dotfiles effortlessly. Whether you're syncing your configuration across multiple machines or setting up a new development environment, DotState makes it simple, safe, and fast.
 
