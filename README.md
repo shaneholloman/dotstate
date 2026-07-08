@@ -1,5 +1,23 @@
 # DotState
 
+<a href="https://app.stele-ai.dev/explore/dotstate">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?metric=powered&style=ledger&theme=dark&logo=stele">
+    <img src="https://app.stele-ai.dev/badge/dotstate?metric=powered&style=ledger&theme=light&logo=stele" alt="powered by">
+  </picture>
+</a>
+<a href="https://app.stele-ai.dev/explore/dotstate">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?metric=knowledge&style=ledger&theme=dark">
+    <img src="https://app.stele-ai.dev/badge/dotstate?metric=knowledge&style=ledger&theme=light" alt="knowledge">
+  </picture>
+</a>
+<a href="https://app.stele-ai.dev/explore/dotstate">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://app.stele-ai.dev/badge/dotstate?metric=tasks&style=ledger&theme=dark">
+    <img src="https://app.stele-ai.dev/badge/dotstate?metric=tasks&style=ledger&theme=light" alt="tasks">
+  </picture>
+</a>
 > **A modern, secure, and user-friendly dotfile manager built with Rust**
 
 DotState is a terminal-based tool that helps you manage your dotfiles effortlessly. Whether you're syncing your configuration across multiple machines or setting up a new development environment, DotState makes it simple, safe, and fast.
